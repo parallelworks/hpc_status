@@ -1,0 +1,82 @@
+# yaml-language-server: $schema=https://activate.parallel.works/workflow.schema.json
+
+permissions:
+  - '*'
+sessions:
+  session:
+    useTLS: false
+    redirect: true
+    useCustomDomain: false
+  
+'on':
+  execute:
+    inputs:
+      repo_url:
+        label: GitHub Repo URL
+        type: string
+        default: https://github.com/parallelworks/hpcmp_status_site.git
+        tooltip: Public or authenticated URL to the status viewer
+      repo_ref:
+        label: Git Ref (branch/tag/SHA)
+        type: string
+        default: main
+        tooltip: Optionally choose a branch, tag or commit SHA
+      app_dir:
+        label: Run Directory
+        default: ~/pw/storage/hpc_status_site
+        type: string
+
+jobs:
+  checkout_repo:
+    env:
+      REPO_URL: ${{ inputs.repo_url }}
+      REPO_REF: ${{ inputs.repo_ref }}
+      APP_DIR: ${{ inputs.app_dir }}
+    steps:
+      - name: Clone or update repo
+        run: |
+          set -e
+          export APP_DIR="$(eval echo $APP_DIR)"
+          if [ -d "$APP_DIR/.git" ]; then
+            echo "Repo exists; fetching latest for $REPO_REF ..."
+            git -C "$APP_DIR" fetch --all --prune
+            git -C "$APP_DIR" checkout "$REPO_REF"
+            git -C "$APP_DIR" pull origin $REPO_REF --ff-only || true
+          else
+            echo "Cloning $REPO_URL into $APP_DIR ..."
+            git clone --depth 1 --branch "$REPO_REF" "$REPO_URL" "$APP_DIR"
+          fi
+  run_status_tracker:
+    needs:
+      - checkout_repo
+    env:
+      APP_DIR: ${{ inputs.app_dir }}
+    steps:
+      - name: Run in user workspace
+        run: |
+          set -e
+          export APP_DIR="$(eval echo $APP_DIR)"
+          cd "$APP_DIR"
+          # install deps and start
+          ./run_dashboard.sh
+  create_session:
+    needs:
+      - checkout_repo
+    steps:
+      - name: Wait for Server To Start
+        early-cancel: any-job-failed
+        env:
+          host: localhost
+          port: 8080
+        retry:
+          interval: 3s
+          max-retries: 1000
+          timeout: 5s
+        run: curl --fail --silent "http://${host}:${port}" >/dev/null 2>&1
+      - name: Update Session
+        uses: parallelworks/update-session
+        with:
+          remotePort: 8080
+          target: workspace
+          name: ${{ sessions.session }}
+          remoteHost: localhost
