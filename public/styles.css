@@ -1,14 +1,16 @@
 :root {
-  color-scheme: light dark;
-  --bg: #0f172a;
-  --panel: #1e293b;
-  --panel-alt: #111827;
-  --text: #f8fafc;
-  --muted: #94a3b8;
-  --border: rgba(148, 163, 184, 0.3);
-  --accent: #38bdf8;
-  --alert: #f97316;
-  --success: #22c55e;
+  color-scheme: dark;
+  --bg: #030303;
+  --bg-secondary: #0a0a0a;
+  --panel: #10141a;
+  --panel-alt: #1a1f27;
+  --text: #f5f7fb;
+  --muted: rgba(245, 247, 251, 0.7);
+  --border: rgba(255, 255, 255, 0.08);
+  --accent: #ff3b3f;
+  --accent-soft: rgba(255, 59, 63, 0.18);
+  --alert: #ff7a18;
+  --success: #2de282;
   font-family: "Inter", "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
 }
 
@@ -21,7 +23,7 @@
 body {
   margin: 0;
   min-height: 100vh;
-  background: radial-gradient(circle at 20% 20%, #1e293b, #030712 70%);
+  background: #000;
   color: var(--text);
 }
 
@@ -29,6 +31,35 @@ body {
   max-width: 1100px;
   margin: 0 auto;
   padding: 2.5rem 1.25rem 4rem;
+  position: relative;
+}
+
+.page::before,
+.page::after {
+  content: "";
+  position: fixed;
+  width: 400px;
+  height: 400px;
+  background: radial-gradient(circle, rgba(255, 59, 63, 0.18), transparent 70%);
+  filter: blur(60px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.page::before {
+  top: 0;
+  right: 0;
+}
+
+.page::after {
+  bottom: 0;
+  left: 0;
+  background: radial-gradient(circle, rgba(46, 117, 255, 0.15), transparent 70%);
+}
+
+.page > * {
+  position: relative;
+  z-index: 1;
 }
 
 .hero {
@@ -61,8 +92,8 @@ h1 {
 .ghost-btn {
   padding: 0.65rem 1.25rem;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.02);
   color: var(--text);
   cursor: pointer;
   font-weight: 600;
@@ -71,7 +102,7 @@ h1 {
 
 .ghost-btn:hover {
   border-color: var(--accent);
-  color: var(--accent);
+  box-shadow: 0 0 20px var(--accent-soft);
 }
 
 .cards {
@@ -84,8 +115,9 @@ h1 {
 .card {
   padding: 1rem 1.2rem;
   border-radius: 1rem;
-  background: linear-gradient(135deg, var(--panel-alt), var(--panel));
+  background: linear-gradient(135deg, var(--panel), var(--panel-alt));
   border: 1px solid var(--border);
+  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.45);
 }
 
 .card p {
@@ -100,7 +132,8 @@ h1 {
 }
 
 .card.alert {
-  border-color: rgba(249, 115, 22, 0.5);
+  border-color: var(--accent);
+  box-shadow: 0 0 25px var(--accent-soft);
 }
 
 .grid {
@@ -112,9 +145,10 @@ h1 {
 
 .panel {
   padding: 1.25rem;
-  background: rgba(15, 23, 42, 0.6);
+  background: rgba(10, 10, 10, 0.7);
   border-radius: 1rem;
   border: 1px solid var(--border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
 }
 
 .panel h3 {
@@ -162,7 +196,7 @@ h1 {
   padding: 0.55rem 0.8rem;
   border-radius: 0.6rem;
   border: 1px solid var(--border);
-  background: rgba(2, 6, 23, 0.4);
+  background: rgba(3, 3, 3, 0.8);
   color: var(--text);
 }
 
@@ -173,10 +207,11 @@ h1 {
 }
 
 .table-panel {
-  background: rgba(2, 6, 23, 0.6);
+  background: rgba(3, 3, 3, 0.75);
   border: 1px solid var(--border);
   border-radius: 1rem;
   padding: 1rem;
+  box-shadow: 0 30px 45px rgba(0, 0, 0, 0.55);
 }
 
 .table-head {
@@ -220,7 +255,7 @@ tbody td {
 }
 
 tbody tr:hover {
-  background: rgba(56, 189, 248, 0.06);
+  background: rgba(255, 59, 63, 0.08);
 }
 
 .system-name {
@@ -251,7 +286,7 @@ tbody tr:hover {
 
 .badge.up {
   color: var(--success);
-  background: rgba(34, 197, 94, 0.12);
+  background: rgba(45, 226, 130, 0.18);
 }
 
 .badge.up::before {
@@ -260,7 +295,7 @@ tbody tr:hover {
 
 .badge.down {
   color: #f43f5e;
-  background: rgba(244, 63, 94, 0.12);
+  background: rgba(244, 63, 94, 0.18);
 }
 
 .badge.down::before {
@@ -269,7 +304,7 @@ tbody tr:hover {
 
 .badge.degraded {
   color: var(--alert);
-  background: rgba(249, 115, 22, 0.15);
+  background: rgba(255, 122, 24, 0.2);
 }
 
 .badge.degraded::before {
