@@ -1,0 +1,4 @@
+beautifulsoup4>=4.12
+certifi>=2024.2
+requests>=2.31
+urllib3>=2.0
