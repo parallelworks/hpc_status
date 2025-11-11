@@ -1,4 +1,4 @@
-# HPC Status Dashboard
+# HPCMP Status Dashboard
 
 This folder contains a lightweight static site for visualizing the HPCMP
 unclassified system status feed scraped by `storage/hpc_status_scraper.py`.
