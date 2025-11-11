@@ -38,6 +38,7 @@ jobs:
         run: |
           set -e
           export APP_DIR="$(eval echo $APP_DIR)"
+          cd "$APP_DIR"
           if [ -d "$APP_DIR/.git" ]; then
             echo "Repo exists; fetching latest for $REPO_REF ..."
             git -C "$APP_DIR" fetch --all --prune
@@ -78,6 +79,6 @@ jobs:
         uses: parallelworks/update-session
         with:
           remotePort: 8080
-          name: ${{ sessions.session }}
+          name: 'status'
           status: 'running'
           target: 'user-workspace'
