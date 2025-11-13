@@ -9,7 +9,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 PORT="${PORT:-8080}"
 HOST="${HOST:-0.0.0.0}"
 URL_PREFIX="${URL_PREFIX:-}"
-DEFAULT_THEME="${DEFAULT_THEME:-dark}"
+DEFAULT_THEME="${DEFAULT_THEME:-light}"
 
 cd "${SCRIPT_DIR}"
 
@@ -23,4 +23,5 @@ if [[ -n "${URL_PREFIX}" ]]; then
 fi
 
 echo "[run_dashboard] Starting dashboard on ${HOST}:${PORT} ${URL_PREFIX:+(prefix: ${URL_PREFIX})} (default theme: ${DEFAULT_THEME})"
+echo "${cmd[@]}"
 exec "${cmd[@]}"

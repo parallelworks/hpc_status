@@ -5,6 +5,32 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>HPC Status Dashboard</title>
+  <script>
+    (function () {
+      var loc = window.location;
+      var path = loc.pathname || "/";
+      var last = path.split("/").filter(Boolean).pop() || "";
+      var hasDot = last.includes(".");
+      if (!path.endsWith("/") && !hasDot) {
+        var next = loc.origin + path + "/" + loc.search + loc.hash;
+        loc.replace(next);
+      }
+    })();
+  </script>
+  <script>
+    (function () {
+      var path = window.location.pathname || "/";
+      if (!path.endsWith("/")) {
+        path = path.replace(/[^/]+$/, "/");
+      }
+      if (!path.endsWith("/")) {
+        path += "/";
+      }
+      var base = document.createElement("base");
+      base.href = window.location.origin + path;
+      document.head.appendChild(base);
+    })();
+  </script>
   <script src="app-config.js"></script>
   <script>
     (function () {
