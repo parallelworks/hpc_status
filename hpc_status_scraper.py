@@ -31,8 +31,7 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 from urllib.parse import urljoin
 
 import requests
@@ -49,7 +48,6 @@ except Exception:  # pragma: no cover
 
 
 UNCLASSIFIED_URL = "https://centers.hpc.mil/systems/unclassified.html"
-DEFAULT_MARKDOWN_DIR = "system_markdown"
 
 
 # --- Status parsing helpers ---------------------------------------------------
@@ -141,10 +139,6 @@ SCHEDULER_KEYWORDS = {
     "pbs": "pbs",
 }
 
-PARTITION_KEYWORDS = ("partition", "queue", "class")
-LIMIT_KEYWORDS = ("limit", "maximum", "wall", "time", "node", "core", "cpu", "memory", "job")
-LEADING_PAD_HEADERS = ("priority", "category", "class")
-
 
 def slugify_system(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "", name.strip().lower())
@@ -230,310 +224,6 @@ def build_login(system_name: str, dsrc: Optional[str]) -> Optional[str]:
     return f"{slugify_system(system_name)}.{canon}"
 
 
-def infer_system_name_from_context(node: Tag) -> Optional[str]:
-    """
-    Attempt to fall back to the nearest heading/strong text when <img> alt text is missing.
-    """
-    heading = find_nearest_heading_text(node)
-    if heading:
-        cleaned = re.sub(r"\bstatus\b.*", "", heading, flags=re.IGNORECASE).strip(" :-")
-        return cleaned or heading
-
-    if isinstance(node, Tag):
-        prev_heading = node.find_previous(["h1", "h2", "h3", "h4", "h5", "strong"])
-        if prev_heading:
-            text = prev_heading.get_text(" ", strip=True)
-            cleaned = re.sub(r"\bstatus\b.*", "", text, flags=re.IGNORECASE).strip(" :-")
-            if cleaned:
-                return cleaned
-    return None
-
-
-def find_status_images(soup: BeautifulSoup) -> List[Tag]:
-    imgs = soup.select("img.statusImg")
-    if not imgs:
-        imgs = soup.find_all("img", attrs={"class": re.compile(r".*status.*", re.IGNORECASE)})
-    return imgs
-
-
-def find_system_container(node: Tag) -> Optional[Tag]:
-    """
-    Walk up the DOM to find the nearest container that holds descriptive text for the system.
-    """
-    cur = node
-    for _ in range(6):
-        if not isinstance(cur, Tag):
-            break
-        if cur.name in {"li", "div", "section", "article"} and cur.get_text(" ", strip=True):
-            cls = " ".join(cur.get("class", [])).lower()
-            if any(key in cls for key in ("system", "card", "status", "panel")):
-                return cur
-            return cur
-        cur = cur.parent
-    return node.parent if isinstance(node, Tag) else None
-
-
-def find_detail_section(soup: BeautifulSoup, system_name: str) -> Optional[Tag]:
-    if not system_name:
-        return None
-    suffix = re.sub(r"[^A-Za-z0-9]", "", system_name)
-    if not suffix:
-        return None
-    for candidate in (f"collapse{suffix}", suffix):
-        detail = soup.find(id=candidate)
-        if isinstance(detail, Tag):
-            return detail
-    return None
-
-
-def collect_links(container: Optional[Tag], base_url: str) -> List[Dict[str, str]]:
-    if not container:
-        return []
-    links: List[Dict[str, str]] = []
-    seen = set()
-    for a in container.find_all("a", href=True):
-        href = urljoin(base_url, a.get("href", "").strip())
-        text = a.get_text(" ", strip=True) or href
-        key = (text.lower(), href.lower())
-        if key in seen:
-            continue
-        seen.add(key)
-        links.append({"text": text, "href": href})
-    return links
-
-
-def merge_links(*groups: List[Dict[str, str]]) -> List[Dict[str, str]]:
-    merged: List[Dict[str, str]] = []
-    seen = set()
-    for group in groups:
-        for link in group or []:
-            text = (link.get("text") or "").strip()
-            href = (link.get("href") or "").strip()
-            key = (text.lower(), href.lower())
-            if key in seen:
-                continue
-            seen.add(key)
-            merged.append({"text": text or href, "href": href})
-    return merged
-
-
-def categorize_links(links: List[Dict[str, str]]) -> Tuple[List[Dict[str, str]], List[Dict[str, str]]]:
-    guide_keywords = ("guide", "user", "manual", "training", "tutorial", "reference")
-    guides: List[Dict[str, str]] = []
-    others: List[Dict[str, str]] = []
-
-    for link in links:
-        text = (link.get("text") or "").lower()
-        href = (link.get("href") or "").lower()
-        if any(keyword in text for keyword in guide_keywords) or any(keyword in href for keyword in guide_keywords):
-            guides.append(link)
-        else:
-            others.append(link)
-    return guides, others
-
-
-def normalize_whitespace(text: str) -> str:
-    return re.sub(r"\s+", " ", text or "").strip()
-
-
-def split_label_value(text: str) -> Optional[Tuple[str, str]]:
-    if ":" not in text:
-        return None
-    label, value = text.split(":", 1)
-    label = normalize_whitespace(label)
-    value = normalize_whitespace(value)
-    if not label or not value:
-        return None
-    return label, value
-
-
-def extract_html_tables(container: Optional[Tag]) -> List[Dict[str, Any]]:
-    if not container:
-        return []
-    tables: List[Dict[str, Any]] = []
-    for idx, table in enumerate(container.find_all("table"), start=1):
-        headers: List[str] = []
-        rows: List[List[str]] = []
-        caption_tag = table.find("caption")
-        title = normalize_whitespace(caption_tag.get_text(" ", strip=True)) if caption_tag else f"Table {idx}"
-
-        for tr in table.find_all("tr"):
-            cells = tr.find_all(["th", "td"])
-            if not cells:
-                continue
-            row = [normalize_whitespace(cell.get_text(" ", strip=True)) for cell in cells]
-            if not any(row):
-                continue
-            if tr.find_all("th") and not headers:
-                headers = row
-                continue
-            rows.append(row)
-
-        if rows:
-            if not headers:
-                max_cols = max(len(row) for row in rows)
-                headers = [f"Column {i+1}" for i in range(max_cols)]
-            normalized_rows: List[List[str]] = []
-            for row in rows:
-                if len(row) < len(headers):
-                    diff = len(headers) - len(row)
-                    first_header = (headers[0] or "").lower()
-                    if headers and first_header and any(key in first_header for key in LEADING_PAD_HEADERS):
-                        row = [""] * diff + row
-                    else:
-                        row = row + [""] * diff
-                elif len(row) > len(headers):
-                    row = row[:len(headers)]
-                normalized_rows.append(row)
-            rows = normalized_rows
-            tables.append({"title": title, "headers": headers, "rows": rows})
-    return tables
-
-
-def analyze_container_text(container: Optional[Tag]) -> Dict[str, Any]:
-    if not container:
-        return {
-            "description": "",
-            "facts": [],
-            "partitions": [],
-            "limits": [],
-            "tables": [],
-        }
-
-    paragraphs: List[str] = []
-    facts: List[Dict[str, str]] = []
-    partitions: List[Dict[str, str]] = []
-    limits: List[Dict[str, str]] = []
-    seen_text = set()
-
-    elements = container.find_all(["p", "li"], recursive=True)
-    if not elements:
-        elements = [container]
-
-    for tag in elements:
-        if not isinstance(tag, Tag):
-            continue
-        if tag.find("img", attrs={"class": re.compile(r".*status.*", re.IGNORECASE)}):
-            continue
-        if tag.find_parent("table"):
-            continue
-        anchors = tag.find_all("a")
-        if anchors:
-            anchor_text = normalize_whitespace(" ".join(a.get_text(" ", strip=True) for a in anchors))
-            if anchor_text and anchor_text == normalize_whitespace(tag.get_text(" ", strip=True)):
-                continue
-        text = normalize_whitespace(tag.get_text(" ", strip=True))
-        if not text or len(text) < 3:
-            continue
-        if re.search(r"\bis\s+currently\s+", text, flags=re.IGNORECASE):
-            continue
-        if text.lower() in {"more info", "less info"}:
-            continue
-        if text.lower() in seen_text:
-            continue
-        seen_text.add(text.lower())
-
-        kv = split_label_value(text)
-        if kv:
-            label, value = kv
-            label_lower = label.lower()
-            entry = {"label": label, "value": value}
-            if any(keyword in label_lower for keyword in PARTITION_KEYWORDS):
-                partitions.append(entry)
-            elif any(keyword in label_lower for keyword in LIMIT_KEYWORDS):
-                limits.append(entry)
-            else:
-                facts.append(entry)
-        else:
-            paragraphs.append(text)
-
-    return {
-        "description": "\n\n".join(paragraphs).strip(),
-        "facts": facts,
-        "partitions": partitions,
-        "limits": limits,
-        "tables": extract_html_tables(container),
-    }
-
-
-def merge_detail_sections(sections: List[Dict[str, Any]]) -> Dict[str, Any]:
-    description_parts: List[str] = []
-    facts: List[Dict[str, str]] = []
-    partitions: List[Dict[str, str]] = []
-    limits: List[Dict[str, str]] = []
-    tables: List[Dict[str, Any]] = []
-
-    def dedup_append(target: List[Dict[str, str]], entry: Dict[str, str], seen: set) -> None:
-        key = (entry.get("label", "").lower(), entry.get("value", "").lower())
-        if key in seen:
-            return
-        seen.add(key)
-        target.append(entry)
-
-    facts_seen: set = set()
-    partition_seen: set = set()
-    limit_seen: set = set()
-
-    for section in sections:
-        if not section:
-            continue
-        desc = section.get("description")
-        if desc:
-            description_parts.append(desc.strip())
-        for entry in section.get("facts") or []:
-            if not isinstance(entry, dict):
-                continue
-            dedup_append(facts, entry, facts_seen)
-        for entry in section.get("partitions") or []:
-            if not isinstance(entry, dict):
-                continue
-            dedup_append(partitions, entry, partition_seen)
-        for entry in section.get("limits") or []:
-            if not isinstance(entry, dict):
-                continue
-            dedup_append(limits, entry, limit_seen)
-        tables.extend(section.get("tables") or [])
-
-    return {
-        "description": "\n\n".join(description_parts).strip(),
-        "facts": facts,
-        "partitions": partitions,
-        "limits": limits,
-        "tables": tables,
-    }
-
-
-def extract_system_contexts(soup: BeautifulSoup, base_url: str) -> List[Dict[str, Any]]:
-    contexts: List[Dict[str, Any]] = []
-    for idx, img in enumerate(find_status_images(soup), start=1):
-        system = parse_system_from_alt(img.get("alt", "")) or infer_system_name_from_context(img)
-        if not system:
-            system = f"System {idx}"
-        slug = slugify_system(system) or f"system{idx}"
-        primary_container = find_system_container(img)
-        detail_container = find_detail_section(soup, system)
-        detail_sections: List[Dict[str, Any]] = [analyze_container_text(primary_container)]
-        if detail_container and detail_container is not primary_container:
-            detail_sections.append(analyze_container_text(detail_container))
-        container_details = merge_detail_sections(detail_sections)
-        link_groups = [collect_links(primary_container, base_url)]
-        if detail_container and detail_container is not primary_container:
-            link_groups.append(collect_links(detail_container, base_url))
-        contexts.append(
-            {
-                "slug": slug,
-                "description": container_details.get("description", ""),
-                "facts": container_details.get("facts") or [],
-                "partitions": container_details.get("partitions") or [],
-                "limits": container_details.get("limits") or [],
-                "tables": container_details.get("tables") or [],
-                "links": merge_links(*link_groups),
-                "heading": find_nearest_heading_text(img),
-            }
-        )
-    return contexts
-
-
 # --- HTTP Session & fetch -----------------------------------------------------
 
 def _wrap_timeout(request_func, default_timeout: int):
@@ -561,7 +251,7 @@ def _make_session(verify, headers=None, timeout=20) -> requests.Session:
     return s
 
 
-def fetch_status(url: str, timeout: int, verify, headers: Optional[dict] = None) -> Tuple[List[Dict[str, str]], BeautifulSoup]:
+def fetch_status(url: str, timeout: int, verify, headers: Optional[dict] = None) -> List[Dict[str, str]]:
     session = _make_session(verify=verify, headers=headers, timeout=timeout)
     if verify is False:
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -573,7 +263,11 @@ def fetch_status(url: str, timeout: int, verify, headers: Optional[dict] = None)
     rows: List[Dict[str, str]] = []
     now_iso = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
-    for img in find_status_images(soup):
+    imgs = soup.select("img.statusImg")
+    if not imgs:
+        imgs = soup.find_all("img", attrs={"class": re.compile(r".*status.*", re.IGNORECASE)})
+
+    for img in imgs:
         alt = img.get("alt", "").strip()
         src = urljoin(url, img.get("src", "").strip())
 
@@ -603,7 +297,7 @@ def fetch_status(url: str, timeout: int, verify, headers: Optional[dict] = None)
                 "observed_at": now_iso,
             }
         )
-    return rows, soup
+    return rows
 
 
 # --- Output helpers -----------------------------------------------------------
@@ -666,114 +360,6 @@ def inventory_mapping(rows: List[Dict[str, str]]) -> Dict[str, Dict[str, Optiona
     return out
 
 
-def render_markdown(row: Dict[str, Any], context: Optional[Dict[str, Any]]) -> str:
-    context = context or {}
-    system_name = row.get("system") or context.get("heading") or "Unknown System"
-    description = (context.get("description") or "").strip()
-    if not description:
-        description = "No additional details were available on the source page."
-
-    user_links, other_links = categorize_links(context.get("links") or [])
-    facts = context.get("facts") or []
-    partitions = context.get("partitions") or []
-    limits = context.get("limits") or []
-    html_tables = context.get("tables") or []
-
-    def safe(value: Optional[str]) -> str:
-        return value or "Unknown"
-
-    def add_table_section(title: str, rows: List[Dict[str, str]]) -> List[str]:
-        if not rows:
-            return []
-        block = [title, "| Field | Value |", "| --- | --- |"]
-        for entry in rows:
-            block.append(f"| {entry.get('label', 'N/A')} | {entry.get('value', '')} |")
-        block.append("")
-        return block
-
-    lines: List[str] = [f"# {system_name}", ""]
-    observed = row.get("observed_at") or "Unknown time"
-    lines.append(f"_Status observed at {observed}_")
-    lines.append("")
-
-    lines.append("## Status Overview")
-    lines.append("| Field | Value |")
-    lines.append("| --- | --- |")
-    lines.append(f"| Status | {safe(row.get('status'))} |")
-    lines.append(f"| DSRC | {safe(row.get('dsrc'))} |")
-    lines.append(f"| Login Node | {safe(row.get('login'))} |")
-    lines.append(f"| Scheduler | {safe(row.get('scheduler'))} |")
-    lines.append(f"| Source | [{row.get('source_url', 'Unknown source')}]({row.get('source_url', '#')}) |")
-    lines.append("")
-
-    if row.get("img_src"):
-        lines.append(f"![Status badge for {system_name}]({row['img_src']})")
-        lines.append("")
-
-    lines.append("## System Overview")
-    lines.append(description)
-    lines.append("")
-
-    lines.extend(add_table_section("## System Details", facts))
-    lines.extend(add_table_section("## Partitions & Queues", partitions))
-    lines.extend(add_table_section("## Resource & Job Limits", limits))
-
-    for idx, table in enumerate(html_tables, start=1):
-        headers = table.get("headers") or []
-        rows = table.get("rows") or []
-        if not headers or not rows:
-            continue
-        title = table.get("title") or f"Table {idx}"
-        lines.append(f"## {title}")
-        header_row = "| " + " | ".join(headers) + " |"
-        divider = "| " + " | ".join(["---"] * len(headers)) + " |"
-        lines.append(header_row)
-        lines.append(divider)
-        for row_vals in rows:
-            padded = row_vals + [""] * (len(headers) - len(row_vals))
-            lines.append("| " + " | ".join(padded) + " |")
-        lines.append("")
-
-    if user_links:
-        lines.append("## User Guides & Training")
-        for link in user_links:
-            lines.append(f"- [{link['text']}]({link['href']})")
-        lines.append("")
-
-    if other_links:
-        lines.append("## Additional References")
-        for link in other_links:
-            lines.append(f"- [{link['text']}]({link['href']})")
-        lines.append("")
-
-    lines.append("## Raw Status Data")
-    lines.append("```json")
-    lines.append(json.dumps(row, indent=2))
-    lines.append("```")
-    lines.append("")
-
-    return "\n".join(lines).rstrip() + "\n"
-
-
-def write_markdown_files(rows: List[Dict[str, Any]], soup: BeautifulSoup, output_dir: str, base_url: str) -> None:
-    contexts = extract_system_contexts(soup, base_url)
-    out_dir = Path(output_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    for idx, row in enumerate(rows, start=1):
-        slug = slugify_system(row.get("system") or "") or f"system{idx}"
-        context = None
-        if slug:
-            for ctx in contexts:
-                if ctx.get("slug") == slug:
-                    context = ctx
-                    break
-        if context is None and idx - 1 < len(contexts):
-            context = contexts[idx - 1]
-        md = render_markdown(row, context)
-        (out_dir / f"{slug}.md").write_text(md, encoding="utf-8")
-
-
 # --- CLI ----------------------------------------------------------------------
 
 def main(argv=None) -> int:
@@ -786,11 +372,6 @@ def main(argv=None) -> int:
     parser.add_argument("--ca-bundle", default=None, help="Path to a custom CA bundle PEM (e.g., DoD roots)")
     parser.add_argument("--insecure", action="store_true", default=True, help="Disable TLS certificate verification (NOT recommended)")
     parser.add_argument("--csv", dest="csv_path", help="Write results to CSV at this path")
-    parser.add_argument(
-        "--markdown-dir",
-        default=DEFAULT_MARKDOWN_DIR,
-        help=f"Write per-system Markdown files to this directory (default: {DEFAULT_MARKDOWN_DIR}). Pass an empty string to skip.",
-    )
     args = parser.parse_args(argv)
 
     # Determine verification behavior
@@ -803,7 +384,7 @@ def main(argv=None) -> int:
         verify = DEFAULT_CA_BUNDLE
 
     try:
-        rows, soup = fetch_status(args.url, timeout=args.timeout, verify=verify, headers={"User-Agent": "pw-status-scraper/1.3"})
+        rows = fetch_status(args.url, timeout=args.timeout, verify=verify, headers={"User-Agent": "pw-status-scraper/1.3"})
     except requests.exceptions.SSLError as e:
         sys.stderr.write("TLS/SSL error: certificate verify failed. You may need to pass --ca-bundle pointing to the proper roots, or --insecure to bypass verification (NOT recommended).\n")
         sys.stderr.write(f"Details: {e}\n")
@@ -814,10 +395,6 @@ def main(argv=None) -> int:
 
     if args.csv_path:
         write_csv(rows, args.csv_path)
-
-    markdown_dir = (args.markdown_dir or "").strip()
-    if markdown_dir:
-        write_markdown_files(rows, soup, markdown_dir, args.url)
 
     if args.inventory_only:
         print(json.dumps(inventory_mapping(rows), indent=2))
