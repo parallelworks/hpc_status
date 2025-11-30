@@ -108,6 +108,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         if stripped is None:
             self.send_error(HTTPStatus.NOT_FOUND, "Invalid prefix")
             return
+        if self._maybe_redirect_directory(stripped, parsed.query):
+            return
         self.path = stripped + (f"?{parsed.query}" if parsed.query else "")
         parsed = urlparse(self.path)
         if parsed.path == "/api/status":
@@ -123,6 +125,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         stripped = self._strip_prefix(parsed.path)
         if stripped is None:
             self.send_error(HTTPStatus.NOT_FOUND, "Invalid prefix")
+            return
+        if self._maybe_redirect_directory(stripped, parsed.query):
             return
         self.path = stripped + (f"?{parsed.query}" if parsed.query else "")
         return super().do_HEAD()
@@ -241,6 +245,43 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             self.end_headers()
             return True
         return False
+
+    def _build_prefixed_path(self, path: str) -> str:
+        prefix = getattr(self.server, "url_prefix", "")  # type: ignore[attr-defined]
+        norm_prefix = (prefix or "").rstrip("/")
+        if norm_prefix and not norm_prefix.startswith("/"):
+            norm_prefix = f"/{norm_prefix}"
+        if not path.startswith("/"):
+            path = f"/{path}"
+        return f"{norm_prefix}{path}" if norm_prefix else path
+
+    def _filesystem_path(self, stripped_path: str) -> Optional[Path]:
+        try:
+            root = Path(self.directory or PUBLIC_DIR).resolve()  # type: ignore[attr-defined]
+        except Exception:
+            root = PUBLIC_DIR.resolve()
+        rel = stripped_path.lstrip("/")
+        candidate = (root / rel).resolve()
+        try:
+            candidate.relative_to(root)
+        except ValueError:
+            return None
+        return candidate
+
+    def _maybe_redirect_directory(self, stripped_path: str, query: str) -> bool:
+        fs_path = self._filesystem_path(stripped_path)
+        if not fs_path or not fs_path.is_dir():
+            return False
+        if stripped_path.endswith("/"):
+            return False
+        target = stripped_path + "/"
+        location = self._build_prefixed_path(target)
+        if query:
+            location += f"?{query}"
+        self.send_response(HTTPStatus.MOVED_PERMANENTLY)
+        self.send_header("Location", location)
+        self.end_headers()
+        return True
 
 
 def run_server(args) -> None:
