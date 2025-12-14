@@ -40,3 +40,4 @@ jobs:
           name: ${{ sessions.session }}
           status: 'running'
           target: 'user-workspace'
+          slug: "/"
