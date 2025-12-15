@@ -32,7 +32,7 @@ DATA_PATH = PUBLIC_DIR / "data" / "status.json"
 SYSTEM_MARKDOWN_DIR = Path(__file__).resolve().parent / "system_markdown"
 CLUSTER_MONITOR_SCRIPT = Path(__file__).resolve().parent / "cluster_monitor.py"
 DEFAULT_REFRESH_SECONDS = 180
-DEFAULT_CLUSTER_MONITOR_INTERVAL = 300
+DEFAULT_CLUSTER_MONITOR_INTERVAL = 120
 
 
 class DashboardState:
