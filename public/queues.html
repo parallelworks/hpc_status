@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Queue Health | HPC Status Dashboard</title>
+  <script>
+    (function () {
+      function deriveBasePath(pathname) {
+        var path = pathname || "/";
+        if (path.endsWith("/")) {
+          return path;
+        }
+        var lastSlash = path.lastIndexOf("/");
+        var segment = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
+        var prefix = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "/";
+        if (segment.includes(".")) {
+          return prefix || "/";
+        }
+        return path + "/";
+      }
+      var path = deriveBasePath(window.location.pathname || "/");
+      var base = document.createElement("base");
+      base.href = window.location.origin + path;
+      document.documentElement.setAttribute("data-base-path", path);
+      document.head.appendChild(base);
+    })();
+  </script>
+  <script src="app-config.js"></script>
+  <script>
+    (function () {
+      try {
+        const saved = window.localStorage.getItem("hpc-status-theme");
+        const fallback = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+        const initial = saved || fallback || "dark";
+        document.documentElement.dataset.theme = initial;
+      } catch (err) {
+        document.documentElement.dataset.theme = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">HPCMP Systems</p>
+        <h1>Queue health</h1>
+        <p class="lede">
+          Visualize queue depth and node availability for each cluster in the fleet.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <a class="ghost-btn" href="index.html">← Fleet dashboard</a>
+        <button id="refresh-btn" class="ghost-btn">Refresh data</button>
+        <button id="theme-toggle" class="theme-btn" aria-label="Toggle color theme">
+          <span class="theme-icon" aria-hidden="true">🌙</span>
+          <span class="theme-label">Dark</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="subnav" data-cluster-nav>
+      <a href="index.html">Fleet status</a>
+      <a href="quota.html">Quota usage</a>
+      <a href="queues.html" aria-current="page">Queue health</a>
+    </nav>
+
+    <p id="queue-status" class="status-banner" role="status" hidden></p>
+
+    <section class="cards">
+      <article class="card">
+        <p>Connected clusters</p>
+        <h2 id="connected-count">--</h2>
+      </article>
+      <article class="card">
+        <p>Queues observed</p>
+        <h2 id="queue-count">--</h2>
+      </article>
+      <article class="card">
+        <p>Running jobs</p>
+        <h2 id="running-jobs">--</h2>
+      </article>
+      <article class="card">
+        <p>Pending jobs</p>
+        <h2 id="pending-jobs">--</h2>
+      </article>
+    </section>
+
+    <section class="panel duo-panel">
+      <div class="panel-block">
+        <p class="eyebrow">Fleet core utilization</p>
+        <div id="fleet-core-donut" class="donut-chart placeholder">Awaiting data…</div>
+      </div>
+      <div class="panel-block">
+        <p class="eyebrow">Queue disposition</p>
+        <div id="fleet-queue-tags" class="queue-chip-collection muted-text">Refresh to populate queue stats.</div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Cluster focus</p>
+          <h3 id="queue-cluster-title">Select a cluster</h3>
+          <p id="queue-cluster-meta" class="muted-text"></p>
+        </div>
+        <label class="inline-select">
+          <span>Cluster</span>
+          <select id="queue-cluster-select" aria-label="Select cluster"></select>
+        </label>
+      </div>
+      <p id="queue-cluster-note" class="muted-text"></p>
+      <div class="cluster-stats-row">
+        <div class="metric-card">
+          <p>Running jobs</p>
+          <strong id="cluster-running-jobs">--</strong>
+        </div>
+        <div class="metric-card">
+          <p>Pending jobs</p>
+          <strong id="cluster-pending-jobs">--</strong>
+        </div>
+        <div class="metric-card">
+          <p>Cores running</p>
+          <strong id="cluster-running-cores">--</strong>
+        </div>
+        <div class="metric-card">
+          <p>Cores pending</p>
+          <strong id="cluster-pending-cores">--</strong>
+        </div>
+        <div class="donut-chart cluster-donut" id="cluster-core-donut">
+          <div class="placeholder">Select a cluster</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="table-panel">
+      <div class="table-head">
+        <h3>Node availability</h3>
+        <p id="node-meta" class="muted-text"></p>
+      </div>
+      <div class="table-scroll">
+        <table class="quota-table">
+          <thead>
+            <tr>
+              <th>Node type</th>
+              <th>Nodes available</th>
+              <th>Cores per node</th>
+              <th>Cores available</th>
+              <th>Cores running</th>
+              <th>Cores free</th>
+            </tr>
+          </thead>
+          <tbody id="node-body">
+            <tr>
+              <td colspan="6" class="placeholder">Loading node data…</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel-head">
+        <h3>Queue depth</h3>
+        <p id="queue-depth-meta" class="muted-text"></p>
+      </div>
+      <div id="queue-grid" class="queue-grid">
+        <div class="placeholder card">Loading queue data…</div>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <small>Queue metrics generated by cluster_monitor.py</small>
+      <small>Part of the DoD HPC fleet dashboard</small>
+    </footer>
+  </div>
+
+  <script type="module" src="queues.js"></script>
+</body>
+
+</html>

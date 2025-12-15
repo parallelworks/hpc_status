@@ -15,6 +15,8 @@ import argparse
 import functools
 import json
 import re
+import subprocess
+import sys
 import threading
 import time
 from http import HTTPStatus
@@ -28,7 +30,9 @@ from dashboard_data import determine_verify, generate_payload, write_payload
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
 DATA_PATH = PUBLIC_DIR / "data" / "status.json"
 SYSTEM_MARKDOWN_DIR = Path(__file__).resolve().parent / "system_markdown"
+CLUSTER_MONITOR_SCRIPT = Path(__file__).resolve().parent / "cluster_monitor.py"
 DEFAULT_REFRESH_SECONDS = 180
+DEFAULT_CLUSTER_MONITOR_INTERVAL = 300
 
 
 class DashboardState:
@@ -93,6 +97,43 @@ class RefreshWorker(threading.Thread):
 
     def stop(self) -> None:
         self._stop_event.set()
+
+
+class ClusterMonitorWorker(threading.Thread):
+    daemon = True
+
+    def __init__(self, *, script_path: Path, interval_seconds: int, python_executable: str):
+        super().__init__(name="cluster-monitor-worker")
+        self.script_path = script_path
+        self.interval = max(60, interval_seconds)
+        self.python_executable = python_executable
+        self._stop_event = threading.Event()
+
+    def run(self) -> None:
+        # Run immediately, then repeat on the interval
+        while not self._stop_event.is_set():
+            self._invoke_monitor()
+            if self._stop_event.wait(self.interval):
+                break
+
+    def stop(self) -> None:
+        self._stop_event.set()
+
+    def _invoke_monitor(self) -> None:
+        if not self.script_path.exists():
+            print(f"[cluster-monitor] Script missing: {self.script_path}")
+            self.stop()
+            return
+        try:
+            print(f"[cluster-monitor] Running {self.script_path.name}")
+            subprocess.run(
+                [self.python_executable, str(self.script_path)],
+                check=True,
+            )
+        except subprocess.CalledProcessError as exc:  # pragma: no cover - observational logging
+            print(f"[cluster-monitor] Execution failed: {exc}")
+        except Exception as exc:  # pragma: no cover
+            print(f"[cluster-monitor] Unexpected error: {exc}")
 
 
 SERVER_STATE: Optional[DashboardState] = None
@@ -195,9 +236,15 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_app_config(self):
         default_theme = getattr(self.server, "default_theme", "dark")  # type: ignore[attr-defined]
+        cluster_pages_enabled = getattr(self.server, "cluster_pages_enabled", False)  # type: ignore[attr-defined]
+        cluster_monitor_interval = getattr(self.server, "cluster_monitor_interval", DEFAULT_CLUSTER_MONITOR_INTERVAL)  # type: ignore[attr-defined]
         body = (
             "window.APP_CONFIG=Object.assign({},window.APP_CONFIG||{},"
-            + json.dumps({"defaultTheme": default_theme}) +
+            + json.dumps({
+                "defaultTheme": default_theme,
+                "clusterPagesEnabled": bool(cluster_pages_enabled),
+                "clusterMonitorInterval": cluster_monitor_interval,
+            }) +
             ");"
         ).encode("utf-8")
         self.send_response(HTTPStatus.OK)
@@ -337,11 +384,28 @@ def run_server(args) -> None:
     worker = RefreshWorker(state, interval_seconds=args.refresh_interval)
     worker.start()
 
+    cluster_worker: Optional[ClusterMonitorWorker] = None
+    cluster_pages_enabled = bool(args.cluster_pages)
+    cluster_monitor_enabled = bool(args.cluster_monitor) and cluster_pages_enabled
+    cluster_monitor_interval = max(60, args.cluster_monitor_interval)
+    if cluster_monitor_enabled:
+        if not CLUSTER_MONITOR_SCRIPT.exists():
+            print(f"[cluster-monitor] Skipping; script not found at {CLUSTER_MONITOR_SCRIPT}")
+        else:
+            cluster_worker = ClusterMonitorWorker(
+                script_path=CLUSTER_MONITOR_SCRIPT,
+                interval_seconds=cluster_monitor_interval,
+                python_executable=sys.executable,
+            )
+            cluster_worker.start()
+
     normalized_prefix = (args.url_prefix or "").rstrip("/")
     handler = functools.partial(DashboardRequestHandler, directory=str(PUBLIC_DIR))
     server = ThreadingHTTPServer((args.host, args.port), handler)
     server.url_prefix = normalized_prefix  # type: ignore[attr-defined]
     server.default_theme = args.default_theme  # type: ignore[attr-defined]
+    server.cluster_pages_enabled = cluster_pages_enabled  # type: ignore[attr-defined]
+    server.cluster_monitor_interval = cluster_monitor_interval if cluster_monitor_enabled else 0  # type: ignore[attr-defined]
     print(f"Serving dashboard on http://{args.host}:{args.port}")
     try:
         server.serve_forever()
@@ -350,6 +414,9 @@ def run_server(args) -> None:
     finally:
         worker.stop()
         worker.join(timeout=5)
+        if cluster_worker:
+            cluster_worker.stop()
+            cluster_worker.join(timeout=5)
         server.shutdown()
         server.server_close()
 
@@ -366,6 +433,11 @@ def parse_args():
     parser.add_argument("--ca-bundle", type=str, help="Path to a custom CA bundle.")
     parser.add_argument("--url-prefix", default="", help="Path prefix to strip from incoming requests (e.g., /session/user/status).")
     parser.add_argument("--default-theme", choices=("dark", "light"), default="dark", help="Initial theme for clients without a saved preference.")
+    parser.add_argument("--enable-cluster-pages", dest="cluster_pages", action="store_true", default=True, help="Expose quota/queue pages (default).")
+    parser.add_argument("--disable-cluster-pages", dest="cluster_pages", action="store_false", help="Serve only the original fleet dashboard.")
+    parser.add_argument("--enable-cluster-monitor", dest="cluster_monitor", action="store_true", default=True, help="Continuously run cluster_monitor.py (default).")
+    parser.add_argument("--disable-cluster-monitor", dest="cluster_monitor", action="store_false", help="Skip running cluster_monitor.py in the background.")
+    parser.add_argument("--cluster-monitor-interval", type=int, default=DEFAULT_CLUSTER_MONITOR_INTERVAL, help="Interval in seconds for running cluster_monitor.py (default: 300).")
     return parser.parse_args()
 
 
