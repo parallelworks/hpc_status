@@ -9,7 +9,7 @@
     (function () {
       function deriveBasePath(pathname) {
         var path = pathname || "/";
-        if (path.endsWith("/")) {
+        if (path.endsWith("/") || path.indexOf("/index.html") > -1 ) {
           return path;
         }
         var lastSlash = path.lastIndexOf("/");
