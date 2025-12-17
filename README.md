@@ -1,7 +1,8 @@
-# HPCMP Status Dashboard
+# HPC Status Dashboard
 
-This folder contains a lightweight static site for visualizing the HPCMP
-unclassified system status feed scraped by `storage/hpc_status_scraper.py`.
+This folder contains a lightweight static site for visualizing the HPC system status feed scraped by `storage/hpc_status_scraper.py`.
+
+The source code for this dashboard is available at [the public github repo here](https://github.com/parallelworks/hpcmp_status_site) and we encourage collaborations, improvements and pull requests.
 
 ## Components
 
