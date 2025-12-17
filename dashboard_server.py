@@ -102,15 +102,18 @@ class RefreshWorker(threading.Thread):
 class ClusterMonitorWorker(threading.Thread):
     daemon = True
 
-    def __init__(self, *, script_path: Path, interval_seconds: int, python_executable: str):
+    def __init__(self, *, script_path: Path, interval_seconds: int, python_executable: str, run_immediately: bool = True):
         super().__init__(name="cluster-monitor-worker")
         self.script_path = script_path
         self.interval = max(60, interval_seconds)
         self.python_executable = python_executable
         self._stop_event = threading.Event()
+        self._run_immediately = run_immediately
 
     def run(self) -> None:
-        # Run immediately, then repeat on the interval
+        if not self._run_immediately:
+            if self._stop_event.wait(self.interval):
+                return
         while not self._stop_event.is_set():
             self._invoke_monitor()
             if self._stop_event.wait(self.interval):
@@ -389,15 +392,16 @@ def run_server(args) -> None:
     cluster_monitor_enabled = bool(args.cluster_monitor) and cluster_pages_enabled
     cluster_monitor_interval = max(60, args.cluster_monitor_interval)
     if cluster_monitor_enabled:
-        if not CLUSTER_MONITOR_SCRIPT.exists():
-            print(f"[cluster-monitor] Skipping; script not found at {CLUSTER_MONITOR_SCRIPT}")
-        else:
+        if CLUSTER_MONITOR_SCRIPT.exists():
             cluster_worker = ClusterMonitorWorker(
                 script_path=CLUSTER_MONITOR_SCRIPT,
                 interval_seconds=cluster_monitor_interval,
                 python_executable=sys.executable,
+                run_immediately=True,
             )
             cluster_worker.start()
+        else:
+            print(f"[cluster-monitor] Skipping; script not found at {CLUSTER_MONITOR_SCRIPT}")
 
     normalized_prefix = (args.url_prefix or "").rstrip("/")
     handler = functools.partial(DashboardRequestHandler, directory=str(PUBLIC_DIR))

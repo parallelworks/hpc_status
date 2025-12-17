@@ -1,4 +1,4 @@
-import { clusterPagesEnabled } from "./page-utils.js";
+import { clampPercent, clusterPagesEnabled } from "./page-utils.js";
 
 const featureFlags = {
   clusterPages: clusterPagesEnabled(),
@@ -41,6 +41,7 @@ const apiBase = (() => {
 const STATUS_URL = new URL("api/status", apiBase).toString();
 const REFRESH_URL = new URL("api/refresh", apiBase).toString();
 const STATIC_DATA_URL = new URL("data/status.json", defaultApiBase).toString();
+const CLUSTER_USAGE_URL = new URL("data/cluster_usage.json", defaultApiBase).toString();
 
 const THEME_STORAGE_KEY = "hpc-status-theme";
 const detailCache = new Map();
@@ -57,6 +58,70 @@ const state = {
   retryHandle: null,
   activeSlug: null,
 };
+
+const usageState = {
+  map: new Map(),
+  loading: false,
+  attempted: false,
+};
+const HOURS_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
+
+const formatHoursCompact = (value) =>
+  `${HOURS_FORMATTER.format(Math.round(Number(value) || 0))} hrs`;
+
+const buildUsageMap = (clusters = []) => {
+  const map = new Map();
+  clusters.forEach((cluster) => {
+    const clusterName = cluster?.cluster_metadata?.name || cluster?.cluster_metadata?.uri || "";
+    const timestamp = cluster?.cluster_metadata?.timestamp || "";
+    const systems = cluster?.usage_data?.systems || [];
+    systems.forEach((system) => {
+      const key = (system.system || "").toLowerCase();
+      if (!key) return;
+      const alloc = Number(system.hours_allocated) || 0;
+      const remaining = Number(system.hours_remaining) || 0;
+      if (!alloc) return;
+      const existing = map.get(key) || { allocated: 0, remaining: 0, sources: [] };
+      existing.allocated += alloc;
+      existing.remaining += remaining;
+      existing.sources.push({
+        cluster: clusterName,
+        remaining,
+        allocated: alloc,
+        timestamp,
+      });
+      map.set(key, existing);
+    });
+  });
+  usageState.map = map;
+  renderTable();
+};
+
+async function loadUsageData({ force = false } = {}) {
+  if (!featureFlags.clusterPages) {
+    return;
+  }
+  if (usageState.loading) {
+    return;
+  }
+  if (usageState.attempted && !force) {
+    return;
+  }
+  usageState.loading = true;
+  try {
+    const response = await fetch(`${CLUSTER_USAGE_URL}?t=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    buildUsageMap(Array.isArray(payload) ? payload : []);
+  } catch (err) {
+    console.warn("Unable to load cluster usage metadata", err);
+  } finally {
+    usageState.loading = false;
+    usageState.attempted = true;
+  }
+}
 
 const elements = {
   totalSystems: document.getElementById("total-systems"),
@@ -274,9 +339,10 @@ function renderTable() {
     .map((row) => {
       const statusText = row.status || "UNKNOWN";
       const slugAttr = row.slug ? ` data-slug="${row.slug}"` : "";
+      const usageBadge = renderUsageBadge(row.system);
       return `<tr${slugAttr} tabindex="0" role="button">
         <td>
-          <div class="system-name">${row.system || "(unnamed)"}</div>
+          <div class="system-name">${row.system || "(unnamed)"} ${usageBadge}</div>
           <div class="system-meta">${row.raw_alt || ""}</div>
         </td>
         <td><span class="badge ${statusClass(statusText)}">${statusText}</span></td>
@@ -304,6 +370,23 @@ function filteredRows() {
     const matchesDsrc = !dsrcFilter || (row.dsrc || "").toUpperCase() === dsrcFilter;
     return matchesSearch && matchesStatus && matchesDsrc;
   });
+}
+
+function renderUsageBadge(systemName) {
+  if (!systemName) return "";
+  const entry = usageState.map.get(systemName.toLowerCase());
+  if (!entry || !entry.allocated) {
+    return "";
+  }
+  const percent = entry.allocated ? clampPercent((entry.remaining / entry.allocated) * 100) : null;
+  const label = Number.isFinite(percent) ? `${Math.round(percent)}% free` : "Allocation";
+  const topSource = entry.sources?.[0];
+  const tooltipParts = [];
+  if (topSource?.cluster) {
+    tooltipParts.push(`Allocation on ${topSource.cluster}`);
+  }
+  tooltipParts.push(`${formatHoursCompact(entry.remaining)} remaining`);
+  return `<span class="usage-pill" title="${tooltipParts.join(" • ")}">${label}</span>`;
 }
 
 function setTablePlaceholder(message, { countLabel = "0 results" } = {}) {
@@ -358,6 +441,8 @@ async function triggerRefresh() {
       throw new Error(info.detail || "Refresh failed");
     }
     await loadData({ showLoading: false });
+    usageState.attempted = false;
+    loadUsageData({ force: true });
     showStatusMessage("Updated via manual refresh.");
   } catch (err) {
     console.error(err);
@@ -841,3 +926,7 @@ applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
 registerEvents();
 loadData();
 setInterval(() => loadData({ showLoading: false, silentFallback: true }), 3 * 60 * 1000);
+if (featureFlags.clusterPages) {
+  loadUsageData();
+  setInterval(() => loadUsageData({ force: true }), 5 * 60 * 1000);
+}

@@ -3,10 +3,14 @@ import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle } from
 const DATA_URL = buildDataUrl("data/cluster_usage.json").toString();
 const numberFormatter = new Intl.NumberFormat("en-US");
 
+const RETRY_INTERVAL_MS = 15000;
+
 const state = {
   clusters: [],
   selectedIndex: 0,
   loading: false,
+  lastUpdated: null,
+  retryHandle: null,
   features: {
     clusterPages: clusterPagesEnabled(),
   },
@@ -84,6 +88,29 @@ const disableRefresh = (disabled) => {
   btn.textContent = disabled ? "Refreshing…" : "Refresh data";
 };
 
+const showGeneratingPlaceholder = (message = "Cluster monitor is generating queue data…") => {
+  setQueueGridPlaceholder(message);
+  setNodePlaceholder(message);
+  clearClusterStats();
+  if (elements.queueDepthMeta) elements.queueDepthMeta.textContent = "";
+  if (elements.nodeMeta) elements.nodeMeta.textContent = "";
+};
+
+const scheduleRetry = () => {
+  if (state.retryHandle || !state.features.clusterPages) return;
+  state.retryHandle = setTimeout(() => {
+    state.retryHandle = null;
+    loadData({ silent: true });
+  }, RETRY_INTERVAL_MS);
+};
+
+const clearRetry = () => {
+  if (state.retryHandle) {
+    clearTimeout(state.retryHandle);
+    state.retryHandle = null;
+  }
+};
+
 const setStatus = (message, variant = "info") => {
   const banner = elements.statusBanner;
   if (!banner) return;
@@ -99,7 +126,7 @@ const setStatus = (message, variant = "info") => {
 
 const setQueueGridPlaceholder = (message) => {
   if (!elements.queueGrid) return;
-  elements.queueGrid.innerHTML = `<div class="card placeholder">${message}</div>`;
+  elements.queueGrid.innerHTML = `<div class="loading-panel">${message}<small>This may take a few moments.</small></div>`;
 };
 
 const setNodePlaceholder = (message) => {
@@ -351,11 +378,7 @@ const renderClusterDetail = () => {
     if (elements.clusterTitle) elements.clusterTitle.textContent = "No data available";
     if (elements.clusterMeta) elements.clusterMeta.textContent = "";
     if (elements.clusterNote) elements.clusterNote.textContent = "";
-    setQueueGridPlaceholder("Run cluster_monitor.py to capture queue data.");
-    setNodePlaceholder("Run cluster_monitor.py to capture node data.");
-    if (elements.queueDepthMeta) elements.queueDepthMeta.textContent = "";
-    if (elements.nodeMeta) elements.nodeMeta.textContent = "";
-    clearClusterStats();
+    showGeneratingPlaceholder("Waiting for cluster monitor data…");
     return;
   }
 
@@ -364,7 +387,8 @@ const renderClusterDetail = () => {
   const cluster = state.clusters[safeIndex];
   const metadata = cluster?.cluster_metadata || {};
   const queues = parseQueues(cluster);
-  const nodes = parseNodes(cluster);
+  const rawNodes = parseNodes(cluster);
+  const nodes = sanitizeNodes(rawNodes);
   const displayName = metadata.name || metadata.uri || `Cluster ${safeIndex + 1}`;
 
   if (elements.clusterTitle) {
@@ -386,7 +410,7 @@ const renderClusterDetail = () => {
     elements.queueDepthMeta.textContent = `${queues.length} queues`;
   }
   if (elements.nodeMeta) {
-    elements.nodeMeta.textContent = `${sanitizeNodes(nodes).length} node classes`;
+    elements.nodeMeta.textContent = `${nodes.length} node classes`;
   }
 
   renderClusterStats(cluster);
@@ -399,6 +423,10 @@ const loadData = async ({ silent = true } = {}) => {
     return;
   }
   if (state.loading) return;
+  const hadData = state.clusters.length > 0;
+  if (!hadData) {
+    showGeneratingPlaceholder();
+  }
   state.loading = true;
   disableRefresh(true);
   setStatus(silent ? "" : "Refreshing queue data…", "info");
@@ -412,6 +440,7 @@ const loadData = async ({ silent = true } = {}) => {
     }
     const payload = await response.json();
     state.clusters = Array.isArray(payload) ? payload : [];
+    state.lastUpdated = Date.now();
     if (previousIdentifier) {
       const idx = state.clusters.findIndex(
         (cluster) => getClusterIdentifier(cluster) === previousIdentifier
@@ -424,13 +453,18 @@ const loadData = async ({ silent = true } = {}) => {
     renderClusterOptions();
     renderClusterDetail();
     setStatus(silent ? "" : "Queue data updated just now.");
+    if (state.clusters.length) {
+      clearRetry();
+    } else {
+      scheduleRetry();
+    }
   } catch (err) {
     console.error("Unable to load queue data", err);
     setStatus(`Unable to load queue data (${err.message}).`, "error");
-    state.clusters = [];
-    renderSummary();
-    renderClusterOptions();
-    renderClusterDetail();
+    if (!hadData) {
+      showGeneratingPlaceholder("Still gathering queue metrics…");
+    }
+    scheduleRetry();
   } finally {
     state.loading = false;
     disableRefresh(false);
@@ -448,6 +482,7 @@ const bootstrap = () => {
     setQueueGridPlaceholder("Cluster pages disabled.");
     setNodePlaceholder("Cluster pages disabled.");
     clearClusterStats();
+    clearRetry();
     return;
   }
   bindEvents();

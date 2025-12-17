@@ -56,8 +56,8 @@
 
     <nav class="subnav" data-cluster-nav>
       <a href="index.html">Fleet status</a>
-      <a href="quota.html" aria-current="page">Quota usage</a>
       <a href="queues.html">Queue health</a>
+      <a href="quota.html" aria-current="page">Quota usage</a>
     </nav>
 
     <p id="data-status" class="status-banner" role="status" hidden></p>
@@ -83,12 +83,12 @@
 
     <section class="panel duo-panel">
       <div class="panel-block">
-        <p class="eyebrow">Fleet availability</p>
-        <div id="fleet-usage-donut" class="donut-chart placeholder">Refresh to populate usage.</div>
-      </div>
-      <div class="panel-block">
         <p class="eyebrow">Queues in use</p>
         <div id="fleet-queue-tags" class="queue-chip-collection muted-text">Refresh to populate queue snapshot.</div>
+      </div>
+      <div class="panel-block">
+        <p class="eyebrow">Fleet availability</p>
+        <div id="fleet-usage-donut" class="donut-chart placeholder">Refresh to populate usage.</div>
       </div>
     </section>
 

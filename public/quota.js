@@ -4,9 +4,13 @@ const DATA_URL = buildDataUrl("data/cluster_usage.json").toString();
 const numberFormatter = new Intl.NumberFormat("en-US");
 const compactFormatter = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
 
+const RETRY_INTERVAL_MS = 15000;
+
 const state = {
   clusters: [],
   loading: false,
+  lastUpdated: null,
+  retryHandle: null,
   features: {
     clusterPages: clusterPagesEnabled(),
   },
@@ -17,7 +21,7 @@ const elements = {};
 const getElement = (id) => document.getElementById(id);
 
 const toNumber = (value) => {
-  if (value === null || value === undefined) return 0;
+  if (value === null || value === undefined || value === "-") return 0;
   const numeric = Number(String(value).replace(/,/g, ""));
   return Number.isFinite(numeric) ? numeric : 0;
 };
@@ -78,6 +82,19 @@ const cacheElements = () => {
   elements.fleetQueueTags = getElement("fleet-queue-tags");
 };
 
+const showGeneratingPlaceholder = (message = "Cluster monitor is generating quota data…") => {
+  if (!elements.clusterGrid) return;
+  elements.clusterGrid.innerHTML = `
+    <article class="loading-panel">
+      <strong>${message}</strong>
+      <span>This may take a few moments the first time.</span>
+    </article>
+  `;
+  if (elements.clusterGridNote) {
+    elements.clusterGridNote.textContent = "Waiting for cluster monitor output…";
+  }
+};
+
 const clusterTotals = (cluster) => {
   const summary = {
     allocations: 0,
@@ -92,21 +109,30 @@ const clusterTotals = (cluster) => {
   return summary;
 };
 
+const scheduleRetry = () => {
+  if (state.retryHandle || !state.features.clusterPages) return;
+  state.retryHandle = setTimeout(() => {
+    state.retryHandle = null;
+    loadData({ silent: true });
+  }, RETRY_INTERVAL_MS);
+};
+
+const clearRetry = () => {
+  if (state.retryHandle) {
+    clearTimeout(state.retryHandle);
+    state.retryHandle = null;
+  }
+};
+
 const aggregateQueueSnapshot = () => {
   const snapshot = { active: 0, backlog: 0, idle: 0 };
   state.clusters.forEach((cluster) => {
     parseQueues(cluster).forEach((queue) => {
       const running = toNumber(queue.jobs_running);
       const pending = toNumber(queue.jobs_pending);
-      if (pending > 0) {
-        snapshot.backlog += 1;
-      }
-      if (running > 0) {
-        snapshot.active += 1;
-      }
-      if (running === 0 && pending === 0) {
-        snapshot.idle += 1;
-      }
+      if (pending > 0) snapshot.backlog += 1;
+      if (running > 0) snapshot.active += 1;
+      if (running === 0 && pending === 0) snapshot.idle += 1;
     });
   });
   return snapshot;
@@ -180,8 +206,8 @@ const buildQueueChips = (queues) => {
     return '<span class="queue-chip is-idle">No queue data</span>';
   }
   const sorted = [...queues].sort((a, b) => {
-    const aLoad = toNumber(a.jobs_running) + toNumber(a.jobs_pending);
-    const bLoad = toNumber(b.jobs_running) + toNumber(b.jobs_pending);
+    const aLoad = toNumber(a.cores_running) + toNumber(a.cores_pending);
+    const bLoad = toNumber(b.cores_running) + toNumber(b.cores_pending);
     return bLoad - aLoad;
   });
   return sorted.slice(0, 8).map((queue) => {
@@ -309,17 +335,14 @@ const buildClusterCard = (cluster) => {
 const renderClusterGrid = () => {
   if (!elements.clusterGrid) return;
   if (!state.clusters.length) {
-    elements.clusterGrid.innerHTML = '<article class="card placeholder">Run cluster_monitor.py to populate usage data.</article>';
-    if (elements.clusterGridNote) {
-      elements.clusterGridNote.textContent = "Awaiting cluster monitor output.";
-    }
+    showGeneratingPlaceholder("Cluster monitor is gathering usage data…");
     return;
   }
   const sorted = [...state.clusters].sort((a, b) => {
     const aTotals = clusterTotals(a);
     const bTotals = clusterTotals(b);
-    const aPct = aTotals.allocations ? (aTotals.remaining / aTotals.allocations) : 0;
-    const bPct = bTotals.allocations ? (bTotals.remaining / bTotals.allocations) : 0;
+    const aPct = aTotals.allocations ? aTotals.remaining / aTotals.allocations : 0;
+    const bPct = bTotals.allocations ? bTotals.remaining / bTotals.allocations : 0;
     return aPct - bPct;
   });
   elements.clusterGrid.innerHTML = sorted.map((cluster) => buildClusterCard(cluster)).join("");
@@ -328,9 +351,13 @@ const renderClusterGrid = () => {
       const ts = Date.parse(cluster?.cluster_metadata?.timestamp || "");
       return Number.isFinite(ts) ? Math.max(acc, ts) : acc;
     }, 0);
-    elements.clusterGridNote.textContent = latest
-      ? `Updated ${new Date(latest).toLocaleString()}`
-      : "Timestamp unavailable";
+    if (latest) {
+      elements.clusterGridNote.textContent = `Updated ${new Date(latest).toLocaleString()}`;
+    } else if (state.lastUpdated) {
+      elements.clusterGridNote.textContent = `Updated ${new Date(state.lastUpdated).toLocaleString()}`;
+    } else {
+      elements.clusterGridNote.textContent = "Timestamp unavailable";
+    }
   }
 };
 
@@ -340,11 +367,22 @@ const bindEvents = () => {
   }
 };
 
+const applyClusterPayload = (payload) => {
+  state.clusters = Array.isArray(payload) ? payload : [];
+  state.lastUpdated = Date.now();
+  renderSummary();
+  renderClusterGrid();
+};
+
 const loadData = async ({ silent = true } = {}) => {
   if (!state.features.clusterPages) {
     return;
   }
   if (state.loading) return;
+  const hadData = state.clusters.length > 0;
+  if (!hadData) {
+    showGeneratingPlaceholder();
+  }
   state.loading = true;
   disableRefresh(true);
   if (!silent) {
@@ -356,16 +394,20 @@ const loadData = async ({ silent = true } = {}) => {
       throw new Error(`HTTP ${response.status}`);
     }
     const payload = await response.json();
-    state.clusters = Array.isArray(payload) ? payload : [];
-    renderSummary();
-    renderClusterGrid();
+    applyClusterPayload(payload);
     setBanner(silent ? "" : "Quota data updated just now.");
+    if (state.clusters.length) {
+      clearRetry();
+    } else {
+      scheduleRetry();
+    }
   } catch (err) {
     console.error("Unable to load quota data", err);
     setBanner(`Unable to load quota data (${err.message}).`, "error");
-    state.clusters = [];
-    renderSummary();
-    renderClusterGrid();
+    if (!hadData) {
+      showGeneratingPlaceholder("Waiting for cluster monitor to finish…");
+    }
+    scheduleRetry();
   } finally {
     state.loading = false;
     disableRefresh(false);
@@ -379,13 +421,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (!state.features.clusterPages) {
     if (nav) nav.remove();
     setBanner("Cluster pages are disabled on this server.", "error");
-    if (elements.clusterGrid) {
-      elements.clusterGrid.innerHTML = '<article class="card placeholder">Cluster usage pages disabled.</article>';
-    }
-    if (elements.clusterGridNote) {
-      elements.clusterGridNote.textContent = "Cluster pages disabled by server configuration.";
-    }
+    showGeneratingPlaceholder("Cluster usage pages disabled.");
     disableRefresh(true);
+    clearRetry();
     return;
   }
   bindEvents();
