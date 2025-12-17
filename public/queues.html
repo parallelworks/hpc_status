@@ -15,9 +15,6 @@
         var lastSlash = path.lastIndexOf("/");
         var segment = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
         var prefix = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "/";
-        if (segment.includes(".")) {
-          return prefix || "/";
-        }
         return path + "/";
       }
       var path = deriveBasePath(window.location.pathname || "/");
