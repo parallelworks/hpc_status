@@ -1,3 +1,14 @@
+import { clusterPagesEnabled } from "./page-utils.js";
+
+const featureFlags = {
+  clusterPages: clusterPagesEnabled(),
+};
+
+const navElement = document.querySelector("[data-cluster-nav]");
+if (navElement && !featureFlags.clusterPages) {
+  navElement.remove();
+}
+
 function deriveBasePath(pathname) {
   const path = pathname || "/";
   if (path.endsWith("/")) {

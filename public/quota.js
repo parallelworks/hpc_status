@@ -1,0 +1,393 @@
+import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle } from "./page-utils.js";
+
+const DATA_URL = buildDataUrl("data/cluster_usage.json").toString();
+const numberFormatter = new Intl.NumberFormat("en-US");
+const compactFormatter = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
+
+const state = {
+  clusters: [],
+  loading: false,
+  features: {
+    clusterPages: clusterPagesEnabled(),
+  },
+};
+
+const elements = {};
+
+const getElement = (id) => document.getElementById(id);
+
+const toNumber = (value) => {
+  if (value === null || value === undefined) return 0;
+  const numeric = Number(String(value).replace(/,/g, ""));
+  return Number.isFinite(numeric) ? numeric : 0;
+};
+
+const formatInteger = (value) => numberFormatter.format(Math.round(Number(value) || 0));
+
+const formatHours = (value, { compact = false } = {}) => {
+  const numeric = Number(value) || 0;
+  const formatter = compact ? compactFormatter : numberFormatter;
+  return formatter.format(Math.round(numeric));
+};
+
+const parseSystems = (cluster) => cluster?.usage_data?.systems || [];
+const parseQueues = (cluster) => cluster?.queue_data?.queues || [];
+
+const computeSummary = () => {
+  const totals = { allocations: 0, used: 0, remaining: 0 };
+  state.clusters.forEach((cluster) => {
+    parseSystems(cluster).forEach((system) => {
+      totals.allocations += Number(system.hours_allocated) || 0;
+      totals.used += Number(system.hours_used) || 0;
+      totals.remaining += Number(system.hours_remaining) || 0;
+    });
+  });
+  return totals;
+};
+
+const disableRefresh = (disabled) => {
+  const btn = elements.refreshBtn;
+  if (!btn) return;
+  btn.disabled = disabled;
+  btn.textContent = disabled ? "Refreshing…" : "Refresh data";
+};
+
+const setBanner = (message, variant = "info") => {
+  const banner = elements.statusBanner;
+  if (!banner) return;
+  banner.textContent = message || "";
+  if (message) {
+    banner.dataset.variant = variant;
+    banner.hidden = false;
+  } else {
+    banner.hidden = true;
+    delete banner.dataset.variant;
+  }
+};
+
+const cacheElements = () => {
+  elements.clusterCount = getElement("cluster-count");
+  elements.totalAllocations = getElement("total-allocations");
+  elements.totalUsed = getElement("total-used");
+  elements.totalRemaining = getElement("total-remaining");
+  elements.refreshBtn = getElement("refresh-btn");
+  elements.statusBanner = getElement("data-status");
+  elements.clusterGrid = getElement("cluster-grid");
+  elements.clusterGridNote = getElement("cluster-grid-note");
+  elements.fleetUsageDonut = getElement("fleet-usage-donut");
+  elements.fleetQueueTags = getElement("fleet-queue-tags");
+};
+
+const clusterTotals = (cluster) => {
+  const summary = {
+    allocations: 0,
+    used: 0,
+    remaining: 0,
+  };
+  parseSystems(cluster).forEach((system) => {
+    summary.allocations += Number(system.hours_allocated) || 0;
+    summary.used += Number(system.hours_used) || 0;
+    summary.remaining += Number(system.hours_remaining) || 0;
+  });
+  return summary;
+};
+
+const aggregateQueueSnapshot = () => {
+  const snapshot = { active: 0, backlog: 0, idle: 0 };
+  state.clusters.forEach((cluster) => {
+    parseQueues(cluster).forEach((queue) => {
+      const running = toNumber(queue.jobs_running);
+      const pending = toNumber(queue.jobs_pending);
+      if (pending > 0) {
+        snapshot.backlog += 1;
+      }
+      if (running > 0) {
+        snapshot.active += 1;
+      }
+      if (running === 0 && pending === 0) {
+        snapshot.idle += 1;
+      }
+    });
+  });
+  return snapshot;
+};
+
+const renderFleetUsageDonut = (summary) => {
+  if (!elements.fleetUsageDonut) return;
+  if (!summary.allocations) {
+    elements.fleetUsageDonut.innerHTML = '<div class="placeholder">No usage data yet.</div>';
+    return;
+  }
+  const percentRemaining = clampPercent((summary.remaining / summary.allocations) * 100);
+  elements.fleetUsageDonut.innerHTML = `
+    <div class="donut" style="--donut-value:${percentRemaining}">
+      <strong>${Math.round(percentRemaining)}%</strong>
+      <span>Hours remaining</span>
+    </div>
+    <small>${formatHours(summary.remaining, { compact: true })} hrs left</small>
+  `;
+};
+
+const renderFleetQueueSnapshot = () => {
+  if (!elements.fleetQueueTags) return;
+  const snapshot = aggregateQueueSnapshot();
+  const total = snapshot.active + snapshot.backlog + snapshot.idle;
+  if (!total) {
+    elements.fleetQueueTags.textContent = "No queue data yet.";
+    return;
+  }
+  elements.fleetQueueTags.innerHTML = `
+    <span class="queue-chip is-active">Active <small>${snapshot.active}</small></span>
+    <span class="queue-chip is-backlog">Backlog <small>${snapshot.backlog}</small></span>
+    <span class="queue-chip is-idle">Idle <small>${snapshot.idle}</small></span>
+  `;
+};
+
+const renderSummary = () => {
+  const summary = computeSummary();
+  if (elements.clusterCount) {
+    elements.clusterCount.textContent = formatInteger(state.clusters.length);
+  }
+  if (elements.totalAllocations) {
+    elements.totalAllocations.textContent = summary.allocations
+      ? `${formatHours(summary.allocations, { compact: true })} hrs`
+      : "--";
+  }
+  if (elements.totalUsed) {
+    elements.totalUsed.textContent = summary.used
+      ? `${formatHours(summary.used, { compact: true })} hrs`
+      : "--";
+  }
+  if (elements.totalRemaining) {
+    elements.totalRemaining.textContent = summary.remaining
+      ? `${formatHours(summary.remaining, { compact: true })} hrs`
+      : "--";
+  }
+  renderFleetUsageDonut(summary);
+  renderFleetQueueSnapshot();
+};
+
+const queueState = (queue) => {
+  const running = toNumber(queue.jobs_running);
+  const pending = toNumber(queue.jobs_pending);
+  if (pending > 0) return "backlog";
+  if (running > 0) return "active";
+  return "idle";
+};
+
+const buildQueueChips = (queues) => {
+  if (!queues.length) {
+    return '<span class="queue-chip is-idle">No queue data</span>';
+  }
+  const sorted = [...queues].sort((a, b) => {
+    const aLoad = toNumber(a.jobs_running) + toNumber(a.jobs_pending);
+    const bLoad = toNumber(b.jobs_running) + toNumber(b.jobs_pending);
+    return bLoad - aLoad;
+  });
+  return sorted.slice(0, 8).map((queue) => {
+    const stateClass = queueState(queue);
+    const running = formatInteger(queue.jobs_running || 0);
+    const pending = formatInteger(queue.jobs_pending || 0);
+    const maxWall = queue.max_walltime && queue.max_walltime !== "-" ? queue.max_walltime : "--";
+    return `
+      <span class="queue-chip is-${stateClass}" title="Max wall ${maxWall}">
+        ${queue.queue_name || "queue"}
+        <small>${running} run / ${pending} pend</small>
+      </span>
+    `;
+  }).join("");
+};
+
+const buildSubprojectRows = (systems) => {
+  if (!systems.length) {
+    return '<tr><td colspan="4" class="placeholder">No subprojects reported.</td></tr>';
+  }
+  const sorted = [...systems].sort((a, b) => (Number(b.hours_allocated) || 0) - (Number(a.hours_allocated) || 0));
+  const limited = sorted.slice(0, 5);
+  const remainder = sorted.length - limited.length;
+  const rows = limited
+    .map((system) => {
+      const percentRemaining = clampPercent(system.percent_remaining);
+      return `
+        <tr>
+          <td>${system.system || "--"}</td>
+          <td><code>${system.subproject || "--"}</code></td>
+          <td>${formatHours(system.hours_allocated)}</td>
+          <td>
+            <div class="usage-progress compact">
+              <div class="progress-track">
+                <div class="progress-value" style="width:${percentRemaining}%"></div>
+              </div>
+              <span>${percentRemaining.toFixed(1)}% remaining</span>
+            </div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+  if (remainder > 0) {
+    return `${rows}<tr><td colspan="4" class="placeholder">+${remainder} additional subprojects</td></tr>`;
+  }
+  return rows;
+};
+
+const buildClusterCard = (cluster) => {
+  const metadata = cluster?.cluster_metadata || {};
+  const systems = parseSystems(cluster);
+  const queues = parseQueues(cluster);
+  const totals = clusterTotals(cluster);
+  const percentRemaining = totals.allocations
+    ? clampPercent((totals.remaining / totals.allocations) * 100)
+    : 0;
+  const metaParts = [];
+  if (metadata.status) metaParts.push(String(metadata.status).toUpperCase());
+  if (metadata.type) metaParts.push(metadata.type);
+  if (metadata.uri) metaParts.push(metadata.uri);
+  if (metadata.timestamp) metaParts.push(new Date(metadata.timestamp).toLocaleString());
+  const donutDetail = totals.allocations
+    ? `${formatHours(totals.remaining, { compact: true })} of ${formatHours(totals.allocations, { compact: true })} hrs`
+    : "No allocation data";
+  return `
+    <article class="cluster-card">
+      <header>
+        <div>
+          <p class="eyebrow">${metadata.status ? metadata.status.toUpperCase() : "Cluster"}</p>
+          <h4>${metadata.name || metadata.uri || "Cluster"}</h4>
+          <p class="muted-text">${metaParts.join(" • ")}</p>
+        </div>
+      </header>
+      <div class="cluster-card-body">
+        <div class="cluster-card-summary">
+          <div class="donut-chart" aria-label="${metadata.name || metadata.uri || "Cluster"} hours remaining">
+            <div class="donut" style="--donut-value:${percentRemaining}">
+              <strong>${Math.round(percentRemaining)}%</strong>
+              <span>Remaining</span>
+            </div>
+            <small>${donutDetail}</small>
+          </div>
+          <ul class="cluster-metrics">
+            <li><span>Allocated</span><strong>${formatHours(totals.allocations)}</strong></li>
+            <li><span>Used</span><strong>${formatHours(totals.used)}</strong></li>
+            <li><span>Remaining</span><strong>${formatHours(totals.remaining)}</strong></li>
+          </ul>
+        </div>
+        <div class="cluster-subprojects">
+          <div class="table-head compact">
+            <h5>Subprojects</h5>
+            <span>${systems.length} total</span>
+          </div>
+          <div class="table-scroll mini">
+            <table class="quota-table">
+              <thead>
+                <tr>
+                  <th>System</th>
+                  <th>Subproject</th>
+                  <th>Allocated</th>
+                  <th>Availability</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${buildSubprojectRows(systems)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="cluster-queues">
+          <div class="cluster-queues-head">
+            <h5>Queue snapshot</h5>
+            <span>${queues.length ? `${queues.length} queues` : "No queues"}</span>
+          </div>
+          <div class="queue-chip-collection">
+            ${buildQueueChips(queues)}
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+};
+
+const renderClusterGrid = () => {
+  if (!elements.clusterGrid) return;
+  if (!state.clusters.length) {
+    elements.clusterGrid.innerHTML = '<article class="card placeholder">Run cluster_monitor.py to populate usage data.</article>';
+    if (elements.clusterGridNote) {
+      elements.clusterGridNote.textContent = "Awaiting cluster monitor output.";
+    }
+    return;
+  }
+  const sorted = [...state.clusters].sort((a, b) => {
+    const aTotals = clusterTotals(a);
+    const bTotals = clusterTotals(b);
+    const aPct = aTotals.allocations ? (aTotals.remaining / aTotals.allocations) : 0;
+    const bPct = bTotals.allocations ? (bTotals.remaining / bTotals.allocations) : 0;
+    return aPct - bPct;
+  });
+  elements.clusterGrid.innerHTML = sorted.map((cluster) => buildClusterCard(cluster)).join("");
+  if (elements.clusterGridNote) {
+    const latest = sorted.reduce((acc, cluster) => {
+      const ts = Date.parse(cluster?.cluster_metadata?.timestamp || "");
+      return Number.isFinite(ts) ? Math.max(acc, ts) : acc;
+    }, 0);
+    elements.clusterGridNote.textContent = latest
+      ? `Updated ${new Date(latest).toLocaleString()}`
+      : "Timestamp unavailable";
+  }
+};
+
+const bindEvents = () => {
+  if (elements.refreshBtn) {
+    elements.refreshBtn.addEventListener("click", () => loadData({ silent: false }));
+  }
+};
+
+const loadData = async ({ silent = true } = {}) => {
+  if (!state.features.clusterPages) {
+    return;
+  }
+  if (state.loading) return;
+  state.loading = true;
+  disableRefresh(true);
+  if (!silent) {
+    setBanner("Refreshing quota data…");
+  }
+  try {
+    const response = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    state.clusters = Array.isArray(payload) ? payload : [];
+    renderSummary();
+    renderClusterGrid();
+    setBanner(silent ? "" : "Quota data updated just now.");
+  } catch (err) {
+    console.error("Unable to load quota data", err);
+    setBanner(`Unable to load quota data (${err.message}).`, "error");
+    state.clusters = [];
+    renderSummary();
+    renderClusterGrid();
+  } finally {
+    state.loading = false;
+    disableRefresh(false);
+  }
+};
+
+document.addEventListener("DOMContentLoaded", () => {
+  cacheElements();
+  initThemeToggle();
+  const nav = document.querySelector("[data-cluster-nav]");
+  if (!state.features.clusterPages) {
+    if (nav) nav.remove();
+    setBanner("Cluster pages are disabled on this server.", "error");
+    if (elements.clusterGrid) {
+      elements.clusterGrid.innerHTML = '<article class="card placeholder">Cluster usage pages disabled.</article>';
+    }
+    if (elements.clusterGridNote) {
+      elements.clusterGridNote.textContent = "Cluster pages disabled by server configuration.";
+    }
+    disableRefresh(true);
+    return;
+  }
+  bindEvents();
+  loadData();
+});
