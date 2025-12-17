@@ -8,7 +8,8 @@ sessions:
     useTLS: false
     redirect: true
     useCustomDomain: false
-  
+    prompt-for-name:
+        default: hpcmp_status
 'on':
   execute:
     inputs: {}
@@ -40,4 +41,3 @@ jobs:
           name: ${{ sessions.session }}
           status: 'running'
           target: 'user-workspace'
-          slug: "/"
