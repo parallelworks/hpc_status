@@ -24,11 +24,13 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional, Tuple
 from urllib.parse import urlparse, unquote
+from datetime import datetime
 
 from dashboard_data import determine_verify, generate_payload, write_payload
 
 PUBLIC_DIR = Path(__file__).resolve().parent / "public"
 DATA_PATH = PUBLIC_DIR / "data" / "status.json"
+CLUSTER_USAGE_PATH = PUBLIC_DIR / "data" / "cluster_usage.json"
 SYSTEM_MARKDOWN_DIR = Path(__file__).resolve().parent / "system_markdown"
 CLUSTER_MONITOR_SCRIPT = Path(__file__).resolve().parent / "cluster_monitor.py"
 DEFAULT_REFRESH_SECONDS = 180
@@ -164,6 +166,16 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         if parsed.path == "/app-config.js":
             self._handle_app_config()
             return
+        if parsed.path == "/api/fleet/summary":
+            self._handle_fleet_summary()
+            return
+        if parsed.path == "/api/cluster-usage":
+            self._handle_cluster_usage()
+            return
+        if parsed.path.startswith("/api/cluster-usage/"):
+            slug_part = parsed.path.split("/api/cluster-usage/", 1)[-1]
+            self._handle_cluster_usage_detail(slug_part)
+            return
         if parsed.path.startswith("/api/system-markdown/"):
             slug_part = parsed.path.split("/api/system-markdown/", 1)[-1]
             self._handle_system_markdown(slug_part)
@@ -257,6 +269,45 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def _handle_fleet_summary(self) -> None:
+        state = SERVER_STATE
+        if not state:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Server not initialized.")
+            return
+        payload, last_error, _ = state.snapshot()
+        if payload is None:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, last_error or "Status data not ready.")
+            return
+        summary = self._build_system_summary(payload)
+        self._send_json(summary)
+
+    def _handle_cluster_usage(self) -> None:
+        payload = self._load_cluster_usage_payload()
+        if payload is None:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Cluster usage data unavailable.")
+            return
+        clusters = self._build_cluster_profiles(payload)
+        self._send_json({
+            "generated_at": datetime.utcnow().isoformat(),
+            "clusters": clusters,
+        })
+
+    def _handle_cluster_usage_detail(self, slug_part: str) -> None:
+        target_slug = self._normalize_cluster_slug(unquote(slug_part or ""))
+        if not target_slug:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid cluster identifier.")
+            return
+        payload = self._load_cluster_usage_payload()
+        if payload is None:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Cluster usage data unavailable.")
+            return
+        clusters = self._build_cluster_profiles(payload)
+        for cluster in clusters:
+            if cluster.get("slug") == target_slug:
+                self._send_json(cluster)
+                return
+        self.send_error(HTTPStatus.NOT_FOUND, f"Cluster '{slug_part}' not found in usage data.")
 
     def _handle_system_markdown(self, slug_part: str) -> None:
         raw = unquote(slug_part or "")
@@ -366,6 +417,115 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         self.send_header("Location", location)
         self.end_headers()
         return True
+
+    def _load_cluster_usage_payload(self):
+        if not CLUSTER_USAGE_PATH.exists():
+            return None
+        try:
+            data = json.loads(CLUSTER_USAGE_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                # Support either {"clusters": [...]} or plain list
+                return data.get("clusters") or data.get("usage") or data
+            return data
+        except Exception as exc:
+            print(f"[api] Unable to parse cluster usage data: {exc}")
+            return None
+
+    def _build_system_summary(self, payload):
+        systems = []
+        for row in payload.get("systems", []):
+            systems.append({
+                "system": row.get("system"),
+                "status": row.get("status"),
+                "dsrc": row.get("dsrc"),
+                "scheduler": (row.get("scheduler") or "").upper(),
+                "login_node": row.get("login"),
+                "observed_at": row.get("observed_at"),
+                "notes": row.get("raw_alt"),
+            })
+        return {
+            "generated_at": payload.get("meta", {}).get("generated_at"),
+            "fleet_stats": payload.get("summary", {}),
+            "systems": systems,
+        }
+
+    def _build_cluster_profiles(self, payload):
+        clusters = []
+        for entry in payload or []:
+            meta = entry.get("cluster_metadata", {}) or {}
+            usage = entry.get("usage_data", {}) or {}
+            systems = usage.get("systems", []) or []
+            queue_section = entry.get("queue_data", {}) or {}
+            queues = queue_section.get("queues", []) or []
+            nodes = queue_section.get("nodes", []) or []
+
+            total_allocated = sum(self._safe_number(system.get("hours_allocated")) for system in systems)
+            total_remaining = sum(self._safe_number(system.get("hours_remaining")) for system in systems)
+            total_used = sum(self._safe_number(system.get("hours_used")) for system in systems)
+            percent_remaining = (total_remaining / total_allocated * 100) if total_allocated else None
+
+            queue_profiles = []
+            for queue in queues:
+                running_jobs = self._safe_number(queue.get("jobs_running"))
+                pending_jobs = self._safe_number(queue.get("jobs_pending"))
+                running_cores = self._safe_number(queue.get("cores_running"))
+                pending_cores = self._safe_number(queue.get("cores_pending"))
+                total_jobs = running_jobs + pending_jobs
+                total_cores = running_cores + pending_cores
+                utilization = (running_cores / total_cores * 100) if total_cores else None
+                queue_profiles.append({
+                    "name": queue.get("queue_name"),
+                    "type": queue.get("queue_type"),
+                    "max_walltime": queue.get("max_walltime"),
+                    "jobs": {
+                        "running": running_jobs,
+                        "pending": pending_jobs,
+                    },
+                    "cores": {
+                        "running": running_cores,
+                        "pending": pending_cores,
+                    },
+                    "utilization_percent": utilization,
+                })
+
+            least_backlogged = None
+            if queue_profiles:
+                sorted_queues = sorted(queue_profiles, key=lambda q: (q["jobs"]["pending"], q["cores"]["pending"]))
+                least_backlogged = sorted_queues[0]
+
+            slug = self._normalize_cluster_slug(meta.get("name") or meta.get("uri") or "")
+            clusters.append({
+                "cluster": meta.get("name") or meta.get("uri"),
+                "slug": slug,
+                "uri": meta.get("uri"),
+                "status": meta.get("status"),
+                "type": meta.get("type"),
+                "timestamp": meta.get("timestamp"),
+                "usage": {
+                    "total_allocated_hours": total_allocated,
+                    "total_used_hours": total_used,
+                    "total_remaining_hours": total_remaining,
+                    "percent_remaining": percent_remaining,
+                    "systems": systems,
+                },
+                "queues": queue_profiles,
+                "node_classes": nodes,
+                "placement_hint": {
+                    "least_backlogged_queue": least_backlogged,
+                    "has_capacity": percent_remaining is None or percent_remaining > 5,
+                },
+            })
+        return clusters
+
+    def _normalize_cluster_slug(self, text: str) -> str:
+        return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+    @staticmethod
+    def _safe_number(value, default=0):
+        try:
+            return float(str(value).strip().replace(",", ""))
+        except Exception:
+            return default
 
 
 def run_server(args) -> None:
