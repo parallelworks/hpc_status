@@ -58,7 +58,9 @@ def summarize_clusters(usage_payload: dict, top_n: int = 3):
         percent = usage.get("percent_remaining")
         label = f"{cluster.get('cluster')} ({cluster.get('status')})"
         remaining = usage.get("total_remaining_hours")
-        print(f"- {label}: {percent:.1f}% hours available ({remaining} remaining)")
+        percent_display = f"{percent:.1f}%" if percent is not None else "N/A"
+        remaining_display = f"{remaining}" if remaining is not None else "unknown"
+        print(f"- {label}: {percent_display} hours available ({remaining_display} remaining)")
         hint = cluster.get("placement_hint", {}).get("least_backlogged_queue") or {}
         if hint:
             pending = hint.get("jobs", {}).get("pending")
