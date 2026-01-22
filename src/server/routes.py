@@ -76,6 +76,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return self._handle_collectors_status()
         if parsed.path == "/api/insights":
             return self._handle_insights()
+        if parsed.path == "/api/storage":
+            return self._handle_storage()
 
         # Fall back to static file serving
         return super().do_GET()
@@ -166,6 +168,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         config_data = self.config or {}
         ui_config = config_data.get("ui", {}) if isinstance(config_data, dict) else {}
         title = ui_config.get("title", "HPC Status Monitor") if isinstance(ui_config, dict) else "HPC Status Monitor"
+        eyebrow = ui_config.get("eyebrow", "HPC STATUS") if isinstance(ui_config, dict) else "HPC STATUS"
         body = (
             "window.APP_CONFIG=Object.assign({},window.APP_CONFIG||{},"
             + json.dumps({
@@ -173,6 +176,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 "clusterPagesEnabled": bool(self.cluster_pages_enabled),
                 "clusterMonitorInterval": self.cluster_monitor_interval,
                 "title": title,
+                "eyebrow": eyebrow,
             })
             + ");"
         ).encode("utf-8")
@@ -203,6 +207,16 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return
         # Return raw format for frontend compatibility
         # The payload is already a list of cluster objects
+        self._send_json(payload)
+
+    def _handle_storage(self):
+        """Return storage/filesystem data for all clusters."""
+        payload = self._load_cluster_usage_payload()
+        if payload is None:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Storage data unavailable.")
+            return
+        # The payload already contains storage_data per cluster
+        # Return it as-is for the storage page
         self._send_json(payload)
 
     def _handle_cluster_usage_detail(self, slug_part: str):

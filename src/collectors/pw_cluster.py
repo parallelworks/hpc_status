@@ -175,6 +175,9 @@ class PWClusterCollector(BaseCollector):
             gpu_data = self._get_gpu_info(cluster["uri"])
             system_info = self._get_system_info(cluster["uri"])
 
+        # Always collect storage info for all clusters
+        storage_data = self._get_storage_info(cluster["uri"])
+
         return {
             "cluster_metadata": {
                 "name": cluster_name,
@@ -188,6 +191,7 @@ class PWClusterCollector(BaseCollector):
             "queue_data": queue_data or {},
             "gpu_data": gpu_data or {},
             "system_info": system_info or {},
+            "storage_data": storage_data or {},
         }
 
     def _get_cluster_usage(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
@@ -491,37 +495,69 @@ class PWClusterCollector(BaseCollector):
                 info["hostname"] = line.split(":", 1)[1].strip()
         return info
 
-    def get_storage_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
+    def _get_storage_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
         """Get storage information for a cluster.
 
-        Runs `df -h` on $HOME and $WORKDIR to get storage usage.
+        Runs `df -h` on common filesystem paths to get storage usage.
         """
         try:
-            # Get $HOME storage
-            home_cmd = ["pw", "ssh", cluster_uri, "df -h $HOME"]
-            home_result = subprocess.run(
-                home_cmd,
+            # Single command to get all filesystem info at once
+            storage_cmd = [
+                "pw", "ssh", cluster_uri,
+                "echo 'HOME:'; df -h $HOME 2>/dev/null | tail -1; "
+                "echo 'WORK:'; df -h ${WORKDIR:-$HOME} 2>/dev/null | tail -1; "
+                "echo 'SCRATCH:'; df -h /scratch 2>/dev/null | tail -1 || df -h /tmp 2>/dev/null | tail -1"
+            ]
+            result = subprocess.run(
+                storage_cmd,
                 capture_output=True,
                 text=True,
                 timeout=self.ssh_timeout,
             )
 
-            # Get $WORKDIR storage
-            work_cmd = ["pw", "ssh", cluster_uri, "df -h $WORKDIR"]
-            work_result = subprocess.run(
-                work_cmd,
-                capture_output=True,
-                text=True,
-                timeout=self.ssh_timeout,
-            )
+            if result.returncode != 0:
+                return None
 
-            return {
-                "home": self._parse_df_output(home_result.stdout) if home_result.returncode == 0 else None,
-                "workdir": self._parse_df_output(work_result.stdout) if work_result.returncode == 0 else None,
-            }
+            return self._parse_storage_output(result.stdout)
         except Exception as e:
             print(f"[pw_cluster] Error getting storage for {cluster_uri}: {e}")
             return None
+
+    def _parse_storage_output(self, output: str) -> Dict[str, Any]:
+        """Parse combined storage output."""
+        storage = {}
+        current_type = None
+
+        for line in output.strip().split("\n"):
+            line = line.strip()
+            if line.endswith(":"):
+                current_type = line[:-1].lower()
+            elif current_type and line:
+                parsed = self._parse_df_line(line)
+                if parsed:
+                    storage[current_type] = parsed
+
+        return storage
+
+    def _parse_df_line(self, line: str) -> Optional[Dict[str, Any]]:
+        """Parse a single df output line."""
+        parts = line.split()
+        if len(parts) >= 5:
+            try:
+                return {
+                    "filesystem": parts[0],
+                    "size": parts[1],
+                    "used": parts[2],
+                    "available": parts[3],
+                    "percent_used": parts[4].rstrip("%"),
+                }
+            except IndexError:
+                return None
+        return None
+
+    def get_storage_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
+        """Public method for getting storage info (for backwards compatibility)."""
+        return self._get_storage_info(cluster_uri)
 
     def _parse_df_output(self, df_output: str) -> Optional[Dict[str, Any]]:
         """Parse df -h output into structured data."""

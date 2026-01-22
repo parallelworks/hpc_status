@@ -22,6 +22,7 @@ collectors:
 
 ui:
   title: "HPCMP Fleet Status"
+  eyebrow: "HPCMP FLEET"
   home_page: "fleet"
   default_theme: "dark"
   tabs:
