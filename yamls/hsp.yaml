@@ -1,0 +1,114 @@
+# yaml-language-server: $schema=https://activate.parallel.works/workflow.schema.json
+---
+#
+# HPC Status Monitor - ACTIVATE Workflow
+#
+# This workflow runs the HPC status monitoring dashboard on the Parallel Works platform.
+# Supports both HPCMP and NOAA deployments via configuration.
+
+permissions:
+  - "*"
+
+sessions:
+  session:
+    useTLS: false
+    redirect: true
+    useCustomDomain: false
+    prompt-for-name:
+      default: hpc_status
+
+on:
+  execute:
+    inputs:
+      platform:
+        type: dropdown
+        label: Platform
+        default: hpcmp
+        hidden: true
+        tooltip: Select the deployment platform configuration
+        options:
+          - label: Generic
+            value: generic
+          - label: HPCMP
+            value: hpcmp
+          - label: NOAA
+            value: noaa
+      settings:
+        type: group
+        label: Settings
+        collapsed: true
+        items:
+          port:
+            type: number
+            label: Server Port
+            default: 8080
+            tooltip: HTTP port for the dashboard server
+          theme:
+            type: dropdown
+            label: UI Theme
+            default: light
+            tooltip: Default color theme for the dashboard
+            options:
+              - label: Dark
+                value: dark
+              - label: Light
+                value: light
+          enable_cluster_pages:
+            type: boolean
+            label: Enable Cluster Pages
+            default: true
+            tooltip: Enable queue and quota monitoring pages
+          enable_cluster_monitor:
+            type: boolean
+            label: Enable Cluster Monitor
+            default: true
+            tooltip: Enable background cluster data collection
+          cluster_monitor_interval:
+            type: number
+            label: Refresh Interval
+            default: 120
+            tooltip: Data refresh interval in seconds
+
+jobs:
+  run_status_tracker:
+    steps:
+      - name: Run HPC Status Monitor
+        env:
+          PORT: ${{ inputs.settings.port }}
+          HOST: "0.0.0.0"
+          DEFAULT_THEME: ${{ inputs.settings.theme }}
+          ENABLE_CLUSTER_PAGES: ${{ inputs.settings.enable_cluster_pages && '1' || '0' }}
+          ENABLE_CLUSTER_MONITOR: ${{ inputs.settings.enable_cluster_monitor && '1' || '0' }}
+          CLUSTER_MONITOR_INTERVAL: ${{ inputs.settings.cluster_monitor_interval }}
+          CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
+        run: |
+          set -e
+          echo "Starting HPC Status Monitor..."
+          echo "Platform: ${{ inputs.platform }}"
+          echo "Port: ${PORT}"
+          echo "Theme: ${DEFAULT_THEME}"
+          echo "Config: ${CONFIG_FILE}"
+
+          # Run the dashboard
+          ./scripts/run.sh
+
+  create_session:
+    steps:
+      - name: Wait for Server To Start
+        early-cancel: any-job-failed
+        env:
+          host: localhost
+          port: ${{ inputs.settings.port }}
+        retry:
+          interval: 3s
+          max-retries: 1000
+          timeout: 5s
+        run: curl --fail --silent "http://${host}:${port}" >/dev/null 2>&1
+
+      - name: Update Session
+        uses: parallelworks/update-session
+        with:
+          remotePort: ${{ inputs.settings.port }}
+          name: ${{ sessions.session }}
+          status: "running"
+          target: "user-workspace"
