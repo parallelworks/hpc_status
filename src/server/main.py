@@ -41,13 +41,20 @@ def create_generate_payload_fn(config: Config, store: DataStore):
             timeout=collector_config.timeout,
             verify=False,  # Default to insecure for DoD sites
         )
-        data = collector.collect()
 
-        # Also write markdown files
-        markdown_dir = store.markdown_dir
-        if markdown_dir.exists():
-            # The HPCMP collector already handles markdown generation
-            pass
+        # Use collect_with_details to get both status and markdown content
+        try:
+            data, markdown_dict = collector.collect_with_details()
+
+            # Save markdown files for each system
+            for slug, content in markdown_dict.items():
+                store.save_markdown(slug, content)
+
+            print(f"[hpcmp] Collected {len(data.get('systems', []))} systems, generated {len(markdown_dict)} briefings")
+        except Exception as e:
+            # Fall back to basic collect if detailed collection fails
+            print(f"[hpcmp] Detailed collection failed, using basic: {e}")
+            data = collector.collect()
 
         return data
 

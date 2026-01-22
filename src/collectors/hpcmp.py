@@ -365,3 +365,181 @@ class HPCMPCollector(BaseCollector):
                 if cleaned:
                     return cleaned
         return None
+
+    def collect_with_details(self) -> Tuple[Dict[str, Any], Dict[str, str]]:
+        """Collect status data and detailed system briefings.
+
+        Returns:
+            Tuple of (status_payload, markdown_dict) where markdown_dict
+            maps system slugs to markdown content.
+        """
+        try:
+            rows, soup = self._fetch_status()
+            payload = self._build_payload(rows)
+
+            # Extract detailed system information
+            system_details = self._extract_all_system_details(soup)
+
+            # Generate markdown for each system
+            markdown_dict = {}
+            for row in rows:
+                system_name = row.get("system", "")
+                slug = re.sub(r"[^a-z0-9]", "", system_name.lower())
+                if slug and slug in system_details:
+                    markdown = self._generate_system_markdown(
+                        system_name, row, system_details[slug]
+                    )
+                    markdown_dict[slug] = markdown
+
+            return payload, markdown_dict
+        except Exception as e:
+            raise CollectorError(self.name, str(e), e)
+
+    def _extract_all_system_details(self, soup: BeautifulSoup) -> Dict[str, Dict]:
+        """Extract detailed specifications for all systems from the page."""
+        details = {}
+
+        # Find all system accordion sections
+        system_divs = soup.find_all("div", class_=lambda x: x and "system" in str(x).lower())
+
+        for div in system_divs:
+            # Try to find the system name from the accordion header
+            system_name = self._find_accordion_system_name(div)
+            if not system_name:
+                continue
+
+            slug = re.sub(r"[^a-z0-9]", "", system_name.lower())
+            if not slug:
+                continue
+
+            # Extract specs table
+            specs = self._extract_specs_table(div)
+
+            # Extract documentation links
+            docs = self._extract_doc_links(div)
+
+            details[slug] = {
+                "name": system_name,
+                "specs": specs,
+                "docs": docs,
+            }
+
+        return details
+
+    def _find_accordion_system_name(self, div: Tag) -> Optional[str]:
+        """Find the system name from an accordion section."""
+        # Structure: div.accordion-body > div.accordion-inner.system
+        # Sibling: div.accordion-heading contains the system name
+        parent = div.parent  # accordion-body
+        if parent:
+            # Get previous sibling (accordion-heading)
+            heading_div = parent.find_previous_sibling(class_=re.compile(r"accordion-head", re.I))
+            if heading_div:
+                # The text is like "Barfoot is an HPE Cray..."
+                text = heading_div.get_text(" ", strip=True)
+                # Extract the system name (first word before "is")
+                match = re.match(r"^\s*(\w+)\s+is\s+", text, re.I)
+                if match:
+                    return match.group(1)
+
+                # Fallback: look for system name pattern
+                match2 = re.match(r"^\s*(\w+)\s*[-–—]", text)
+                if match2:
+                    return match2.group(1)
+
+        # Fallback: look for link in parent with anchor
+        if parent and parent.parent:
+            links = parent.parent.find_all("a", href=lambda h: h and "#" in h)
+            for link in links:
+                href = link.get("href", "")
+                if href.startswith("#"):
+                    return href[1:]
+
+        return None
+
+    def _extract_specs_table(self, div: Tag) -> Dict[str, str]:
+        """Extract system specifications from the table in the div."""
+        specs = {}
+        table = div.find("table")
+        if not table:
+            return specs
+
+        rows = table.find_all("tr")
+        for row in rows:
+            cells = row.find_all(["td", "th"])
+            if len(cells) >= 2:
+                label = cells[0].get_text(strip=True)
+                value = cells[1].get_text(strip=True)
+                if label and value:
+                    specs[label] = value
+
+        return specs
+
+    def _extract_doc_links(self, div: Tag) -> List[Dict[str, str]]:
+        """Extract documentation links from the div."""
+        docs = []
+        links = div.find_all("a", href=True)
+        for link in links:
+            href = link.get("href", "")
+            text = link.get_text(strip=True)
+            if text and len(text) > 3 and ("guide" in text.lower() or "doc" in text.lower()):
+                # Make absolute URL
+                if not href.startswith("http"):
+                    href = urljoin(self.url, href)
+                docs.append({"title": text, "url": href})
+
+        return docs
+
+    def _generate_system_markdown(
+        self,
+        system_name: str,
+        status_row: Dict,
+        details: Dict
+    ) -> str:
+        """Generate markdown content for a system."""
+        lines = []
+
+        # Header
+        lines.append(f"# {system_name}")
+        lines.append("")
+
+        # Status summary
+        status = status_row.get("status", "Unknown")
+        dsrc = status_row.get("dsrc", "Unknown")
+        scheduler = status_row.get("scheduler", "Unknown")
+        login = status_row.get("login", "N/A")
+
+        lines.append("## Current Status")
+        lines.append("")
+        lines.append(f"- **Status**: {status}")
+        lines.append(f"- **Site**: {dsrc.upper() if dsrc else 'Unknown'}")
+        lines.append(f"- **Scheduler**: {scheduler.upper() if scheduler else 'Unknown'}")
+        lines.append(f"- **Login Node**: `{login}`" if login else "- **Login Node**: N/A")
+        lines.append("")
+
+        # Specifications
+        specs = details.get("specs", {})
+        if specs:
+            lines.append("## System Specifications")
+            lines.append("")
+            lines.append("| Specification | Value |")
+            lines.append("|--------------|-------|")
+            for label, value in specs.items():
+                if label:  # Skip empty labels
+                    lines.append(f"| {label} | {value} |")
+            lines.append("")
+
+        # Documentation links
+        docs = details.get("docs", [])
+        if docs:
+            lines.append("## Documentation")
+            lines.append("")
+            for doc in docs:
+                lines.append(f"- [{doc['title']}]({doc['url']})")
+            lines.append("")
+
+        # Source info
+        lines.append("---")
+        lines.append(f"*Data source: [centers.hpc.mil]({self.url})*")
+
+        return "\n".join(lines)
