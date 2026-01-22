@@ -165,6 +165,16 @@ class PWClusterCollector(BaseCollector):
         usage_data = self._get_cluster_usage(cluster["uri"])
         queue_data = self._get_cluster_queues(cluster["uri"])
 
+        # For clusters without schedulers, try to get GPU and system info
+        gpu_data = None
+        system_info = None
+        has_scheduler = bool(usage_data and usage_data.get("systems")) or bool(queue_data and queue_data.get("queues"))
+
+        if not has_scheduler:
+            # This is likely a standalone compute server - get GPU/system info
+            gpu_data = self._get_gpu_info(cluster["uri"])
+            system_info = self._get_system_info(cluster["uri"])
+
         return {
             "cluster_metadata": {
                 "name": cluster_name,
@@ -172,9 +182,12 @@ class PWClusterCollector(BaseCollector):
                 "status": cluster["status"],
                 "type": cluster["type"],
                 "timestamp": datetime.utcnow().isoformat() + "Z",
+                "has_scheduler": has_scheduler,
             },
             "usage_data": usage_data or {},
             "queue_data": queue_data or {},
+            "gpu_data": gpu_data or {},
+            "system_info": system_info or {},
         }
 
     def _get_cluster_usage(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
@@ -358,6 +371,125 @@ class PWClusterCollector(BaseCollector):
                             continue
 
         return queue_data
+
+    def _get_gpu_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
+        """Get GPU information using nvidia-smi."""
+        try:
+            cmd = [
+                "pw", "ssh", cluster_uri,
+                "nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null"
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0 or not result.stdout.strip():
+                return None
+            return self._parse_gpu_output(result.stdout)
+        except Exception as e:
+            print(f"[pw_cluster] Error getting GPU info for {cluster_uri}: {e}")
+            return None
+
+    def _parse_gpu_output(self, gpu_output: str) -> Dict[str, Any]:
+        """Parse nvidia-smi CSV output into structured data."""
+        gpus = []
+        lines = gpu_output.strip().split("\n")
+        for line in lines:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 7:
+                try:
+                    gpus.append({
+                        "index": int(parts[0]),
+                        "name": parts[1],
+                        "memory_total_mib": int(parts[2]),
+                        "memory_used_mib": int(parts[3]),
+                        "memory_free_mib": int(parts[4]),
+                        "utilization_percent": int(parts[5]) if parts[5] != "[N/A]" else 0,
+                        "temperature_c": int(parts[6]) if parts[6] != "[N/A]" else None,
+                    })
+                except (ValueError, IndexError):
+                    continue
+
+        total_memory = sum(g["memory_total_mib"] for g in gpus)
+        used_memory = sum(g["memory_used_mib"] for g in gpus)
+        avg_utilization = sum(g["utilization_percent"] for g in gpus) / len(gpus) if gpus else 0
+
+        return {
+            "gpus": gpus,
+            "summary": {
+                "gpu_count": len(gpus),
+                "total_memory_mib": total_memory,
+                "used_memory_mib": used_memory,
+                "free_memory_mib": total_memory - used_memory,
+                "avg_utilization_percent": round(avg_utilization, 1),
+            }
+        }
+
+    def _get_system_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
+        """Get basic system information."""
+        try:
+            # Get CPU, memory, and load info in one command
+            cmd = [
+                "pw", "ssh", cluster_uri,
+                "echo \"CPU:$(nproc 2>/dev/null || echo 0)\"; "
+                "echo \"MEM:$(free -m 2>/dev/null | awk '/^Mem:/ {print $2,$3,$4}' || echo '0 0 0')\"; "
+                "echo \"LOAD:$(cat /proc/loadavg 2>/dev/null | awk '{print $1,$2,$3}' || echo '0 0 0')\"; "
+                "echo \"HOST:$(hostname 2>/dev/null || echo unknown)\""
+            ]
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0:
+                return None
+            return self._parse_system_output(result.stdout)
+        except Exception as e:
+            print(f"[pw_cluster] Error getting system info for {cluster_uri}: {e}")
+            return None
+
+    def _parse_system_output(self, output: str) -> Dict[str, Any]:
+        """Parse system info output."""
+        info = {
+            "cpu_count": 0,
+            "memory_total_mb": 0,
+            "memory_used_mb": 0,
+            "memory_free_mb": 0,
+            "load_1m": 0.0,
+            "load_5m": 0.0,
+            "load_15m": 0.0,
+            "hostname": "unknown",
+        }
+        for line in output.strip().split("\n"):
+            if line.startswith("CPU:"):
+                try:
+                    info["cpu_count"] = int(line.split(":", 1)[1].strip())
+                except ValueError:
+                    pass
+            elif line.startswith("MEM:"):
+                try:
+                    parts = line.split(":", 1)[1].strip().split()
+                    if len(parts) >= 3:
+                        info["memory_total_mb"] = int(parts[0])
+                        info["memory_used_mb"] = int(parts[1])
+                        info["memory_free_mb"] = int(parts[2])
+                except (ValueError, IndexError):
+                    pass
+            elif line.startswith("LOAD:"):
+                try:
+                    parts = line.split(":", 1)[1].strip().split()
+                    if len(parts) >= 3:
+                        info["load_1m"] = float(parts[0])
+                        info["load_5m"] = float(parts[1])
+                        info["load_15m"] = float(parts[2])
+                except (ValueError, IndexError):
+                    pass
+            elif line.startswith("HOST:"):
+                info["hostname"] = line.split(":", 1)[1].strip()
+        return info
 
     def get_storage_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
         """Get storage information for a cluster.

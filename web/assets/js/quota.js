@@ -36,15 +36,25 @@ const formatHours = (value, { compact = false } = {}) => {
 
 const parseSystems = (cluster) => cluster?.usage_data?.systems || [];
 const parseQueues = (cluster) => cluster?.queue_data?.queues || [];
+const parseGpus = (cluster) => cluster?.gpu_data?.gpus || [];
+const getSystemInfo = (cluster) => cluster?.system_info || {};
+const hasScheduler = (cluster) => cluster?.cluster_metadata?.has_scheduler !== false &&
+  (parseSystems(cluster).length > 0 || parseQueues(cluster).length > 0);
 
 const computeSummary = () => {
-  const totals = { allocations: 0, used: 0, remaining: 0 };
+  const totals = { allocations: 0, used: 0, remaining: 0, gpuCount: 0, gpuMemoryMib: 0 };
   state.clusters.forEach((cluster) => {
     parseSystems(cluster).forEach((system) => {
       totals.allocations += Number(system.hours_allocated) || 0;
       totals.used += Number(system.hours_used) || 0;
       totals.remaining += Number(system.hours_remaining) || 0;
     });
+    // Also count GPUs
+    const gpuSummary = cluster?.gpu_data?.summary;
+    if (gpuSummary) {
+      totals.gpuCount += gpuSummary.gpu_count || 0;
+      totals.gpuMemoryMib += gpuSummary.total_memory_mib || 0;
+    }
   });
   return totals;
 };
@@ -257,7 +267,129 @@ const buildSubprojectRows = (systems) => {
   return rows;
 };
 
+const buildGpuRows = (gpus) => {
+  if (!gpus.length) {
+    return '<tr><td colspan="5" class="placeholder">No GPUs detected.</td></tr>';
+  }
+  return gpus.map((gpu) => {
+    const memPercent = gpu.memory_total_mib
+      ? clampPercent((gpu.memory_used_mib / gpu.memory_total_mib) * 100)
+      : 0;
+    const memFree = gpu.memory_total_mib - gpu.memory_used_mib;
+    return `
+      <tr>
+        <td>${gpu.index}</td>
+        <td>${gpu.name || "--"}</td>
+        <td>${formatInteger(gpu.memory_total_mib)} MiB</td>
+        <td>
+          <div class="usage-progress compact">
+            <div class="progress-track">
+              <div class="progress-value" style="width:${gpu.utilization_percent || 0}%"></div>
+            </div>
+            <span>${gpu.utilization_percent || 0}%</span>
+          </div>
+        </td>
+        <td>
+          <div class="usage-progress compact">
+            <div class="progress-track">
+              <div class="progress-value" style="width:${memPercent}%"></div>
+            </div>
+            <span>${formatInteger(memFree)} MiB free</span>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+};
+
+const buildGpuClusterCard = (cluster) => {
+  const metadata = cluster?.cluster_metadata || {};
+  const gpus = parseGpus(cluster);
+  const sysInfo = getSystemInfo(cluster);
+  const gpuSummary = cluster?.gpu_data?.summary || {};
+
+  const metaParts = [];
+  if (metadata.status) metaParts.push(String(metadata.status).toUpperCase());
+  if (metadata.type) metaParts.push(metadata.type);
+  if (sysInfo.hostname && sysInfo.hostname !== "unknown") metaParts.push(sysInfo.hostname);
+  if (metadata.timestamp) metaParts.push(new Date(metadata.timestamp).toLocaleString());
+
+  const totalMem = gpuSummary.total_memory_mib || 0;
+  const freeMem = gpuSummary.free_memory_mib || 0;
+  const percentFree = totalMem ? clampPercent((freeMem / totalMem) * 100) : 0;
+
+  const memoryDetail = totalMem
+    ? `${formatInteger(freeMem)} of ${formatInteger(totalMem)} MiB`
+    : "No GPU memory data";
+
+  return `
+    <article class="cluster-card">
+      <header>
+        <div>
+          <p class="eyebrow">GPU Server</p>
+          <h4>${metadata.name || metadata.uri || "Cluster"}</h4>
+          <p class="muted-text">${metaParts.join(" • ")}</p>
+        </div>
+      </header>
+      <div class="cluster-card-body">
+        <div class="cluster-card-summary">
+          <div class="donut-chart" aria-label="${metadata.name || "Cluster"} GPU memory">
+            <div class="donut" style="--donut-value:${percentFree}">
+              <strong>${Math.round(percentFree)}%</strong>
+              <span>Free</span>
+            </div>
+            <small>${memoryDetail}</small>
+          </div>
+          <ul class="cluster-metrics">
+            <li><span>GPUs</span><strong>${gpuSummary.gpu_count || 0}</strong></li>
+            <li><span>Avg Util</span><strong>${gpuSummary.avg_utilization_percent || 0}%</strong></li>
+            <li><span>CPUs</span><strong>${sysInfo.cpu_count || "--"}</strong></li>
+            <li><span>Load (1m)</span><strong>${sysInfo.load_1m?.toFixed(2) || "--"}</strong></li>
+          </ul>
+        </div>
+        <div class="cluster-subprojects">
+          <div class="table-head compact">
+            <h5>GPU Status</h5>
+            <span>${gpus.length} GPUs</span>
+          </div>
+          <div class="table-scroll mini">
+            <table class="quota-table">
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>GPU</th>
+                  <th>Memory</th>
+                  <th>Utilization</th>
+                  <th>Memory Usage</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${buildGpuRows(gpus)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="cluster-queues">
+          <div class="cluster-queues-head">
+            <h5>System Resources</h5>
+            <span>${sysInfo.hostname || "Unknown host"}</span>
+          </div>
+          <div class="queue-chip-collection">
+            <span class="queue-chip is-active">RAM <small>${formatInteger(sysInfo.memory_total_mb || 0)} MB</small></span>
+            <span class="queue-chip ${sysInfo.load_1m > (sysInfo.cpu_count || 1) ? "is-backlog" : "is-idle"}">Load <small>${sysInfo.load_1m?.toFixed(2) || "0"} / ${sysInfo.load_5m?.toFixed(2) || "0"} / ${sysInfo.load_15m?.toFixed(2) || "0"}</small></span>
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+};
+
 const buildClusterCard = (cluster) => {
+  // Check if this is a GPU-only cluster (no scheduler)
+  if (!hasScheduler(cluster) && parseGpus(cluster).length > 0) {
+    return buildGpuClusterCard(cluster);
+  }
+
   const metadata = cluster?.cluster_metadata || {};
   const systems = parseSystems(cluster);
   const queues = parseQueues(cluster);

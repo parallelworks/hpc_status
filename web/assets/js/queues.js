@@ -33,6 +33,10 @@ const formatNumber = (value) => numberFormatter.format(Math.round(toNumber(value
 
 const parseQueues = (cluster) => cluster?.queue_data?.queues || [];
 const parseNodes = (cluster) => cluster?.queue_data?.nodes || [];
+const parseGpus = (cluster) => cluster?.gpu_data?.gpus || [];
+const getSystemInfo = (cluster) => cluster?.system_info || {};
+const hasScheduler = (cluster) => cluster?.cluster_metadata?.has_scheduler !== false &&
+  (parseQueues(cluster).length > 0 || parseNodes(cluster).length > 0);
 const sanitizeNodes = (nodes) =>
   (nodes || []).filter((node) => String(node.node_type || "").toLowerCase() !== "nodes");
 
@@ -328,6 +332,29 @@ const renderNodeTable = (nodes) => {
   elements.nodeBody.innerHTML = rows;
 };
 
+const renderGpuTable = (gpus) => {
+  if (!elements.nodeBody) return;
+  if (!gpus.length) {
+    setNodePlaceholder("No GPUs detected on this server.");
+    return;
+  }
+  const rows = gpus
+    .map((gpu) => {
+      const memFree = (gpu.memory_total_mib || 0) - (gpu.memory_used_mib || 0);
+      return `
+        <tr>
+          <td>${gpu.name || "--"}</td>
+          <td>${gpu.index}</td>
+          <td>${formatNumber(gpu.memory_total_mib)} MiB</td>
+          <td>${formatNumber(memFree)} MiB</td>
+          <td>${gpu.utilization_percent || 0}%</td>
+          <td>${gpu.temperature_c != null ? gpu.temperature_c + "°C" : "--"}</td>
+        </tr>`;
+    })
+    .join("");
+  elements.nodeBody.innerHTML = rows;
+};
+
 const renderClusterStats = (cluster) => {
   const queues = parseQueues(cluster);
   const runningJobs = queues.reduce((sum, queue) => sum + toNumber(queue.jobs_running), 0);
@@ -389,6 +416,9 @@ const renderClusterDetail = () => {
   const queues = parseQueues(cluster);
   const rawNodes = parseNodes(cluster);
   const nodes = sanitizeNodes(rawNodes);
+  const gpus = parseGpus(cluster);
+  const sysInfo = getSystemInfo(cluster);
+  const isGpuCluster = !hasScheduler(cluster) && gpus.length > 0;
   const displayName = metadata.name || metadata.uri || `Cluster ${safeIndex + 1}`;
 
   if (elements.clusterTitle) {
@@ -397,25 +427,131 @@ const renderClusterDetail = () => {
   if (elements.clusterMeta) {
     const parts = [];
     if (metadata.status) parts.push(String(metadata.status).toUpperCase());
-    if (metadata.type) parts.push(metadata.type);
+    if (isGpuCluster) parts.push("GPU Server");
+    else if (metadata.type) parts.push(metadata.type);
+    if (sysInfo.hostname && sysInfo.hostname !== "unknown") parts.push(sysInfo.hostname);
     if (metadata.timestamp) parts.push(new Date(metadata.timestamp).toLocaleString());
     elements.clusterMeta.textContent = parts.join(" • ");
   }
   if (elements.clusterNote) {
     elements.clusterNote.textContent = metadata.timestamp
-      ? `Queue data refreshed ${new Date(metadata.timestamp).toLocaleString()}.`
+      ? `Data refreshed ${new Date(metadata.timestamp).toLocaleString()}.`
       : "Timestamp unavailable.";
   }
-  if (elements.queueDepthMeta) {
-    elements.queueDepthMeta.textContent = `${queues.length} queues`;
-  }
-  if (elements.nodeMeta) {
-    elements.nodeMeta.textContent = `${nodes.length} node classes`;
-  }
 
-  renderClusterStats(cluster);
-  renderQueueGrid(queues);
-  renderNodeTable(nodes);
+  if (isGpuCluster) {
+    // GPU cluster display
+    if (elements.queueDepthMeta) {
+      elements.queueDepthMeta.textContent = `${gpus.length} GPUs`;
+    }
+    if (elements.nodeMeta) {
+      elements.nodeMeta.textContent = `${sysInfo.cpu_count || 0} CPUs`;
+    }
+    renderGpuClusterStats(cluster);
+    renderGpuQueueGrid(gpus, sysInfo);
+    renderGpuTable(gpus);
+  } else {
+    // HPC cluster display
+    if (elements.queueDepthMeta) {
+      elements.queueDepthMeta.textContent = `${queues.length} queues`;
+    }
+    if (elements.nodeMeta) {
+      elements.nodeMeta.textContent = `${nodes.length} node classes`;
+    }
+    renderClusterStats(cluster);
+    renderQueueGrid(queues);
+    renderNodeTable(nodes);
+  }
+};
+
+const renderGpuClusterStats = (cluster) => {
+  const gpus = parseGpus(cluster);
+  const sysInfo = getSystemInfo(cluster);
+  const gpuSummary = cluster?.gpu_data?.summary || {};
+
+  if (elements.clusterRunningJobs) {
+    elements.clusterRunningJobs.textContent = gpuSummary.gpu_count || 0;
+  }
+  if (elements.clusterPendingJobs) {
+    elements.clusterPendingJobs.textContent = `${gpuSummary.avg_utilization_percent || 0}%`;
+  }
+  if (elements.clusterRunningCores) {
+    elements.clusterRunningCores.textContent = formatNumber(gpuSummary.used_memory_mib || 0);
+  }
+  if (elements.clusterPendingCores) {
+    elements.clusterPendingCores.textContent = formatNumber(gpuSummary.free_memory_mib || 0);
+  }
+  if (elements.clusterCoreDonut) {
+    const totalMem = gpuSummary.total_memory_mib || 0;
+    const freeMem = gpuSummary.free_memory_mib || 0;
+    if (!totalMem) {
+      elements.clusterCoreDonut.innerHTML = '<div class="placeholder">No GPU data</div>';
+    } else {
+      const percent = clampPercent((freeMem / totalMem) * 100);
+      elements.clusterCoreDonut.innerHTML = `
+        <div class="donut" style="--donut-value:${percent};--donut-primary:var(--success);">
+          <strong>${percent.toFixed(1)}%</strong>
+          <span>Free</span>
+        </div>
+        <small>${formatNumber(freeMem)} / ${formatNumber(totalMem)} MiB</small>
+      `;
+    }
+  }
+};
+
+const renderGpuQueueGrid = (gpus, sysInfo) => {
+  if (!elements.queueGrid) return;
+  if (!gpus.length) {
+    setQueueGridPlaceholder("No GPUs detected on this server.");
+    return;
+  }
+  const cards = gpus.map((gpu) => {
+    const memTotal = gpu.memory_total_mib || 0;
+    const memUsed = gpu.memory_used_mib || 0;
+    const memFree = memTotal - memUsed;
+    const memPercent = memTotal ? clampPercent((memUsed / memTotal) * 100) : 0;
+    const utilPercent = gpu.utilization_percent || 0;
+    return `
+      <article class="queue-card">
+        <header class="queue-card-head">
+          <h4>GPU ${gpu.index}: ${gpu.name || "Unknown"}</h4>
+          <span class="badge">${gpu.temperature_c != null ? gpu.temperature_c + "°C" : "--"}</span>
+        </header>
+        <dl class="queue-card-metrics">
+          <div>
+            <dt>Total Memory</dt>
+            <dd>${formatNumber(memTotal)} MiB</dd>
+          </div>
+          <div>
+            <dt>Free Memory</dt>
+            <dd>${formatNumber(memFree)} MiB</dd>
+          </div>
+          <div>
+            <dt>GPU Util</dt>
+            <dd>${utilPercent}%</dd>
+          </div>
+          <div>
+            <dt>Mem Used</dt>
+            <dd>${formatNumber(memUsed)} MiB</dd>
+          </div>
+        </dl>
+        <div class="usage-progress compact">
+          <span>GPU Utilization</span>
+          <div class="progress-track progress-split">
+            <div class="progress-value is-running" style="width:${utilPercent}%"></div>
+          </div>
+          <small>${utilPercent}% utilized</small>
+        </div>
+        <div class="usage-progress compact">
+          <span>Memory Usage</span>
+          <div class="progress-track progress-split">
+            <div class="progress-value is-running" style="width:${memPercent}%"></div>
+          </div>
+          <small>${memPercent.toFixed(1)}% used</small>
+        </div>
+      </article>`;
+  }).join("");
+  elements.queueGrid.innerHTML = cards;
 };
 
 const loadData = async ({ silent = true } = {}) => {
