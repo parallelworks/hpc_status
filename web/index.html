@@ -47,7 +47,7 @@
   <div class="page">
     <header class="hero">
       <div>
-        <p class="eyebrow" id="header-eyebrow">HPC Status</p>
+        <p class="eyebrow" id="header-eyebrow">HPC STATUS</p>
         <h1 id="header-title">Status Monitor</h1>
         <p class="lede">
           Real-time view of system status, queue health, and allocation usage.
@@ -92,6 +92,14 @@
             <p>Last observed</p>
             <h2 id="last-updated" aria-live="polite">--</h2>
           </article>
+        </section>
+
+        <section id="insights-section" class="insights-panel" aria-label="Insights and recommendations" hidden>
+          <div class="insights-header">
+            <h3>Insights</h3>
+            <span id="insights-count" class="badge">0</span>
+          </div>
+          <ul id="insights-list" class="insights-list" aria-live="polite"></ul>
         </section>
 
         <section class="grid" aria-label="Fleet breakdown">

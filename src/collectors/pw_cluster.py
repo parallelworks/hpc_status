@@ -26,7 +26,7 @@ class PWClusterCollector(BaseCollector):
         self,
         max_retries: int = 3,
         retry_delay: int = 5,
-        ssh_timeout: int = 30,
+        ssh_timeout: int = 60,
     ):
         self.max_retries = max_retries
         self.retry_delay = retry_delay

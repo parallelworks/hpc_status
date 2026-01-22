@@ -64,7 +64,8 @@ def create_generate_payload_fn(config: Config, store: DataStore):
 def run_server(args) -> None:
     """Run the dashboard server."""
     # Load configuration
-    config = Config.load(args.config) if args.config else Config()
+    config = Config.load(args.config)
+    print(f"[config] Loaded: ui.title={config.ui.title!r}, platform={config.platform!r}")
 
     # Override config with CLI args
     if args.host:

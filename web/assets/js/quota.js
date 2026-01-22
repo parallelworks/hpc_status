@@ -584,7 +584,14 @@ const bindEvents = () => {
 };
 
 const applyClusterPayload = (payload) => {
-  state.clusters = Array.isArray(payload) ? payload : [];
+  // Handle both array format and {clusters: [...]} format
+  if (Array.isArray(payload)) {
+    state.clusters = payload;
+  } else if (payload && Array.isArray(payload.clusters)) {
+    state.clusters = payload.clusters;
+  } else {
+    state.clusters = [];
+  }
   state.lastUpdated = Date.now();
   renderSummary();
   renderClusterGrid();
@@ -634,7 +641,7 @@ const applyConfigBranding = () => {
   const title = window.APP_CONFIG?.title || "HPC Status Monitor";
   const eyebrow = document.getElementById("header-eyebrow");
   if (eyebrow) {
-    eyebrow.textContent = title.includes("Status") ? title.replace(/\s*Status.*/, "") : "HPC Status";
+    eyebrow.textContent = "HPC STATUS";
   }
   document.title = `Quota Usage | ${title}`;
 };

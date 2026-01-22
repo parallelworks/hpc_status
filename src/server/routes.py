@@ -74,6 +74,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return self._handle_system_markdown(slug_part)
         if parsed.path == "/api/v2/collectors/status":
             return self._handle_collectors_status()
+        if parsed.path == "/api/insights":
+            return self._handle_insights()
 
         # Fall back to static file serving
         return super().do_GET()
@@ -199,11 +201,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         if payload is None:
             self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Cluster usage data unavailable.")
             return
-        clusters = self._build_cluster_profiles(payload)
-        self._send_json({
-            "generated_at": datetime.utcnow().isoformat(),
-            "clusters": clusters,
-        })
+        # Return raw format for frontend compatibility
+        # The payload is already a list of cluster objects
+        self._send_json(payload)
 
     def _handle_cluster_usage_detail(self, slug_part: str):
         target_slug = self._normalize_cluster_slug(unquote(slug_part or ""))
@@ -266,6 +266,114 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 "hpcmp": {"available": True, "ready": True},
                 "pw_cluster": {"available": True, "ready": True},
             },
+        })
+
+    def _handle_insights(self):
+        """Generate and return insights based on current data."""
+        from ..insights.recommendations import RecommendationEngine
+
+        insights_list = []
+
+        # Get insights from HPCMP fleet status data
+        if self.server_state:
+            payload, _, _ = self.server_state.snapshot()
+            if payload and payload.get("systems"):
+                systems_data = payload.get("systems", [])
+                engine = RecommendationEngine(systems_data)
+                for insight in engine.generate_insights():
+                    insights_list.append({
+                        "type": insight.type,
+                        "message": insight.message,
+                        "priority": insight.priority,
+                        "metric": insight.related_metric,
+                        "cluster": insight.cluster,
+                    })
+
+        # Get insights from cluster usage data
+        cluster_payload = self._load_cluster_usage_payload()
+        if cluster_payload:
+            clusters = cluster_payload if isinstance(cluster_payload, list) else cluster_payload.get("clusters", [])
+            for cluster in clusters:
+                metadata = cluster.get("cluster_metadata", {})
+                name = metadata.get("name", "Unknown")
+                status = metadata.get("status", "").upper()
+
+                # Check cluster status
+                if status not in ("ON", "UP", "RUNNING", "ONLINE"):
+                    insights_list.append({
+                        "type": "warning",
+                        "message": f"{name}: Cluster status is {status}",
+                        "priority": 4,
+                        "metric": "status",
+                        "cluster": name,
+                    })
+
+                # Check allocation usage
+                usage_data = cluster.get("usage_data", {})
+                for system in usage_data.get("systems", []):
+                    allocated = self._safe_number(system.get("hours_allocated", 0))
+                    remaining = self._safe_number(system.get("hours_remaining", 0))
+                    if allocated > 0:
+                        percent = (remaining / allocated) * 100
+                        if percent < 10:
+                            insights_list.append({
+                                "type": "warning",
+                                "message": f"{name}: Allocation critically low ({percent:.0f}% remaining)",
+                                "priority": 5,
+                                "metric": "allocation",
+                                "cluster": name,
+                            })
+                        elif percent < 25:
+                            insights_list.append({
+                                "type": "warning",
+                                "message": f"{name}: Allocation running low ({percent:.0f}% remaining)",
+                                "priority": 3,
+                                "metric": "allocation",
+                                "cluster": name,
+                            })
+
+                # Check queue depth
+                queue_data = cluster.get("queue_data", {})
+                for queue in queue_data.get("queues", []):
+                    pending = self._safe_number(queue.get("jobs_pending", 0))
+                    queue_name = queue.get("queue_name", "Unknown")
+                    if pending > 50:
+                        insights_list.append({
+                            "type": "info",
+                            "message": f"{name}/{queue_name}: High queue depth ({int(pending)} pending jobs)",
+                            "priority": 2,
+                            "metric": "queue_depth",
+                            "cluster": name,
+                        })
+
+                # Check GPU utilization
+                gpu_data = cluster.get("gpu_data", {})
+                summary = gpu_data.get("summary", {})
+                if summary.get("gpu_count", 0) > 0:
+                    util = summary.get("avg_utilization_percent", 0)
+                    if util > 90:
+                        insights_list.append({
+                            "type": "info",
+                            "message": f"{name}: High GPU utilization ({util}%)",
+                            "priority": 2,
+                            "metric": "gpu_utilization",
+                            "cluster": name,
+                        })
+                    elif util < 10:
+                        insights_list.append({
+                            "type": "info",
+                            "message": f"{name}: GPUs are mostly idle ({util}% utilization)",
+                            "priority": 1,
+                            "metric": "gpu_utilization",
+                            "cluster": name,
+                        })
+
+        # Sort by priority
+        insights_list.sort(key=lambda x: x.get("priority", 0), reverse=True)
+
+        self._send_json({
+            "insights": insights_list,
+            "generated_at": datetime.utcnow().isoformat() + "Z",
         })
 
     # --- Helper Methods ---

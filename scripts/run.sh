@@ -21,7 +21,7 @@ PORT="${PORT:-8080}"
 HOST="${HOST:-0.0.0.0}"
 URL_PREFIX="${URL_PREFIX:-}"
 DEFAULT_THEME="${DEFAULT_THEME:-dark}"
-CONFIG_FILE="${CONFIG_FILE:-}"
+CONFIG_FILE="${CONFIG_FILE:-${HPC_STATUS_CONFIG:-}}"
 
 # Feature flags
 ENABLE_CLUSTER_PAGES="${ENABLE_CLUSTER_PAGES:-1}"
@@ -53,14 +53,16 @@ setup_venv() {
 sync_deps() {
     echo "[run] Syncing dependencies..."
 
-    # Use uv sync for the project (this handles both venv creation and deps)
-    $UV_BIN sync --python "$VENV_DIR/bin/python" 2>/dev/null || {
-        # Fallback: ensure all dependencies are installed
-        echo "[run] Installing dependencies with pip..."
-        $UV_BIN pip install --python "$VENV_DIR/bin/python" \
-            requests beautifulsoup4 urllib3 certifi pyyaml 2>/dev/null || true
-        $UV_BIN pip install --python "$VENV_DIR/bin/python" -e .
-    }
+    # Always ensure core dependencies are installed first
+    echo "[run] Installing core dependencies..."
+    $UV_BIN pip install --python "$VENV_DIR/bin/python" \
+        requests beautifulsoup4 urllib3 certifi pyyaml 2>/dev/null || \
+    "$VENV_DIR/bin/pip" install requests beautifulsoup4 urllib3 certifi pyyaml
+
+    # Install the project in editable mode
+    echo "[run] Installing project..."
+    $UV_BIN pip install --python "$VENV_DIR/bin/python" -e "$PROJECT_ROOT" 2>/dev/null || \
+    "$VENV_DIR/bin/pip" install -e "$PROJECT_ROOT"
 }
 
 # Create data directory
@@ -128,6 +130,7 @@ main() {
     cmd=$(build_cmd)
 
     echo "[run] Starting dashboard on ${HOST}:${PORT}"
+    [[ -n "$CONFIG_FILE" ]] && echo "[run] Config file: ${CONFIG_FILE}"
     [[ -n "$URL_PREFIX" ]] && echo "[run] URL prefix: ${URL_PREFIX}"
     echo "[run] Data directory: ${DATA_DIR}"
     echo "[run] Command: ${cmd}"

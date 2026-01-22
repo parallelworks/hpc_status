@@ -41,6 +41,7 @@ const apiBase = (() => {
 const STATUS_URL = new URL("api/status", apiBase).toString();
 const REFRESH_URL = new URL("api/refresh", apiBase).toString();
 const CLUSTER_USAGE_URL = new URL("api/cluster-usage", apiBase).toString();
+const INSIGHTS_URL = new URL("api/insights", apiBase).toString();
 
 const THEME_STORAGE_KEY = "hpc-status-theme";
 const detailCache = new Map();
@@ -63,6 +64,13 @@ const usageState = {
   loading: false,
   attempted: false,
 };
+
+const insightsState = {
+  insights: [],
+  loading: false,
+  attempted: false,
+};
+
 const HOURS_FORMATTER = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
 
 const formatHoursCompact = (value) =>
@@ -124,6 +132,65 @@ async function loadUsageData({ force = false } = {}) {
   }
 }
 
+async function loadInsights({ force = false } = {}) {
+  if (insightsState.loading) {
+    return;
+  }
+  if (insightsState.attempted && !force) {
+    return;
+  }
+  insightsState.loading = true;
+  try {
+    const response = await fetch(`${INSIGHTS_URL}?t=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload = await response.json();
+    insightsState.insights = payload.insights || [];
+    renderInsights();
+  } catch (err) {
+    console.warn("Unable to load insights", err);
+  } finally {
+    insightsState.loading = false;
+    insightsState.attempted = true;
+  }
+}
+
+function renderInsights() {
+  const { insights } = insightsState;
+  if (!elements.insightsSection || !elements.insightsList) {
+    return;
+  }
+
+  if (!insights.length) {
+    elements.insightsSection.setAttribute("hidden", "hidden");
+    return;
+  }
+
+  elements.insightsSection.removeAttribute("hidden");
+  if (elements.insightsCount) {
+    elements.insightsCount.textContent = insights.length;
+  }
+
+  elements.insightsList.innerHTML = insights
+    .slice(0, 5) // Show top 5 insights
+    .map((insight) => {
+      const typeClass = insight.type || "info";
+      const icon = typeClass === "warning" ? "⚠️" : "ℹ️";
+      const cluster = insight.cluster ? `<small>${insight.cluster}</small>` : "";
+      return `
+        <li class="insight-item ${typeClass}">
+          <span class="insight-icon">${icon}</span>
+          <div class="insight-content">
+            <p>${escapeHtml(insight.message)}</p>
+            ${cluster}
+          </div>
+        </li>
+      `;
+    })
+    .join("");
+}
+
 const elements = {
   totalSystems: document.getElementById("total-systems"),
   fleetUptime: document.getElementById("fleet-uptime"),
@@ -153,6 +220,9 @@ const elements = {
   detailScheduler: document.getElementById("detail-scheduler"),
   detailMarkdown: document.getElementById("detail-markdown"),
   detailSource: document.getElementById("detail-source"),
+  insightsSection: document.getElementById("insights-section"),
+  insightsList: document.getElementById("insights-list"),
+  insightsCount: document.getElementById("insights-count"),
 };
 
 function safeGetStoredTheme() {
@@ -452,7 +522,9 @@ async function triggerRefresh() {
     }
     await loadData({ showLoading: false });
     usageState.attempted = false;
+    insightsState.attempted = false;
     loadUsageData({ force: true });
+    loadInsights({ force: true });
     showStatusMessage("Updated via manual refresh.");
   } catch (err) {
     console.error(err);
@@ -946,7 +1018,9 @@ applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
 applyConfigTitle();
 registerEvents();
 loadData();
+loadInsights();
 setInterval(() => loadData({ showLoading: false, silentFallback: true }), 3 * 60 * 1000);
+setInterval(() => loadInsights({ force: true }), 2 * 60 * 1000);
 if (featureFlags.clusterPages) {
   loadUsageData();
   setInterval(() => loadUsageData({ force: true }), 5 * 60 * 1000);
