@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Quota Usage | HPC Status Dashboard</title>
+  <script>
+    (function () {
+      function deriveBasePath(pathname) {
+        var path = pathname;
+        return path;
+      }
+      var path = deriveBasePath(window.location.pathname || "/");
+      var base = document.createElement("base");
+      base.href = window.location.origin + path;
+      document.documentElement.setAttribute("data-base-path", path);
+      document.head.appendChild(base);
+    })();
+  </script>
+  <script src="app-config.js"></script>
+  <script>
+    (function () {
+      try {
+        const saved = window.localStorage.getItem("hpc-status-theme");
+        const fallback = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+        const initial = saved || fallback || "dark";
+        document.documentElement.dataset.theme = initial;
+      } catch (err) {
+        document.documentElement.dataset.theme = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+
+<body>
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow" id="header-eyebrow">HPC STATUS</p>
+        <h1>Quota usage</h1>
+        <p class="lede">
+          Track available project hours and allocations for every monitored cluster.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <a class="ghost-btn" href="index.html">← Fleet dashboard</a>
+        <button id="refresh-btn" class="ghost-btn">Refresh data</button>
+        <button id="theme-toggle" class="theme-btn" aria-label="Toggle color theme">
+          <span class="theme-icon" aria-hidden="true">🌙</span>
+          <span class="theme-label">Dark</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="subnav" data-cluster-nav>
+      <a href="index.html">Fleet status</a>
+      <a href="queues.html">Queue health</a>
+      <a href="quota.html" aria-current="page">Quota usage</a>
+    </nav>
+
+    <p id="data-status" class="status-banner" role="status" hidden></p>
+
+    <section class="cards">
+      <article class="card">
+        <p>Connected clusters</p>
+        <h2 id="cluster-count">--</h2>
+      </article>
+      <article class="card">
+        <p>Total allocations</p>
+        <h2 id="total-allocations">--</h2>
+      </article>
+      <article class="card">
+        <p>Hours used</p>
+        <h2 id="total-used">--</h2>
+      </article>
+      <article class="card">
+        <p>Hours remaining</p>
+        <h2 id="total-remaining">--</h2>
+      </article>
+    </section>
+
+    <section class="panel duo-panel">
+      <div class="panel-block">
+        <p class="eyebrow">Queues in use</p>
+        <div id="fleet-queue-tags" class="queue-chip-collection muted-text">Refresh to populate queue snapshot.</div>
+      </div>
+      <div class="panel-block">
+        <p class="eyebrow">Fleet availability</p>
+        <div id="fleet-usage-donut" class="donut-chart placeholder">Refresh to populate usage.</div>
+      </div>
+    </section>
+
+    <section>
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Connected fleet</p>
+          <h3>Cluster usage and queue posture</h3>
+          <p id="cluster-grid-note" class="muted-text">Loading cluster usage…</p>
+        </div>
+      </div>
+      <div id="cluster-grid" class="cluster-grid">
+        <article class="card placeholder">Loading quota data…</article>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <small>Quota data collected from connected clusters</small>
+      <small>HPC Status Monitor v2.0</small>
+    </footer>
+  </div>
+
+  <script type="module" src="assets/js/quota.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,43 @@
+# HPC Status Monitor - NOAA RDHPCS Deployment Configuration
+# Use with: python -m src.server.main --config configs/config.noaa.yaml
+
+deployment:
+  name: "NOAA RDHPCS Status Monitor"
+  platform: noaa
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+collectors:
+  pw_cluster:
+    enabled: true
+    refresh_interval: 120
+
+  noaa_docs:
+    enabled: true
+    url: "https://docs.rdhpcs.noaa.gov/systems/index.html"
+    refresh_interval: 3600  # Docs change infrequently
+
+ui:
+  title: "RDHPCS Status Monitor"
+  home_page: "overview"
+  default_theme: "dark"
+  tabs:
+    overview: true
+    queues: true
+    quota: true
+    storage: true
+    docs: true
+    fleet: false
+
+rate_limiting:
+  max_concurrent_ssh: 3
+  ssh_timeout: 30
+  retry_backoff: [5, 15, 60]
+  per_cluster:
+    min_interval: 60
+    max_commands_per_poll: 5
+  circuit_breaker:
+    failure_threshold: 3
+    pause_duration: 300
