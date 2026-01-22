@@ -161,12 +161,16 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         })
 
     def _handle_app_config(self):
+        config_data = self.config or {}
+        ui_config = config_data.get("ui", {}) if isinstance(config_data, dict) else {}
+        title = ui_config.get("title", "HPC Status Monitor") if isinstance(ui_config, dict) else "HPC Status Monitor"
         body = (
             "window.APP_CONFIG=Object.assign({},window.APP_CONFIG||{},"
             + json.dumps({
                 "defaultTheme": self.default_theme,
                 "clusterPagesEnabled": bool(self.cluster_pages_enabled),
                 "clusterMonitorInterval": self.cluster_monitor_interval,
+                "title": title,
             })
             + ");"
         ).encode("utf-8")

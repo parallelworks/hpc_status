@@ -40,6 +40,7 @@ class RateLimitConfig:
 class UIConfig:
     """UI configuration."""
 
+    title: str = "HPC Status Monitor"
     home_page: str = "overview"  # 'overview', 'fleet', 'queues'
     tabs: Dict[str, bool] = field(
         default_factory=lambda: {
@@ -94,6 +95,7 @@ class Config:
         # Parse UI config
         ui_data = data.get("ui", {})
         ui = UIConfig(
+            title=ui_data.get("title", "HPC Status Monitor"),
             home_page=ui_data.get("home_page", "overview"),
             tabs=ui_data.get("tabs", UIConfig().tabs),
             default_theme=ui_data.get("default_theme", "dark"),
@@ -196,6 +198,7 @@ class Config:
                 "url_prefix": self.server.url_prefix,
             },
             "ui": {
+                "title": self.ui.title,
                 "home_page": self.ui.home_page,
                 "tabs": self.ui.tabs,
                 "default_theme": self.ui.default_theme,

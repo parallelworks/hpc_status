@@ -16,6 +16,7 @@ collectors:
     refresh_interval: 120
 
 ui:
+  title: "HPC Status Monitor"
   home_page: "overview"
   default_theme: "dark"
   tabs:

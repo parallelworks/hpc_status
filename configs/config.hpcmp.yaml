@@ -21,6 +21,7 @@ collectors:
     timeout: 30
 
 ui:
+  title: "HPCMP Fleet Status"
   home_page: "fleet"
   default_theme: "dark"
   tabs:

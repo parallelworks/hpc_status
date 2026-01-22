@@ -84,6 +84,11 @@ export const buildDataUrl = (relativePath) => {
   return new URL(sanitized, getBaseUrl());
 };
 
+export const buildApiUrl = (relativePath) => {
+  const sanitized = (relativePath || "").replace(/^\/+/, "");
+  return new URL(sanitized, getBaseUrl());
+};
+
 export const clusterPagesEnabled = () => {
   const config = window.APP_CONFIG || {};
   return config.clusterPagesEnabled !== false;

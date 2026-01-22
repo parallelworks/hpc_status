@@ -40,8 +40,7 @@ const apiBase = (() => {
 
 const STATUS_URL = new URL("api/status", apiBase).toString();
 const REFRESH_URL = new URL("api/refresh", apiBase).toString();
-const STATIC_DATA_URL = new URL("data/status.json", defaultApiBase).toString();
-const CLUSTER_USAGE_URL = new URL("data/cluster_usage.json", defaultApiBase).toString();
+const CLUSTER_USAGE_URL = new URL("api/cluster-usage", apiBase).toString();
 
 const THEME_STORAGE_KEY = "hpc-status-theme";
 const detailCache = new Map();
@@ -114,7 +113,9 @@ async function loadUsageData({ force = false } = {}) {
       throw new Error(`HTTP ${response.status}`);
     }
     const payload = await response.json();
-    buildUsageMap(Array.isArray(payload) ? payload : []);
+    // API returns { clusters: [...] } or raw array
+    const clusters = payload.clusters || (Array.isArray(payload) ? payload : []);
+    buildUsageMap(clusters);
   } catch (err) {
     console.warn("Unable to load cluster usage metadata", err);
   } finally {
@@ -239,20 +240,12 @@ async function loadData({ silentFallback = false, showLoading = true } = {}) {
     showStatusMessage("");
     clearScheduledRetry();
   } catch (apiErr) {
-    console.warn("API load failed, attempting static data.", apiErr);
-    try {
-      const data = await fetchJson(`${STATIC_DATA_URL}?t=${Date.now()}`);
-      ingestData(data);
-      state.usingApi = false;
-      if (!silentFallback) {
-        showStatusMessage("Loaded cached status snapshot. API unavailable.");
-      }
-      scheduleApiRetry();
-    } catch (staticErr) {
-      console.error(staticErr);
-      setTablePlaceholder(`Unable to load data (${staticErr.message}).`, { countLabel: "--" });
-      scheduleApiRetry();
+    console.warn("API load failed:", apiErr);
+    if (!silentFallback) {
+      showStatusMessage("Waiting for data... The server is collecting status from HPC systems.");
     }
+    setTablePlaceholder("Data collection in progress. Please wait...", { countLabel: "--" });
+    scheduleApiRetry();
   } finally {
     clearTableLoading();
   }
@@ -287,6 +280,23 @@ function updateSummary() {
   buildLegend(elements.statusLegend, summary.status_counts);
   buildLegend(elements.dsrcLegend, summary.dsrc_counts, true);
   buildLegend(elements.schedulerLegend, summary.scheduler_counts, true);
+
+  // Update footer source dynamically
+  updateFooterSource(meta);
+}
+
+function updateFooterSource(meta) {
+  const footerSource = document.getElementById("footer-source");
+  if (!footerSource) return;
+
+  const sourceUrl = meta?.source_url;
+  const sourceName = meta?.source_name || "HPC Systems";
+
+  if (sourceUrl) {
+    footerSource.innerHTML = `Data source: <a href="${escapeHtml(sourceUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(sourceName)}</a>`;
+  } else {
+    footerSource.textContent = "Data collected from connected HPC systems";
+  }
 }
 
 function buildLegend(container, counts = {}, uppercase = false) {
@@ -922,7 +932,18 @@ function isTableDivider(line) {
   return /^(\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed);
 }
 
+// Apply configurable title from config
+function applyConfigTitle() {
+  const title = window.APP_CONFIG?.title || "HPC Status Monitor";
+  const titleEl = document.getElementById("header-title");
+  if (titleEl) {
+    titleEl.textContent = title;
+  }
+  document.title = title;
+}
+
 applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
+applyConfigTitle();
 registerEvents();
 loadData();
 setInterval(() => loadData({ showLoading: false, silentFallback: true }), 3 * 60 * 1000);

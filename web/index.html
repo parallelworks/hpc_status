@@ -5,7 +5,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>HPC Status Dashboard</title>
-  <meta name="description" content="Cross-site HPC status monitoring dashboard with queue health, quota usage, and system recommendations.">
+  <meta name="description" content="Real-time HPC status monitoring dashboard with queue health, quota usage, and system information.">
   <script>
     (function () {
       function deriveBasePath(pathname) {
@@ -47,10 +47,10 @@
   <div class="page">
     <header class="hero">
       <div>
-        <p class="eyebrow">HPC Status</p>
-        <h1>Cross-Site Status Monitor</h1>
+        <p class="eyebrow" id="header-eyebrow">HPC Status</p>
+        <h1 id="header-title">Status Monitor</h1>
         <p class="lede">
-          Real-time view of system status, queue health, and allocation usage across HPC centers.
+          Real-time view of system status, queue health, and allocation usage.
         </p>
       </div>
       <div class="hero-actions">
@@ -100,8 +100,8 @@
             <ul id="status-breakdown" class="legend" aria-label="Status counts"></ul>
           </div>
           <div class="panel">
-            <h3>DSRC coverage</h3>
-            <ul id="dsrc-breakdown" class="legend" aria-label="DSRC distribution"></ul>
+            <h3>Site coverage</h3>
+            <ul id="dsrc-breakdown" class="legend" aria-label="Site distribution"></ul>
           </div>
           <div class="panel">
             <h3>Scheduler types</h3>
@@ -121,8 +121,8 @@
             </select>
           </label>
           <label>
-            <span>DSRC</span>
-            <select id="dsrc-filter" aria-label="Filter by DSRC">
+            <span>Site</span>
+            <select id="dsrc-filter" aria-label="Filter by site">
               <option value="">All</option>
             </select>
           </label>
@@ -139,7 +139,7 @@
                 <tr>
                   <th scope="col">System</th>
                   <th scope="col">Status</th>
-                  <th scope="col" title="Data Service Resource Center">DSRC</th>
+                  <th scope="col">Site</th>
                   <th scope="col">Login node</th>
                   <th scope="col">Scheduler</th>
                   <th scope="col">Last checked</th>
@@ -171,7 +171,7 @@
           </div>
           <ul class="detail-meta-list">
             <li>
-              <span>DSRC</span>
+              <span>Site</span>
               <strong id="detail-dsrc">--</strong>
             </li>
             <li>
@@ -194,12 +194,7 @@
     </main>
 
     <footer class="footer" role="contentinfo">
-      <small>
-        Data source:
-        <a href="https://centers.hpc.mil/systems/unclassified.html" target="_blank" rel="noopener noreferrer">
-          HPC.MIL Unclassified Systems
-        </a>
-      </small>
+      <small id="footer-source">Data collected from connected HPC systems</small>
       <small>HPC Status Monitor v2.0</small>
     </footer>
   </div>

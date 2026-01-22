@@ -1,6 +1,6 @@
-import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle } from "./page-utils.js";
+import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle, buildApiUrl } from "./page-utils.js";
 
-const DATA_URL = buildDataUrl("data/cluster_usage.json").toString();
+const DATA_URL = buildApiUrl("api/cluster-usage").toString();
 const numberFormatter = new Intl.NumberFormat("en-US");
 
 const RETRY_INTERVAL_MS = 15000;
@@ -471,9 +471,19 @@ const loadData = async ({ silent = true } = {}) => {
   }
 };
 
+const applyConfigBranding = () => {
+  const title = window.APP_CONFIG?.title || "HPC Status Monitor";
+  const eyebrow = document.getElementById("header-eyebrow");
+  if (eyebrow) {
+    eyebrow.textContent = title.includes("Status") ? title.replace(/\s*Status.*/, "") : "HPC Status";
+  }
+  document.title = `Queue Health | ${title}`;
+};
+
 const bootstrap = () => {
   cacheElements();
   initThemeToggle();
+  applyConfigBranding();
   const nav = document.querySelector("[data-cluster-nav]");
   if (!state.features.clusterPages) {
     if (nav) nav.remove();
