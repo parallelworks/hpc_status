@@ -100,9 +100,12 @@ class PWClusterCollector(BaseCollector):
         """
         try:
             cmd = [
-                "pw", "clusters", "ls",
+                "pw",
+                "clusters",
+                "ls",
                 "--status=on",
-                "-o", "table",
+                "-o",
+                "table",
                 "--owned",
             ]
             result = subprocess.run(
@@ -150,11 +153,13 @@ class PWClusterCollector(BaseCollector):
                 cluster_type = parts[2].strip()
 
                 if cluster_type == "existing" and status == "on":
-                    clusters.append({
-                        "uri": uri,
-                        "status": status,
-                        "type": cluster_type,
-                    })
+                    clusters.append(
+                        {
+                            "uri": uri,
+                            "status": status,
+                            "type": cluster_type,
+                        }
+                    )
 
         return clusters
 
@@ -168,7 +173,9 @@ class PWClusterCollector(BaseCollector):
         # For clusters without schedulers, try to get GPU and system info
         gpu_data = None
         system_info = None
-        has_scheduler = bool(usage_data and usage_data.get("systems")) or bool(queue_data and queue_data.get("queues"))
+        has_scheduler = bool(usage_data and usage_data.get("systems")) or bool(
+            queue_data and queue_data.get("queues")
+        )
 
         if not has_scheduler:
             # This is likely a standalone compute server - get GPU/system info
@@ -251,7 +258,11 @@ class PWClusterCollector(BaseCollector):
         # Extract header information
         header_lines = []
         for line in lines:
-            if line.strip() and not line.startswith("System") and not line.startswith("="):
+            if (
+                line.strip()
+                and not line.startswith("System")
+                and not line.startswith("=")
+            ):
                 header_lines.append(line.strip())
             else:
                 break
@@ -298,7 +309,9 @@ class PWClusterCollector(BaseCollector):
                                     "hours_allocated": int(parts[2].strip()),
                                     "hours_used": int(parts[3].strip()),
                                     "hours_remaining": int(parts[4].strip()),
-                                    "percent_remaining": float(parts[5].strip().rstrip("%")),
+                                    "percent_remaining": float(
+                                        parts[5].strip().rstrip("%")
+                                    ),
                                     "background_hours_used": int(parts[6].strip()),
                                 }
                                 usage_data["systems"].append(system_info)
@@ -331,7 +344,12 @@ class PWClusterCollector(BaseCollector):
                 continue
 
             if in_queue_section:
-                if line.startswith("=") or line.startswith("-") or line.startswith("|") or not line.strip():
+                if (
+                    line.startswith("=")
+                    or line.startswith("-")
+                    or line.startswith("|")
+                    or not line.strip()
+                ):
                     continue
 
                 if "Queue Name" not in line and line.strip():
@@ -355,7 +373,12 @@ class PWClusterCollector(BaseCollector):
                             continue
 
             if in_node_section:
-                if line.startswith("=") or line.startswith("-") or line.startswith("|") or not line.strip():
+                if (
+                    line.startswith("=")
+                    or line.startswith("-")
+                    or line.startswith("|")
+                    or not line.strip()
+                ):
                     continue
 
                 if "Node Type" not in line and line.strip():
@@ -368,7 +391,9 @@ class PWClusterCollector(BaseCollector):
                                 "cores_per_node": parts[2].strip(),
                                 "cores_available": parts[3].strip(),
                                 "cores_running": parts[4].strip(),
-                                "cores_free": parts[5].strip() if len(parts) > 5 else "0",
+                                "cores_free": parts[5].strip()
+                                if len(parts) > 5
+                                else "0",
                             }
                             queue_data["nodes"].append(node_info)
                         except (ValueError, IndexError):
@@ -380,8 +405,10 @@ class PWClusterCollector(BaseCollector):
         """Get GPU information using nvidia-smi."""
         try:
             cmd = [
-                "pw", "ssh", cluster_uri,
-                "nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null"
+                "pw",
+                "ssh",
+                cluster_uri,
+                "nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null",
             ]
             result = subprocess.run(
                 cmd,
@@ -404,21 +431,29 @@ class PWClusterCollector(BaseCollector):
             parts = [p.strip() for p in line.split(",")]
             if len(parts) >= 7:
                 try:
-                    gpus.append({
-                        "index": int(parts[0]),
-                        "name": parts[1],
-                        "memory_total_mib": int(parts[2]),
-                        "memory_used_mib": int(parts[3]),
-                        "memory_free_mib": int(parts[4]),
-                        "utilization_percent": int(parts[5]) if parts[5] != "[N/A]" else 0,
-                        "temperature_c": int(parts[6]) if parts[6] != "[N/A]" else None,
-                    })
+                    gpus.append(
+                        {
+                            "index": int(parts[0]),
+                            "name": parts[1],
+                            "memory_total_mib": int(parts[2]),
+                            "memory_used_mib": int(parts[3]),
+                            "memory_free_mib": int(parts[4]),
+                            "utilization_percent": int(parts[5])
+                            if parts[5] != "[N/A]"
+                            else 0,
+                            "temperature_c": int(parts[6])
+                            if parts[6] != "[N/A]"
+                            else None,
+                        }
+                    )
                 except (ValueError, IndexError):
                     continue
 
         total_memory = sum(g["memory_total_mib"] for g in gpus)
         used_memory = sum(g["memory_used_mib"] for g in gpus)
-        avg_utilization = sum(g["utilization_percent"] for g in gpus) / len(gpus) if gpus else 0
+        avg_utilization = (
+            sum(g["utilization_percent"] for g in gpus) / len(gpus) if gpus else 0
+        )
 
         return {
             "gpus": gpus,
@@ -428,7 +463,7 @@ class PWClusterCollector(BaseCollector):
                 "used_memory_mib": used_memory,
                 "free_memory_mib": total_memory - used_memory,
                 "avg_utilization_percent": round(avg_utilization, 1),
-            }
+            },
         }
 
     def _get_system_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
@@ -436,11 +471,13 @@ class PWClusterCollector(BaseCollector):
         try:
             # Get CPU, memory, and load info in one command
             cmd = [
-                "pw", "ssh", cluster_uri,
-                "echo \"CPU:$(nproc 2>/dev/null || echo 0)\"; "
+                "pw",
+                "ssh",
+                cluster_uri,
+                'echo "CPU:$(nproc 2>/dev/null || echo 0)"; '
                 "echo \"MEM:$(free -m 2>/dev/null | awk '/^Mem:/ {print $2,$3,$4}' || echo '0 0 0')\"; "
                 "echo \"LOAD:$(cat /proc/loadavg 2>/dev/null | awk '{print $1,$2,$3}' || echo '0 0 0')\"; "
-                "echo \"HOST:$(hostname 2>/dev/null || echo unknown)\""
+                'echo "HOST:$(hostname 2>/dev/null || echo unknown)"',
             ]
             result = subprocess.run(
                 cmd,
@@ -503,10 +540,12 @@ class PWClusterCollector(BaseCollector):
         try:
             # Single command to get all filesystem info at once
             storage_cmd = [
-                "pw", "ssh", cluster_uri,
+                "pw",
+                "ssh",
+                cluster_uri,
                 "echo 'HOME:'; df -h $HOME 2>/dev/null | tail -1; "
                 "echo 'WORK:'; df -h ${WORKDIR:-$HOME} 2>/dev/null | tail -1; "
-                "echo 'SCRATCH:'; df -h /scratch 2>/dev/null | tail -1 || df -h /tmp 2>/dev/null | tail -1"
+                "echo 'SCRATCH:'; df -h /scratch 2>/dev/null | tail -1 || df -h /tmp 2>/dev/null | tail -1",
             ]
             result = subprocess.run(
                 storage_cmd,
@@ -558,24 +597,3 @@ class PWClusterCollector(BaseCollector):
     def get_storage_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
         """Public method for getting storage info (for backwards compatibility)."""
         return self._get_storage_info(cluster_uri)
-
-    def _parse_df_output(self, df_output: str) -> Optional[Dict[str, Any]]:
-        """Parse df -h output into structured data."""
-        lines = df_output.strip().split("\n")
-        if len(lines) < 2:
-            return None
-
-        # Skip header line
-        data_line = lines[-1].split()
-        if len(data_line) >= 5:
-            try:
-                return {
-                    "filesystem": data_line[0],
-                    "size": data_line[1],
-                    "used": data_line[2],
-                    "available": data_line[3],
-                    "percent_used": data_line[4].rstrip("%"),
-                }
-            except IndexError:
-                return None
-        return None

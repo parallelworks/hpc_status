@@ -149,35 +149,47 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     def _handle_config(self):
         """Return current configuration for frontend."""
         config_data = self.config or {}
-        self._send_json({
-            "deployment": {
-                "name": config_data.get("deployment_name", "HPC Status Monitor"),
-                "platform": config_data.get("platform", "generic"),
-            },
-            "ui": {
-                "home_page": config_data.get("ui", {}).get("home_page", "overview"),
-                "tabs": config_data.get("ui", {}).get("tabs", {}),
-                "default_theme": self.default_theme,
-            },
-            "features": {
-                "cluster_pages": self.cluster_pages_enabled,
-            },
-        })
+        self._send_json(
+            {
+                "deployment": {
+                    "name": config_data.get("deployment_name", "HPC Status Monitor"),
+                    "platform": config_data.get("platform", "generic"),
+                },
+                "ui": {
+                    "home_page": config_data.get("ui", {}).get("home_page", "overview"),
+                    "tabs": config_data.get("ui", {}).get("tabs", {}),
+                    "default_theme": self.default_theme,
+                },
+                "features": {
+                    "cluster_pages": self.cluster_pages_enabled,
+                },
+            }
+        )
 
     def _handle_app_config(self):
         config_data = self.config or {}
         ui_config = config_data.get("ui", {}) if isinstance(config_data, dict) else {}
-        title = ui_config.get("title", "HPC Status Monitor") if isinstance(ui_config, dict) else "HPC Status Monitor"
-        eyebrow = ui_config.get("eyebrow", "HPC STATUS") if isinstance(ui_config, dict) else "HPC STATUS"
+        title = (
+            ui_config.get("title", "HPC Status Monitor")
+            if isinstance(ui_config, dict)
+            else "HPC Status Monitor"
+        )
+        eyebrow = (
+            ui_config.get("eyebrow", "HPC STATUS")
+            if isinstance(ui_config, dict)
+            else "HPC STATUS"
+        )
         body = (
             "window.APP_CONFIG=Object.assign({},window.APP_CONFIG||{},"
-            + json.dumps({
-                "defaultTheme": self.default_theme,
-                "clusterPagesEnabled": bool(self.cluster_pages_enabled),
-                "clusterMonitorInterval": self.cluster_monitor_interval,
-                "title": title,
-                "eyebrow": eyebrow,
-            })
+            + json.dumps(
+                {
+                    "defaultTheme": self.default_theme,
+                    "clusterPagesEnabled": bool(self.cluster_pages_enabled),
+                    "clusterMonitorInterval": self.cluster_monitor_interval,
+                    "title": title,
+                    "eyebrow": eyebrow,
+                }
+            )
             + ");"
         ).encode("utf-8")
         self.send_response(HTTPStatus.OK)
@@ -195,7 +207,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return
         payload, last_error, _ = state.snapshot()
         if payload is None:
-            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, last_error or "Status data not ready.")
+            self.send_error(
+                HTTPStatus.SERVICE_UNAVAILABLE, last_error or "Status data not ready."
+            )
             return
         summary = self._build_system_summary(payload)
         self._send_json(summary)
@@ -203,7 +217,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     def _handle_cluster_usage(self):
         payload = self._load_cluster_usage_payload()
         if payload is None:
-            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Cluster usage data unavailable.")
+            self.send_error(
+                HTTPStatus.SERVICE_UNAVAILABLE, "Cluster usage data unavailable."
+            )
             return
         # Return raw format for frontend compatibility
         # The payload is already a list of cluster objects
@@ -226,14 +242,18 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return
         payload = self._load_cluster_usage_payload()
         if payload is None:
-            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Cluster usage data unavailable.")
+            self.send_error(
+                HTTPStatus.SERVICE_UNAVAILABLE, "Cluster usage data unavailable."
+            )
             return
         clusters = self._build_cluster_profiles(payload)
         for cluster in clusters:
             if cluster.get("slug") == target_slug:
                 self._send_json(cluster)
                 return
-        self.send_error(HTTPStatus.NOT_FOUND, f"Cluster '{slug_part}' not found in usage data.")
+        self.send_error(
+            HTTPStatus.NOT_FOUND, f"Cluster '{slug_part}' not found in usage data."
+        )
 
     def _handle_system_markdown(self, slug_part: str):
         raw = unquote(slug_part or "")
@@ -268,19 +288,23 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         try:
             content = target.read_text(encoding="utf-8")
         except Exception as exc:
-            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, f"Unable to read markdown: {exc}")
+            self.send_error(
+                HTTPStatus.INTERNAL_SERVER_ERROR, f"Unable to read markdown: {exc}"
+            )
             return
         self._send_json({"slug": normalized, "content": content})
 
     def _handle_collectors_status(self):
         """Return status of all collectors."""
         # This would be connected to CollectorManager in a full implementation
-        self._send_json({
-            "collectors": {
-                "hpcmp": {"available": True, "ready": True},
-                "pw_cluster": {"available": True, "ready": True},
-            },
-        })
+        self._send_json(
+            {
+                "collectors": {
+                    "hpcmp": {"available": True, "ready": True},
+                    "pw_cluster": {"available": True, "ready": True},
+                },
+            }
+        )
 
     def _handle_insights(self):
         """Generate and return insights based on current data."""
@@ -295,18 +319,24 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 systems_data = payload.get("systems", [])
                 engine = RecommendationEngine(systems_data)
                 for insight in engine.generate_insights():
-                    insights_list.append({
-                        "type": insight.type,
-                        "message": insight.message,
-                        "priority": insight.priority,
-                        "metric": insight.related_metric,
-                        "cluster": insight.cluster,
-                    })
+                    insights_list.append(
+                        {
+                            "type": insight.type,
+                            "message": insight.message,
+                            "priority": insight.priority,
+                            "metric": insight.related_metric,
+                            "cluster": insight.cluster,
+                        }
+                    )
 
         # Get insights from cluster usage data
         cluster_payload = self._load_cluster_usage_payload()
         if cluster_payload:
-            clusters = cluster_payload if isinstance(cluster_payload, list) else cluster_payload.get("clusters", [])
+            clusters = (
+                cluster_payload
+                if isinstance(cluster_payload, list)
+                else cluster_payload.get("clusters", [])
+            )
             for cluster in clusters:
                 metadata = cluster.get("cluster_metadata", {})
                 name = metadata.get("name", "Unknown")
@@ -314,13 +344,15 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
                 # Check cluster status
                 if status not in ("ON", "UP", "RUNNING", "ONLINE"):
-                    insights_list.append({
-                        "type": "warning",
-                        "message": f"{name}: Cluster status is {status}",
-                        "priority": 4,
-                        "metric": "status",
-                        "cluster": name,
-                    })
+                    insights_list.append(
+                        {
+                            "type": "warning",
+                            "message": f"{name}: Cluster status is {status}",
+                            "priority": 4,
+                            "metric": "status",
+                            "cluster": name,
+                        }
+                    )
 
                 # Check allocation usage
                 usage_data = cluster.get("usage_data", {})
@@ -330,21 +362,25 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                     if allocated > 0:
                         percent = (remaining / allocated) * 100
                         if percent < 10:
-                            insights_list.append({
-                                "type": "warning",
-                                "message": f"{name}: Allocation critically low ({percent:.0f}% remaining)",
-                                "priority": 5,
-                                "metric": "allocation",
-                                "cluster": name,
-                            })
+                            insights_list.append(
+                                {
+                                    "type": "warning",
+                                    "message": f"{name}: Allocation critically low ({percent:.0f}% remaining)",
+                                    "priority": 5,
+                                    "metric": "allocation",
+                                    "cluster": name,
+                                }
+                            )
                         elif percent < 25:
-                            insights_list.append({
-                                "type": "warning",
-                                "message": f"{name}: Allocation running low ({percent:.0f}% remaining)",
-                                "priority": 3,
-                                "metric": "allocation",
-                                "cluster": name,
-                            })
+                            insights_list.append(
+                                {
+                                    "type": "warning",
+                                    "message": f"{name}: Allocation running low ({percent:.0f}% remaining)",
+                                    "priority": 3,
+                                    "metric": "allocation",
+                                    "cluster": name,
+                                }
+                            )
 
                 # Check queue depth
                 queue_data = cluster.get("queue_data", {})
@@ -352,13 +388,15 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                     pending = self._safe_number(queue.get("jobs_pending", 0))
                     queue_name = queue.get("queue_name", "Unknown")
                     if pending > 50:
-                        insights_list.append({
-                            "type": "info",
-                            "message": f"{name}/{queue_name}: High queue depth ({int(pending)} pending jobs)",
-                            "priority": 2,
-                            "metric": "queue_depth",
-                            "cluster": name,
-                        })
+                        insights_list.append(
+                            {
+                                "type": "info",
+                                "message": f"{name}/{queue_name}: High queue depth ({int(pending)} pending jobs)",
+                                "priority": 2,
+                                "metric": "queue_depth",
+                                "cluster": name,
+                            }
+                        )
 
                 # Check GPU utilization
                 gpu_data = cluster.get("gpu_data", {})
@@ -366,29 +404,35 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 if summary.get("gpu_count", 0) > 0:
                     util = summary.get("avg_utilization_percent", 0)
                     if util > 90:
-                        insights_list.append({
-                            "type": "info",
-                            "message": f"{name}: High GPU utilization ({util}%)",
-                            "priority": 2,
-                            "metric": "gpu_utilization",
-                            "cluster": name,
-                        })
+                        insights_list.append(
+                            {
+                                "type": "info",
+                                "message": f"{name}: High GPU utilization ({util}%)",
+                                "priority": 2,
+                                "metric": "gpu_utilization",
+                                "cluster": name,
+                            }
+                        )
                     elif util < 10:
-                        insights_list.append({
-                            "type": "info",
-                            "message": f"{name}: GPUs are mostly idle ({util}% utilization)",
-                            "priority": 1,
-                            "metric": "gpu_utilization",
-                            "cluster": name,
-                        })
+                        insights_list.append(
+                            {
+                                "type": "info",
+                                "message": f"{name}: GPUs are mostly idle ({util}% utilization)",
+                                "priority": 1,
+                                "metric": "gpu_utilization",
+                                "cluster": name,
+                            }
+                        )
 
         # Sort by priority
         insights_list.sort(key=lambda x: x.get("priority", 0), reverse=True)
 
-        self._send_json({
-            "insights": insights_list,
-            "generated_at": datetime.utcnow().isoformat() + "Z",
-        })
+        self._send_json(
+            {
+                "insights": insights_list,
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+            }
+        )
 
     # --- Helper Methods ---
 
@@ -413,7 +457,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             norm_prefix = f"/{norm_prefix}"
         if not path.startswith(norm_prefix):
             return None
-        stripped = path[len(norm_prefix):] or "/"
+        stripped = path[len(norm_prefix) :] or "/"
         if not stripped.startswith("/"):
             stripped = "/" + stripped
         return stripped
@@ -481,7 +525,12 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 return cached
 
         # Fall back to legacy file
-        legacy_path = Path(__file__).parent.parent.parent / "public" / "data" / "cluster_usage.json"
+        legacy_path = (
+            Path(__file__).parent.parent.parent
+            / "public"
+            / "data"
+            / "cluster_usage.json"
+        )
         if not legacy_path.exists():
             return None
         try:
@@ -496,15 +545,17 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     def _build_system_summary(self, payload: Dict) -> Dict:
         systems = []
         for row in payload.get("systems", []):
-            systems.append({
-                "system": row.get("system"),
-                "status": row.get("status"),
-                "dsrc": row.get("dsrc"),
-                "scheduler": (row.get("scheduler") or "").upper(),
-                "login_node": row.get("login"),
-                "observed_at": row.get("observed_at"),
-                "notes": row.get("raw_alt"),
-            })
+            systems.append(
+                {
+                    "system": row.get("system"),
+                    "status": row.get("status"),
+                    "dsrc": row.get("dsrc"),
+                    "scheduler": (row.get("scheduler") or "").upper(),
+                    "login_node": row.get("login"),
+                    "observed_at": row.get("observed_at"),
+                    "notes": row.get("raw_alt"),
+                }
+            )
         return {
             "generated_at": payload.get("meta", {}).get("generated_at"),
             "fleet_stats": payload.get("summary", {}),
@@ -521,10 +572,16 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             queues = queue_section.get("queues", []) or []
             nodes = queue_section.get("nodes", []) or []
 
-            total_allocated = sum(self._safe_number(s.get("hours_allocated")) for s in systems)
-            total_remaining = sum(self._safe_number(s.get("hours_remaining")) for s in systems)
+            total_allocated = sum(
+                self._safe_number(s.get("hours_allocated")) for s in systems
+            )
+            total_remaining = sum(
+                self._safe_number(s.get("hours_remaining")) for s in systems
+            )
             total_used = sum(self._safe_number(s.get("hours_used")) for s in systems)
-            percent_remaining = (total_remaining / total_allocated * 100) if total_allocated else None
+            percent_remaining = (
+                (total_remaining / total_allocated * 100) if total_allocated else None
+            )
 
             queue_profiles = []
             for queue in queues:
@@ -534,46 +591,55 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 pending_cores = self._safe_number(queue.get("cores_pending"))
                 total_jobs = running_jobs + pending_jobs
                 total_cores = running_cores + pending_cores
-                utilization = (running_cores / total_cores * 100) if total_cores else None
-                queue_profiles.append({
-                    "name": queue.get("queue_name"),
-                    "type": queue.get("queue_type"),
-                    "max_walltime": queue.get("max_walltime"),
-                    "jobs": {"running": running_jobs, "pending": pending_jobs},
-                    "cores": {"running": running_cores, "pending": pending_cores},
-                    "utilization_percent": utilization,
-                })
+                utilization = (
+                    (running_cores / total_cores * 100) if total_cores else None
+                )
+                queue_profiles.append(
+                    {
+                        "name": queue.get("queue_name"),
+                        "type": queue.get("queue_type"),
+                        "max_walltime": queue.get("max_walltime"),
+                        "jobs": {"running": running_jobs, "pending": pending_jobs},
+                        "cores": {"running": running_cores, "pending": pending_cores},
+                        "utilization_percent": utilization,
+                    }
+                )
 
             least_backlogged = None
             if queue_profiles:
                 sorted_queues = sorted(
                     queue_profiles,
-                    key=lambda q: (q["jobs"]["pending"], q["cores"]["pending"])
+                    key=lambda q: (q["jobs"]["pending"], q["cores"]["pending"]),
                 )
                 least_backlogged = sorted_queues[0]
 
-            slug = self._normalize_cluster_slug(meta.get("name") or meta.get("uri") or "")
-            clusters.append({
-                "cluster": meta.get("name") or meta.get("uri"),
-                "slug": slug,
-                "uri": meta.get("uri"),
-                "status": meta.get("status"),
-                "type": meta.get("type"),
-                "timestamp": meta.get("timestamp"),
-                "usage": {
-                    "total_allocated_hours": total_allocated,
-                    "total_used_hours": total_used,
-                    "total_remaining_hours": total_remaining,
-                    "percent_remaining": percent_remaining,
-                    "systems": systems,
-                },
-                "queues": queue_profiles,
-                "node_classes": nodes,
-                "placement_hint": {
-                    "least_backlogged_queue": least_backlogged,
-                    "has_capacity": percent_remaining is None or percent_remaining > 5,
-                },
-            })
+            slug = self._normalize_cluster_slug(
+                meta.get("name") or meta.get("uri") or ""
+            )
+            clusters.append(
+                {
+                    "cluster": meta.get("name") or meta.get("uri"),
+                    "slug": slug,
+                    "uri": meta.get("uri"),
+                    "status": meta.get("status"),
+                    "type": meta.get("type"),
+                    "timestamp": meta.get("timestamp"),
+                    "usage": {
+                        "total_allocated_hours": total_allocated,
+                        "total_used_hours": total_used,
+                        "total_remaining_hours": total_remaining,
+                        "percent_remaining": percent_remaining,
+                        "systems": systems,
+                    },
+                    "queues": queue_profiles,
+                    "node_classes": nodes,
+                    "placement_hint": {
+                        "least_backlogged_queue": least_backlogged,
+                        "has_capacity": percent_remaining is None
+                        or percent_remaining > 5,
+                    },
+                }
+            )
         return clusters
 
     def _normalize_cluster_slug(self, text: str) -> str:
