@@ -45,7 +45,7 @@ on:
           theme:
             type: dropdown
             label: UI Theme
-            default: dark
+            default: light
             tooltip: Default color theme for the dashboard
             options:
               - label: Dark
