@@ -21,6 +21,7 @@ collectors:
 
 ui:
   title: "RDHPCS Status Monitor"
+  eyebrow: "NOAA RDHPCS"
   home_page: "overview"
   default_theme: "dark"
   tabs:

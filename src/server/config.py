@@ -41,6 +41,7 @@ class UIConfig:
     """UI configuration."""
 
     title: str = "HPC Status Monitor"
+    eyebrow: str = "HPC STATUS"  # Header eyebrow text
     home_page: str = "overview"  # 'overview', 'fleet', 'queues'
     tabs: Dict[str, bool] = field(
         default_factory=lambda: {
@@ -96,6 +97,7 @@ class Config:
         ui_data = data.get("ui", {})
         ui = UIConfig(
             title=ui_data.get("title", "HPC Status Monitor"),
+            eyebrow=ui_data.get("eyebrow", "HPC STATUS"),
             home_page=ui_data.get("home_page", "overview"),
             tabs=ui_data.get("tabs", UIConfig().tabs),
             default_theme=ui_data.get("default_theme", "dark"),
@@ -110,8 +112,12 @@ class Config:
             retry_backoff=rl_data.get("retry_backoff", [5, 15, 60]),
             min_interval=per_cluster.get("min_interval", 60),
             max_commands_per_poll=per_cluster.get("max_commands_per_poll", 5),
-            failure_threshold=rl_data.get("circuit_breaker", {}).get("failure_threshold", 3),
-            pause_duration=rl_data.get("circuit_breaker", {}).get("pause_duration", 300),
+            failure_threshold=rl_data.get("circuit_breaker", {}).get(
+                "failure_threshold", 3
+            ),
+            pause_duration=rl_data.get("circuit_breaker", {}).get(
+                "pause_duration", 300
+            ),
         )
 
         # Parse collector configs
@@ -123,7 +129,11 @@ class Config:
                     enabled=coll_data.get("enabled", True),
                     refresh_interval=coll_data.get("refresh_interval", 120),
                     timeout=coll_data.get("timeout", 30),
-                    extra={k: v for k, v in coll_data.items() if k not in ("enabled", "refresh_interval", "timeout")},
+                    extra={
+                        k: v
+                        for k, v in coll_data.items()
+                        if k not in ("enabled", "refresh_interval", "timeout")
+                    },
                 )
 
         return cls(
@@ -165,11 +175,13 @@ class Config:
         if env_path := os.environ.get("HPC_STATUS_CONFIG"):
             paths_to_try.append(Path(env_path))
 
-        paths_to_try.extend([
-            Path("./configs/config.yaml"),
-            Path("./config.yaml"),
-            Path.home() / ".hpc_status" / "config.yaml",
-        ])
+        paths_to_try.extend(
+            [
+                Path("./configs/config.yaml"),
+                Path("./config.yaml"),
+                Path.home() / ".hpc_status" / "config.yaml",
+            ]
+        )
 
         for path in paths_to_try:
             if path.exists():
@@ -199,6 +211,7 @@ class Config:
             },
             "ui": {
                 "title": self.ui.title,
+                "eyebrow": self.ui.eyebrow,
                 "home_page": self.ui.home_page,
                 "tabs": self.ui.tabs,
                 "default_theme": self.ui.default_theme,
@@ -208,7 +221,10 @@ class Config:
                 "ssh_timeout": self.rate_limiting.ssh_timeout,
             },
             "collectors": {
-                name: {"enabled": coll.enabled, "refresh_interval": coll.refresh_interval}
+                name: {
+                    "enabled": coll.enabled,
+                    "refresh_interval": coll.refresh_interval,
+                }
                 for name, coll in self.collectors.items()
             },
         }

@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Quota Usage | HPC Status Dashboard</title>
+  <title>Storage | HPC Status Dashboard</title>
   <script>
     (function () {
       function deriveBasePath(pathname) {
@@ -39,9 +39,9 @@
     <header class="hero">
       <div>
         <p class="eyebrow" id="header-eyebrow">HPC STATUS</p>
-        <h1>Quota usage</h1>
+        <h1>Storage</h1>
         <p class="lede">
-          Track available project hours and allocations for every monitored cluster.
+          Monitor filesystem capacity across home, work, and scratch directories.
         </p>
       </div>
       <div class="hero-actions">
@@ -57,8 +57,8 @@
     <nav class="subnav" data-cluster-nav>
       <a href="index.html">Fleet status</a>
       <a href="queues.html">Queue health</a>
-      <a href="quota.html" aria-current="page">Quota usage</a>
-      <a href="storage.html">Storage</a>
+      <a href="quota.html">Quota usage</a>
+      <a href="storage.html" aria-current="page">Storage</a>
     </nav>
 
     <p id="data-status" class="status-banner" role="status" hidden></p>
@@ -69,50 +69,48 @@
         <h2 id="cluster-count">--</h2>
       </article>
       <article class="card">
-        <p>Total allocations</p>
-        <h2 id="total-allocations">--</h2>
+        <p>Filesystems monitored</p>
+        <h2 id="filesystem-count">--</h2>
+      </article>
+      <article class="card alert">
+        <p>Near capacity</p>
+        <h2 id="warning-count">--</h2>
+        <span class="card-tooltip" title="Filesystems above 80% usage">&#9432;</span>
       </article>
       <article class="card">
-        <p>Hours used</p>
-        <h2 id="total-used">--</h2>
-      </article>
-      <article class="card">
-        <p>Hours remaining</p>
-        <h2 id="total-remaining">--</h2>
+        <p>Last updated</p>
+        <h2 id="last-updated">--</h2>
       </article>
     </section>
 
-    <section class="panel duo-panel">
-      <div class="panel-block">
-        <p class="eyebrow">Queues in use</p>
-        <div id="fleet-queue-tags" class="queue-chip-collection muted-text">Refresh to populate queue snapshot.</div>
+    <section id="warnings-section" class="insights-panel" aria-label="Storage warnings" hidden>
+      <div class="insights-header">
+        <h3>Storage Alerts</h3>
+        <span id="warnings-count" class="badge">0</span>
       </div>
-      <div class="panel-block">
-        <p class="eyebrow">Fleet availability</p>
-        <div id="fleet-usage-donut" class="donut-chart placeholder">Refresh to populate usage.</div>
-      </div>
+      <ul id="warnings-list" class="insights-list" aria-live="polite"></ul>
     </section>
 
     <section>
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Connected fleet</p>
-          <h3>Cluster usage and queue posture</h3>
-          <p id="cluster-grid-note" class="muted-text">Loading cluster usage…</p>
+          <p class="eyebrow">Filesystem overview</p>
+          <h3>Storage capacity by cluster</h3>
+          <p id="storage-grid-note" class="muted-text">Loading storage data...</p>
         </div>
       </div>
-      <div id="cluster-grid" class="cluster-grid">
-        <article class="card placeholder">Loading quota data…</article>
+      <div id="storage-grid" class="cluster-grid">
+        <article class="card placeholder">Loading storage data...</article>
       </div>
     </section>
 
     <footer class="footer">
-      <small>Quota data collected from connected clusters</small>
+      <small>Storage data collected from connected clusters</small>
       <small>HPC Status Monitor v2.0</small>
     </footer>
   </div>
 
-  <script type="module" src="assets/js/quota.js"></script>
+  <script type="module" src="assets/js/storage.js"></script>
 </body>
 
 </html>

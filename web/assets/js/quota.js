@@ -639,9 +639,10 @@ const loadData = async ({ silent = true } = {}) => {
 
 const applyConfigBranding = () => {
   const title = window.APP_CONFIG?.title || "HPC Status Monitor";
+  const eyebrowText = window.APP_CONFIG?.eyebrow || "HPC STATUS";
   const eyebrow = document.getElementById("header-eyebrow");
   if (eyebrow) {
-    eyebrow.textContent = "HPC STATUS";
+    eyebrow.textContent = eyebrowText;
   }
   document.title = `Quota Usage | ${title}`;
 };

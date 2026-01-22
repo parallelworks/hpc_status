@@ -1004,12 +1004,17 @@ function isTableDivider(line) {
   return /^(\|\s*:?-{3,}:?\s*)+\|?$/.test(trimmed);
 }
 
-// Apply configurable title from config
+// Apply configurable title and eyebrow from config
 function applyConfigTitle() {
   const title = window.APP_CONFIG?.title || "HPC Status Monitor";
+  const eyebrow = window.APP_CONFIG?.eyebrow || "HPC STATUS";
   const titleEl = document.getElementById("header-title");
+  const eyebrowEl = document.getElementById("header-eyebrow");
   if (titleEl) {
     titleEl.textContent = title;
+  }
+  if (eyebrowEl) {
+    eyebrowEl.textContent = eyebrow;
   }
   document.title = title;
 }

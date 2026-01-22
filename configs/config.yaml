@@ -17,6 +17,7 @@ collectors:
 
 ui:
   title: "HPC Status Monitor"
+  eyebrow: "HPC STATUS"
   home_page: "overview"
   default_theme: "dark"
   tabs:
