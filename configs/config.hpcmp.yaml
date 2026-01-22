@@ -1,0 +1,42 @@
+# HPC Status Monitor - HPCMP Deployment Configuration
+# Use with: python -m src.server.main --config configs/config.hpcmp.yaml
+
+deployment:
+  name: "HPCMP Status Monitor"
+  platform: hpcmp
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+collectors:
+  pw_cluster:
+    enabled: true
+    refresh_interval: 120
+
+  hpcmp:
+    enabled: true
+    url: "https://centers.hpc.mil/systems/unclassified.html"
+    refresh_interval: 180
+    timeout: 30
+
+ui:
+  home_page: "fleet"
+  default_theme: "dark"
+  tabs:
+    fleet: true
+    queues: true
+    quota: true
+    storage: true
+    overview: false
+
+rate_limiting:
+  max_concurrent_ssh: 3
+  ssh_timeout: 30
+  retry_backoff: [5, 15, 60]
+  per_cluster:
+    min_interval: 60
+    max_commands_per_poll: 5
+  circuit_breaker:
+    failure_threshold: 3
+    pause_duration: 300

@@ -1,0 +1,37 @@
+# HPC Status Monitor - Generic Deployment Configuration
+# Use with: python -m src.server.main --config configs/config.yaml
+# This is the default configuration for PW-only deployments
+
+deployment:
+  name: "HPC Status Monitor"
+  platform: generic
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+
+collectors:
+  pw_cluster:
+    enabled: true
+    refresh_interval: 120
+
+ui:
+  home_page: "overview"
+  default_theme: "dark"
+  tabs:
+    overview: true
+    queues: true
+    quota: true
+    storage: true
+    fleet: false
+
+rate_limiting:
+  max_concurrent_ssh: 3
+  ssh_timeout: 30
+  retry_backoff: [5, 15, 60]
+  per_cluster:
+    min_interval: 60
+    max_commands_per_poll: 5
+  circuit_breaker:
+    failure_threshold: 3
+    pause_duration: 300

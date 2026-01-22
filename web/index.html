@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HPC Status Dashboard</title>
+  <meta name="description" content="Cross-site HPC status monitoring dashboard with queue health, quota usage, and system recommendations.">
+  <script>
+    (function () {
+      function deriveBasePath(pathname) {
+        var path = pathname || "/";
+        if (path.endsWith("/") || path.indexOf("/index.html") > -1 ) {
+          return path;
+        }
+        var lastSlash = path.lastIndexOf("/");
+        var segment = lastSlash >= 0 ? path.slice(lastSlash + 1) : path;
+        var prefix = lastSlash >= 0 ? path.slice(0, lastSlash + 1) : "/";
+        return path + "/";
+      }
+      var path = deriveBasePath(window.location.pathname || "/");
+      var base = document.createElement("base");
+      base.href = window.location.origin + path;
+      document.documentElement.setAttribute("data-base-path", path);
+      document.head.appendChild(base);
+    })();
+  </script>
+  <script src="app-config.js"></script>
+  <script>
+    (function () {
+      try {
+        const saved = window.localStorage.getItem("hpc-status-theme");
+        const fallback = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+        const initial = saved || fallback || "dark";
+        document.documentElement.dataset.theme = initial;
+      } catch (err) {
+        document.documentElement.dataset.theme = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+      }
+    })();
+  </script>
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow">HPC Status</p>
+        <h1>Cross-Site Status Monitor</h1>
+        <p class="lede">
+          Real-time view of system status, queue health, and allocation usage across HPC centers.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <button id="refresh-btn" class="ghost-btn" title="Refresh data from source">
+          <span class="btn-icon" aria-hidden="true">↻</span>
+          <span>Refresh</span>
+        </button>
+        <button id="theme-toggle" class="theme-btn" aria-label="Toggle color theme">
+          <span class="theme-icon" aria-hidden="true">🌙</span>
+          <span class="theme-label">Dark</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="subnav" data-cluster-nav aria-label="Main navigation">
+      <a href="index.html" aria-current="page">Fleet status</a>
+      <a href="queues.html">Queue health</a>
+      <a href="quota.html">Quota usage</a>
+    </nav>
+
+    <main id="main-content">
+      <div id="overview-content">
+        <section class="cards" aria-label="Fleet summary">
+          <article class="card">
+            <p>Total systems</p>
+            <h2 id="total-systems" aria-live="polite">--</h2>
+          </article>
+          <article class="card">
+            <p>Fleet uptime</p>
+            <h2 id="fleet-uptime" aria-live="polite">--</h2>
+            <span class="card-tooltip" title="Percentage of systems currently operational">ⓘ</span>
+          </article>
+          <article class="card alert">
+            <p>Systems not UP</p>
+            <h2 id="degraded-count" aria-live="polite">--</h2>
+            <span class="card-tooltip" title="Systems that are degraded, in maintenance, or down">ⓘ</span>
+          </article>
+          <article class="card">
+            <p>Last observed</p>
+            <h2 id="last-updated" aria-live="polite">--</h2>
+          </article>
+        </section>
+
+        <section class="grid" aria-label="Fleet breakdown">
+          <div class="panel">
+            <h3>Status breakdown</h3>
+            <ul id="status-breakdown" class="legend" aria-label="Status counts"></ul>
+          </div>
+          <div class="panel">
+            <h3>DSRC coverage</h3>
+            <ul id="dsrc-breakdown" class="legend" aria-label="DSRC distribution"></ul>
+          </div>
+          <div class="panel">
+            <h3>Scheduler types</h3>
+            <ul id="scheduler-breakdown" class="legend" aria-label="Scheduler distribution"></ul>
+          </div>
+        </section>
+
+        <section class="filters" aria-label="Filter options">
+          <label>
+            <span>Search</span>
+            <input type="search" id="search-input" placeholder="System or login node" aria-label="Search systems" />
+          </label>
+          <label>
+            <span>Status</span>
+            <select id="status-filter" aria-label="Filter by status">
+              <option value="">All</option>
+            </select>
+          </label>
+          <label>
+            <span>DSRC</span>
+            <select id="dsrc-filter" aria-label="Filter by DSRC">
+              <option value="">All</option>
+            </select>
+          </label>
+        </section>
+
+        <section class="table-panel" aria-label="Systems table">
+          <div class="table-head">
+            <h3>Systems</h3>
+            <p id="table-count" aria-live="polite">-- results</p>
+          </div>
+          <div class="table-scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">System</th>
+                  <th scope="col">Status</th>
+                  <th scope="col" title="Data Service Resource Center">DSRC</th>
+                  <th scope="col">Login node</th>
+                  <th scope="col">Scheduler</th>
+                  <th scope="col">Last checked</th>
+                </tr>
+              </thead>
+              <tbody id="systems-body">
+                <tr>
+                  <td colspan="6" class="placeholder">Loading…</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+      <section class="detail-panel" id="system-detail" hidden aria-label="System details">
+        <div class="detail-toolbar">
+          <button id="detail-back" class="ghost-btn detail-back" type="button">← Back to fleet overview</button>
+          <div class="detail-toolbar-meta">
+            <span id="detail-status" class="badge">--</span>
+            <span id="detail-observed" class="detail-observed">Observed --</span>
+          </div>
+        </div>
+        <div class="detail-summary-card">
+          <div>
+            <p class="eyebrow">System detail</p>
+            <h2 id="detail-title">Select a system</h2>
+            <p id="detail-heading" class="detail-heading"></p>
+          </div>
+          <ul class="detail-meta-list">
+            <li>
+              <span>DSRC</span>
+              <strong id="detail-dsrc">--</strong>
+            </li>
+            <li>
+              <span>Login</span>
+              <strong id="detail-login">--</strong>
+            </li>
+            <li>
+              <span>Scheduler</span>
+              <strong id="detail-scheduler">--</strong>
+            </li>
+          </ul>
+        </div>
+        <article id="detail-markdown" class="markdown-body placeholder">
+          Select a system to load its details.
+        </article>
+        <div class="detail-links">
+          <a id="detail-source" class="ghost-btn detail-source" href="#" target="_blank" rel="noopener noreferrer" hidden>View source page</a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer" role="contentinfo">
+      <small>
+        Data source:
+        <a href="https://centers.hpc.mil/systems/unclassified.html" target="_blank" rel="noopener noreferrer">
+          HPC.MIL Unclassified Systems
+        </a>
+      </small>
+      <small>HPC Status Monitor v2.0</small>
+    </footer>
+  </div>
+
+  <script src="assets/js/page-utils.js" type="module"></script>
+  <script src="assets/js/app.js" type="module"></script>
+</body>
+
+</html>
