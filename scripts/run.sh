@@ -52,14 +52,15 @@ setup_venv() {
 # Sync dependencies
 sync_deps() {
     echo "[run] Syncing dependencies..."
-    if [ -f "uv.lock" ]; then
-        # Use lockfile for exact versions
-        $UV_BIN pip sync --python "$VENV_DIR/bin/python" uv.lock 2>/dev/null || \
+
+    # Use uv sync for the project (this handles both venv creation and deps)
+    $UV_BIN sync --python "$VENV_DIR/bin/python" 2>/dev/null || {
+        # Fallback: ensure all dependencies are installed
+        echo "[run] Installing dependencies with pip..."
+        $UV_BIN pip install --python "$VENV_DIR/bin/python" \
+            requests beautifulsoup4 urllib3 certifi pyyaml 2>/dev/null || true
         $UV_BIN pip install --python "$VENV_DIR/bin/python" -e .
-    else
-        # Install from pyproject.toml
-        $UV_BIN pip install --python "$VENV_DIR/bin/python" -e .
-    fi
+    }
 }
 
 # Create data directory

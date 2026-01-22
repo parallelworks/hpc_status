@@ -76,7 +76,9 @@ class HPCMPCollector(BaseCollector):
     ):
         self.url = url
         self.timeout = timeout
-        self._verify = self._determine_verify(verify, ca_bundle)
+        # verify=False means skip SSL verification (insecure mode)
+        # Pass the inverse to _determine_verify which expects insecure flag
+        self._verify = self._determine_verify(not verify, ca_bundle)
 
     @property
     def name(self) -> str:
