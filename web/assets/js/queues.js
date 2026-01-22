@@ -439,6 +439,8 @@ const renderClusterDetail = () => {
       : "Timestamp unavailable.";
   }
 
+  const isSystemOnly = !hasScheduler(cluster) && gpus.length === 0 && sysInfo.cpu_count;
+
   if (isGpuCluster) {
     // GPU cluster display
     if (elements.queueDepthMeta) {
@@ -450,6 +452,17 @@ const renderClusterDetail = () => {
     renderGpuClusterStats(cluster);
     renderGpuQueueGrid(gpus, sysInfo);
     renderGpuTable(gpus);
+  } else if (isSystemOnly) {
+    // System-only cluster (no scheduler, no GPUs)
+    if (elements.queueDepthMeta) {
+      elements.queueDepthMeta.textContent = "No queues";
+    }
+    if (elements.nodeMeta) {
+      elements.nodeMeta.textContent = `${sysInfo.cpu_count || 0} CPUs`;
+    }
+    renderSystemOnlyStats(cluster);
+    renderSystemOnlyGrid(sysInfo);
+    renderSystemOnlyTable(sysInfo);
   } else {
     // HPC cluster display
     if (elements.queueDepthMeta) {
@@ -497,6 +510,112 @@ const renderGpuClusterStats = (cluster) => {
       `;
     }
   }
+};
+
+const renderSystemOnlyStats = (cluster) => {
+  const sysInfo = getSystemInfo(cluster);
+  const memTotal = sysInfo.memory_total_mb || 0;
+  const memUsed = sysInfo.memory_used_mb || 0;
+  const memFree = memTotal - memUsed;
+
+  if (elements.clusterRunningJobs) {
+    elements.clusterRunningJobs.textContent = sysInfo.cpu_count || 0;
+  }
+  if (elements.clusterPendingJobs) {
+    elements.clusterPendingJobs.textContent = sysInfo.load_1m?.toFixed(2) || "0";
+  }
+  if (elements.clusterRunningCores) {
+    elements.clusterRunningCores.textContent = formatNumber(memUsed);
+  }
+  if (elements.clusterPendingCores) {
+    elements.clusterPendingCores.textContent = formatNumber(memFree);
+  }
+  if (elements.clusterCoreDonut) {
+    if (!memTotal) {
+      elements.clusterCoreDonut.innerHTML = '<div class="placeholder">No memory data</div>';
+    } else {
+      const percent = clampPercent((memFree / memTotal) * 100);
+      elements.clusterCoreDonut.innerHTML = `
+        <div class="donut" style="--donut-value:${percent};--donut-primary:var(--success);">
+          <strong>${percent.toFixed(1)}%</strong>
+          <span>Free</span>
+        </div>
+        <small>${formatNumber(memFree)} / ${formatNumber(memTotal)} MB</small>
+      `;
+    }
+  }
+};
+
+const renderSystemOnlyGrid = (sysInfo) => {
+  if (!elements.queueGrid) return;
+  const memTotal = sysInfo.memory_total_mb || 0;
+  const memUsed = sysInfo.memory_used_mb || 0;
+  const memFree = memTotal - memUsed;
+  const memPercent = memTotal ? clampPercent((memUsed / memTotal) * 100) : 0;
+
+  const card = `
+    <article class="queue-card">
+      <header class="queue-card-head">
+        <h4>System Resources</h4>
+        <span class="badge">${sysInfo.hostname || "Server"}</span>
+      </header>
+      <dl class="queue-card-metrics">
+        <div>
+          <dt>CPUs</dt>
+          <dd>${sysInfo.cpu_count || 0}</dd>
+        </div>
+        <div>
+          <dt>Total RAM</dt>
+          <dd>${formatNumber(memTotal)} MB</dd>
+        </div>
+        <div>
+          <dt>Free RAM</dt>
+          <dd>${formatNumber(memFree)} MB</dd>
+        </div>
+        <div>
+          <dt>Load (1m)</dt>
+          <dd>${sysInfo.load_1m?.toFixed(2) || "0"}</dd>
+        </div>
+      </dl>
+      <div class="usage-progress compact">
+        <span>Memory Usage</span>
+        <div class="progress-track progress-split">
+          <div class="progress-value is-running" style="width:${memPercent}%"></div>
+        </div>
+        <small>${memPercent.toFixed(1)}% used</small>
+      </div>
+      <div class="usage-progress compact">
+        <span>Load Average</span>
+        <div class="progress-track progress-split">
+          <div class="progress-value is-running" style="width:${clampPercent((sysInfo.load_1m / (sysInfo.cpu_count || 1)) * 100)}%"></div>
+        </div>
+        <small>${sysInfo.load_1m?.toFixed(2) || "0"} / ${sysInfo.load_5m?.toFixed(2) || "0"} / ${sysInfo.load_15m?.toFixed(2) || "0"}</small>
+      </div>
+    </article>`;
+  elements.queueGrid.innerHTML = card;
+};
+
+const renderSystemOnlyTable = (sysInfo) => {
+  if (!elements.nodeBody) return;
+  const rows = `
+    <tr>
+      <td>CPU</td>
+      <td>${sysInfo.cpu_count || 0}</td>
+      <td>--</td>
+      <td>--</td>
+      <td>--</td>
+      <td>--</td>
+    </tr>
+    <tr>
+      <td>Memory</td>
+      <td>1</td>
+      <td>${formatNumber(sysInfo.memory_total_mb || 0)} MB</td>
+      <td>${formatNumber(sysInfo.memory_total_mb || 0)} MB</td>
+      <td>${formatNumber(sysInfo.memory_used_mb || 0)} MB</td>
+      <td>${formatNumber((sysInfo.memory_total_mb || 0) - (sysInfo.memory_used_mb || 0))} MB</td>
+    </tr>
+  `;
+  elements.nodeBody.innerHTML = rows;
 };
 
 const renderGpuQueueGrid = (gpus, sysInfo) => {

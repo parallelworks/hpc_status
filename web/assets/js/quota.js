@@ -384,10 +384,94 @@ const buildGpuClusterCard = (cluster) => {
   `;
 };
 
+const buildSystemOnlyCard = (cluster) => {
+  const metadata = cluster?.cluster_metadata || {};
+  const sysInfo = getSystemInfo(cluster);
+
+  const metaParts = [];
+  if (metadata.status) metaParts.push(String(metadata.status).toUpperCase());
+  if (metadata.type) metaParts.push(metadata.type);
+  if (sysInfo.hostname && sysInfo.hostname !== "unknown") metaParts.push(sysInfo.hostname);
+  if (metadata.timestamp) metaParts.push(new Date(metadata.timestamp).toLocaleString());
+
+  const memTotal = sysInfo.memory_total_mb || 0;
+  const memUsed = sysInfo.memory_used_mb || 0;
+  const memFree = memTotal - memUsed;
+  const percentFree = memTotal ? clampPercent((memFree / memTotal) * 100) : 0;
+
+  return `
+    <article class="cluster-card">
+      <header>
+        <div>
+          <p class="eyebrow">Compute Server</p>
+          <h4>${metadata.name || metadata.uri || "Cluster"}</h4>
+          <p class="muted-text">${metaParts.join(" • ")}</p>
+        </div>
+      </header>
+      <div class="cluster-card-body">
+        <div class="cluster-card-summary">
+          <div class="donut-chart" aria-label="${metadata.name || "Cluster"} memory">
+            <div class="donut" style="--donut-value:${percentFree}">
+              <strong>${Math.round(percentFree)}%</strong>
+              <span>Free</span>
+            </div>
+            <small>${formatInteger(memFree)} of ${formatInteger(memTotal)} MB</small>
+          </div>
+          <ul class="cluster-metrics">
+            <li><span>CPUs</span><strong>${sysInfo.cpu_count || "--"}</strong></li>
+            <li><span>RAM</span><strong>${formatInteger(memTotal)} MB</strong></li>
+            <li><span>Load (1m)</span><strong>${sysInfo.load_1m?.toFixed(2) || "--"}</strong></li>
+            <li><span>Load (5m)</span><strong>${sysInfo.load_5m?.toFixed(2) || "--"}</strong></li>
+          </ul>
+        </div>
+        <div class="cluster-subprojects">
+          <div class="table-head compact">
+            <h5>System Info</h5>
+            <span>${sysInfo.hostname || "Unknown host"}</span>
+          </div>
+          <div class="table-scroll mini">
+            <table class="quota-table">
+              <thead>
+                <tr>
+                  <th>Property</th>
+                  <th>Value</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td>Hostname</td><td>${sysInfo.hostname || "--"}</td></tr>
+                <tr><td>CPU Count</td><td>${sysInfo.cpu_count || "--"}</td></tr>
+                <tr><td>Memory Total</td><td>${formatInteger(memTotal)} MB</td></tr>
+                <tr><td>Memory Used</td><td>${formatInteger(memUsed)} MB</td></tr>
+                <tr><td>Load Average</td><td>${sysInfo.load_1m?.toFixed(2) || "0"} / ${sysInfo.load_5m?.toFixed(2) || "0"} / ${sysInfo.load_15m?.toFixed(2) || "0"}</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        <div class="cluster-queues">
+          <div class="cluster-queues-head">
+            <h5>Status</h5>
+            <span>No scheduler detected</span>
+          </div>
+          <div class="queue-chip-collection">
+            <span class="queue-chip is-active">Online</span>
+            <span class="queue-chip is-idle">No HPC Queue</span>
+          </div>
+        </div>
+      </div>
+    </article>
+  `;
+};
+
 const buildClusterCard = (cluster) => {
   // Check if this is a GPU-only cluster (no scheduler)
   if (!hasScheduler(cluster) && parseGpus(cluster).length > 0) {
     return buildGpuClusterCard(cluster);
+  }
+
+  // Check if this is a non-GPU compute server (no scheduler, no GPUs)
+  const sysInfo = getSystemInfo(cluster);
+  if (!hasScheduler(cluster) && sysInfo.cpu_count) {
+    return buildSystemOnlyCard(cluster);
   }
 
   const metadata = cluster?.cluster_metadata || {};
