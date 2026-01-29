@@ -336,6 +336,11 @@ const clearBanner = () => {
 const disableRefresh = (disabled) => {
   if (elements.refreshBtn) {
     elements.refreshBtn.disabled = disabled;
+    if (disabled) {
+      elements.refreshBtn.classList.add("is-loading");
+    } else {
+      elements.refreshBtn.classList.remove("is-loading");
+    }
   }
 };
 

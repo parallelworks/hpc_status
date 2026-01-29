@@ -153,8 +153,7 @@ export const initHelpPanel = () => {
     const helpBtn = document.createElement("button");
     helpBtn.id = "help-btn";
     helpBtn.className = "ghost-btn help-btn";
-    helpBtn.setAttribute("aria-label", "Show help");
-    helpBtn.setAttribute("title", "Quick reference guide");
+    helpBtn.setAttribute("aria-label", "Show help and quick reference");
     helpBtn.innerHTML = '<span class="btn-icon" aria-hidden="true">?</span><span>Help</span>';
     heroActions.insertBefore(helpBtn, heroActions.firstChild);
   }

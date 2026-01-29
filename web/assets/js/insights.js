@@ -252,15 +252,17 @@ function clearRetry() {
 
 async function triggerRefresh() {
   const btn = elements.refreshBtn;
-  const original = btn.textContent;
+  const originalHTML = btn.innerHTML;
   btn.disabled = true;
-  btn.textContent = "Refreshing...";
+  btn.classList.add("is-loading");
+  btn.innerHTML = '<span class="btn-icon" aria-hidden="true">↻</span><span>Refreshing…</span>';
 
   try {
     await loadInsights({ showLoading: true });
   } finally {
     btn.disabled = false;
-    btn.textContent = original;
+    btn.classList.remove("is-loading");
+    btn.innerHTML = originalHTML;
   }
 }
 

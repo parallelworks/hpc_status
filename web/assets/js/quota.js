@@ -63,7 +63,11 @@ const disableRefresh = (disabled) => {
   const btn = elements.refreshBtn;
   if (!btn) return;
   btn.disabled = disabled;
-  btn.textContent = disabled ? "Refreshing…" : "Refresh data";
+  if (disabled) {
+    btn.classList.add("is-loading");
+  } else {
+    btn.classList.remove("is-loading");
+  }
 };
 
 const setBanner = (message, variant = "info") => {

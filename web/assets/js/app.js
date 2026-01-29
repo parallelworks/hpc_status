@@ -517,9 +517,10 @@ function clearScheduledRetry() {
 
 async function triggerRefresh() {
   const btn = elements.refreshBtn;
-  const original = btn.textContent;
+  const originalHTML = btn.innerHTML;
   btn.disabled = true;
-  btn.textContent = "Refreshing…";
+  btn.innerHTML = '<span class="btn-icon" aria-hidden="true">↻</span><span>Refreshing…</span>';
+  btn.classList.add("is-loading");
   btn.removeAttribute("title");
   setTableLoading("Refreshing from source…");
   try {
@@ -542,7 +543,8 @@ async function triggerRefresh() {
   } finally {
     clearTableLoading();
     btn.disabled = false;
-    btn.textContent = original;
+    btn.innerHTML = originalHTML;
+    btn.classList.remove("is-loading");
   }
 }
 
