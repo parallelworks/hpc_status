@@ -3,6 +3,8 @@
  * Displays recommendations and alerts based on fleet status and cluster data
  */
 
+import { initHelpPanel, formatRelativeTime, initQuickTips } from "./page-utils.js";
+
 const THEME_STORAGE_KEY = "hpc-status-theme";
 
 function deriveBasePath(pathname) {
@@ -138,6 +140,23 @@ async function loadInsights({ showLoading = true } = {}) {
   }
 }
 
+// Map insight types to severity descriptions for researcher context
+const severityDescriptions = {
+  critical: "Requires immediate attention - may block work",
+  warning: "Should be addressed soon to prevent issues",
+  info: "Informational - no action required",
+  suggestion: "Optional optimization for better efficiency",
+};
+
+// Map metric types to human-readable explanations
+const metricExplanations = {
+  allocation_percent_remaining: "Percentage of compute hours still available",
+  storage_percent_used: "Filesystem usage level",
+  queue_pending_jobs: "Jobs waiting for resources",
+  queue_wait_time: "Expected queue wait time",
+  system_status: "Current operational state",
+};
+
 function renderInsights() {
   const { insights } = state;
 
@@ -152,13 +171,21 @@ function renderInsights() {
   elements.insightsList.innerHTML = insights
     .map((insight) => {
       const typeClass = insight.type || "info";
-      const icon = typeClass === "warning" ? "⚠️" : "ℹ️";
+      // Enhanced icons with better visual distinction
+      const iconMap = {
+        critical: "&#x2717;", // X mark
+        warning: "&#x26A0;",  // Warning triangle
+        info: "&#x2139;",     // Info symbol
+        suggestion: "&#x2713;", // Checkmark
+      };
+      const icon = iconMap[typeClass] || "&#x2139;";
       const cluster = insight.cluster ? `<small class="insight-cluster">${escapeHtml(insight.cluster)}</small>` : "";
-      const metric = insight.metric ? `<span class="insight-metric">${escapeHtml(insight.metric)}</span>` : "";
+      const metric = insight.metric ? `<span class="insight-metric" title="${metricExplanations[insight.metric] || 'Metric value'}">${escapeHtml(insight.metric)}</span>` : "";
       const priority = insight.priority ? `<span class="insight-priority">Priority: ${insight.priority}</span>` : "";
+      const severityTip = severityDescriptions[typeClass] || "";
 
       return `
-        <li class="insight-item ${typeClass}">
+        <li class="insight-item ${typeClass}" title="${severityTip}">
           <span class="insight-icon">${icon}</span>
           <div class="insight-content">
             <p>${escapeHtml(insight.message)}</p>
@@ -185,8 +212,8 @@ function updateSummary(generatedAt) {
 
   if (generatedAt) {
     try {
-      const date = new Date(generatedAt);
-      elements.lastUpdated.textContent = date.toLocaleTimeString();
+      elements.lastUpdated.textContent = formatRelativeTime(generatedAt);
+      elements.lastUpdated.title = `Generated: ${new Date(generatedAt).toLocaleString()}`;
     } catch {
       elements.lastUpdated.textContent = "--";
     }
@@ -248,6 +275,8 @@ function registerEvents() {
 
 // Initialize
 applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
+initHelpPanel();
+initQuickTips();
 registerEvents();
 loadInsights();
 

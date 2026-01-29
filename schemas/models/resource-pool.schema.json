@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/models/resource-pool.schema.json",
+  "title": "ResourcePool",
+  "description": "A pool of compute resources with explicit capacity vs availability semantics. This is the core abstraction for understanding HPC resource state.",
+
+  "type": "object",
+  "properties": {
+    "resource_type": {
+      "type": "string",
+      "enum": ["CORES", "NODES", "GPUS", "MEMORY"],
+      "description": "Type of resource being tracked"
+    },
+
+    "capacity": {
+      "type": "object",
+      "description": "CAPACITY: Total/maximum resources (static, changes only with hardware additions/removals)",
+      "properties": {
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total resources that exist in this pool"
+        },
+        "allocatable": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources that could theoretically be allocated (total minus reserved/offline)"
+        }
+      },
+      "required": ["total"]
+    },
+
+    "availability": {
+      "type": "object",
+      "description": "AVAILABILITY: Current resource state (dynamic, changes with job scheduling)",
+      "properties": {
+        "idle": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources currently idle and immediately allocatable"
+        },
+        "allocated": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources currently allocated to running jobs"
+        },
+        "pending": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources requested by queued (not yet running) jobs"
+        },
+        "reserved": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources reserved for future use (maintenance, priority jobs)"
+        },
+        "offline": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Resources currently unavailable (failed, draining, maintenance)"
+        }
+      },
+      "required": ["idle", "allocated"]
+    },
+
+    "fragmentation": {
+      "type": "object",
+      "description": "FRAGMENTATION: How resources are distributed (affects schedulability)",
+      "properties": {
+        "largest_contiguous_block": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Largest single allocation possible right now"
+        },
+        "contiguous_blocks": {
+          "type": "array",
+          "description": "Distribution of available resource blocks",
+          "items": {
+            "type": "object",
+            "properties": {
+              "size": {
+                "type": "integer",
+                "description": "Size of this contiguous block"
+              },
+              "count": {
+                "type": "integer",
+                "description": "Number of blocks of this size"
+              }
+            }
+          }
+        },
+        "fragmentation_ratio": {
+          "$ref": "../common/units.schema.json#/$defs/Ratio",
+          "description": "0 = perfectly consolidated, 1 = maximally fragmented"
+        }
+      }
+    },
+
+    "unit": {
+      "type": "string",
+      "description": "Unit for the resource counts",
+      "examples": ["cores", "nodes", "gpus", "gigabytes"]
+    }
+  },
+
+  "required": ["resource_type", "capacity", "availability"],
+
+  "examples": [
+    {
+      "resource_type": "CORES",
+      "unit": "cores",
+      "capacity": {
+        "total": 100000,
+        "allocatable": 98000
+      },
+      "availability": {
+        "idle": 15000,
+        "allocated": 78000,
+        "pending": 25000,
+        "reserved": 2000,
+        "offline": 5000
+      },
+      "fragmentation": {
+        "largest_contiguous_block": 2048,
+        "fragmentation_ratio": 0.3
+      }
+    }
+  ]
+}

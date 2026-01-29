@@ -1,4 +1,4 @@
-import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle, buildApiUrl } from "./page-utils.js";
+import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle, buildApiUrl, initHelpPanel, formatRelativeTime, initQuickTips } from "./page-utils.js";
 
 const DATA_URL = buildApiUrl("api/cluster-usage").toString();
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -746,6 +746,8 @@ const applyConfigBranding = () => {
 const bootstrap = () => {
   cacheElements();
   initThemeToggle();
+  initHelpPanel();
+  initQuickTips();
   applyConfigBranding();
   const nav = document.querySelector("[data-cluster-nav]");
   if (!state.features.clusterPages) {

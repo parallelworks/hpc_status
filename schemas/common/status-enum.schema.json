@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/common/status-enum.schema.json",
+  "title": "HPC Status Monitor - Status Enumerations",
+  "description": "Canonical status values normalized across schedulers and systems",
+
+  "$defs": {
+    "SystemOperationalStatus": {
+      "type": "string",
+      "enum": ["UP", "DOWN", "DEGRADED", "MAINTENANCE", "UNKNOWN"],
+      "description": "Operational status of an HPC system",
+      "x-enum-descriptions": {
+        "UP": "System is fully operational and accepting jobs",
+        "DOWN": "System is offline and not accessible",
+        "DEGRADED": "System is operational but with reduced capacity or performance",
+        "MAINTENANCE": "System is undergoing planned maintenance",
+        "UNKNOWN": "Status could not be determined"
+      }
+    },
+
+    "QueueState": {
+      "type": "string",
+      "enum": ["ACTIVE", "INACTIVE", "DRAINING", "OFFLINE"],
+      "description": "State of a scheduler queue or partition",
+      "x-enum-descriptions": {
+        "ACTIVE": "Queue is accepting and running jobs",
+        "INACTIVE": "Queue exists but is not accepting new jobs",
+        "DRAINING": "Queue is running existing jobs but not accepting new ones",
+        "OFFLINE": "Queue is completely offline"
+      }
+    },
+
+    "NodeState": {
+      "type": "string",
+      "enum": ["IDLE", "ALLOCATED", "MIXED", "DOWN", "DRAINING", "RESERVED", "MAINTENANCE"],
+      "description": "State of a compute node (normalized across schedulers)",
+      "x-enum-descriptions": {
+        "IDLE": "Node is available for job allocation",
+        "ALLOCATED": "Node is fully allocated to running jobs",
+        "MIXED": "Node is partially allocated (some cores free)",
+        "DOWN": "Node is offline or failed",
+        "DRAINING": "Node is completing jobs but won't accept new ones",
+        "RESERVED": "Node is reserved for future use (e.g., maintenance)",
+        "MAINTENANCE": "Node is undergoing maintenance"
+      }
+    },
+
+    "JobState": {
+      "type": "string",
+      "enum": ["PENDING", "RUNNING", "COMPLETED", "FAILED", "CANCELLED", "HELD", "SUSPENDED"],
+      "description": "State of a scheduler job (normalized across schedulers)",
+      "x-enum-descriptions": {
+        "PENDING": "Job is waiting in queue to be scheduled",
+        "RUNNING": "Job is currently executing",
+        "COMPLETED": "Job finished successfully",
+        "FAILED": "Job terminated with an error",
+        "CANCELLED": "Job was cancelled by user or system",
+        "HELD": "Job is held and will not be scheduled until released",
+        "SUSPENDED": "Job execution is temporarily paused"
+      }
+    },
+
+    "ClusterConnectionStatus": {
+      "type": "string",
+      "enum": ["CONNECTED", "DISCONNECTED", "ERROR", "UNKNOWN"],
+      "description": "Connection status to a PW cluster",
+      "x-enum-descriptions": {
+        "CONNECTED": "Cluster is reachable and responding to commands",
+        "DISCONNECTED": "Cluster is not reachable (may be powered off)",
+        "ERROR": "Connection attempted but failed with an error",
+        "UNKNOWN": "Connection status has not been checked recently"
+      }
+    },
+
+    "StorageHealthStatus": {
+      "type": "string",
+      "enum": ["HEALTHY", "WARNING", "CRITICAL"],
+      "description": "Health status of a storage filesystem",
+      "x-enum-descriptions": {
+        "HEALTHY": "Storage usage is below warning threshold (<80%)",
+        "WARNING": "Storage usage is elevated (80-95%)",
+        "CRITICAL": "Storage is nearly full (>95%)"
+      }
+    },
+
+    "InsightSeverity": {
+      "type": "string",
+      "enum": ["CRITICAL", "WARNING", "INFO", "SUGGESTION"],
+      "description": "Severity level of a generated insight",
+      "x-enum-descriptions": {
+        "CRITICAL": "Requires immediate attention, may block work",
+        "WARNING": "Should be addressed soon to avoid problems",
+        "INFO": "Informational, no action required",
+        "SUGGESTION": "Optional improvement or optimization"
+      }
+    },
+
+    "InsightType": {
+      "type": "string",
+      "enum": ["RECOMMENDATION", "WARNING", "ALERT", "INFO"],
+      "description": "Category of insight",
+      "x-enum-descriptions": {
+        "RECOMMENDATION": "Suggestion for where/how to run jobs",
+        "WARNING": "Potential issue that may affect operations",
+        "ALERT": "Active issue requiring attention",
+        "INFO": "General information about system state"
+      }
+    },
+
+    "SchedulerType": {
+      "type": "string",
+      "enum": ["PBS", "SLURM", "LSF", "SGE", "UNKNOWN"],
+      "description": "Type of job scheduler",
+      "x-enum-descriptions": {
+        "PBS": "PBS Professional or OpenPBS",
+        "SLURM": "Slurm Workload Manager",
+        "LSF": "IBM Spectrum LSF",
+        "SGE": "Sun/Oracle Grid Engine",
+        "UNKNOWN": "Scheduler type not determined"
+      }
+    }
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/common/timestamp.schema.json",
+  "title": "HPC Status Monitor - Timestamp Definitions",
+  "description": "Standard timestamp and datetime formats",
+
+  "$defs": {
+    "ISO8601Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp with timezone (RFC 3339)",
+      "examples": [
+        "2026-01-29T15:30:00Z",
+        "2026-01-29T10:30:00-05:00"
+      ]
+    },
+
+    "ISO8601Date": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO 8601 date (YYYY-MM-DD)",
+      "examples": ["2026-01-29", "2026-02-15"]
+    },
+
+    "UnixEpochSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Unix timestamp (seconds since 1970-01-01T00:00:00Z)",
+      "examples": [1767025800, 1767112200]
+    },
+
+    "ObservationMeta": {
+      "type": "object",
+      "description": "Metadata about when and how data was observed",
+      "properties": {
+        "observed_at": {
+          "$ref": "#/$defs/ISO8601Timestamp",
+          "description": "When this data was collected"
+        },
+        "source": {
+          "type": "string",
+          "description": "Data source identifier",
+          "examples": ["hpcmp_scraper", "pw_cli", "slurm_api"]
+        },
+        "cache_age_seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "How old this data is from cache (0 if fresh)",
+          "x-unit": "seconds"
+        },
+        "from_cache": {
+          "type": "boolean",
+          "description": "Whether this data was served from cache vs live fetch"
+        },
+        "next_refresh_at": {
+          "$ref": "#/$defs/ISO8601Timestamp",
+          "description": "When the next data refresh is scheduled"
+        }
+      },
+      "required": ["observed_at"]
+    },
+
+    "TimeRange": {
+      "type": "object",
+      "description": "A time range with start and optional end",
+      "properties": {
+        "start": {
+          "$ref": "#/$defs/ISO8601Timestamp",
+          "description": "Start of the time range"
+        },
+        "end": {
+          "$ref": "#/$defs/ISO8601Timestamp",
+          "description": "End of the time range (null if ongoing)"
+        }
+      },
+      "required": ["start"]
+    },
+
+    "MaintenanceWindow": {
+      "type": "object",
+      "description": "A scheduled maintenance period",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique identifier for this maintenance window"
+        },
+        "start": {
+          "$ref": "#/$defs/ISO8601Timestamp",
+          "description": "When maintenance begins"
+        },
+        "end": {
+          "$ref": "#/$defs/ISO8601Timestamp",
+          "description": "When maintenance is expected to end"
+        },
+        "description": {
+          "type": "string",
+          "description": "Human-readable description of the maintenance"
+        },
+        "affected_systems": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of affected system names"
+        },
+        "impact": {
+          "type": "string",
+          "enum": ["FULL_OUTAGE", "PARTIAL_OUTAGE", "DEGRADED", "NONE"],
+          "description": "Expected impact level"
+        }
+      },
+      "required": ["start", "end"]
+    }
+  }
+}

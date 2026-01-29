@@ -4,6 +4,10 @@ Provides intelligent suggestions for:
 - Best queue/system for a given job
 - Load balancing across multiple systems
 - Allocation and storage warnings
+
+Insights are categorized by:
+- type: RECOMMENDATION, WARNING, ALERT, INFO
+- severity: CRITICAL, WARNING, INFO, SUGGESTION
 """
 
 from __future__ import annotations
@@ -11,7 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
-from ..data.models import SystemInsight
+from ..data.models import SystemInsight, InsightSeverity, InsightType
 
 
 @dataclass
@@ -335,7 +339,7 @@ class RecommendationEngine:
     def generate_insights(self) -> List[SystemInsight]:
         """Generate all current insights and warnings.
 
-        Returns a list of insights sorted by priority.
+        Returns a list of insights sorted by severity (CRITICAL first).
         """
         insights: List[SystemInsight] = []
 
@@ -345,39 +349,105 @@ class RecommendationEngine:
             allocation = self._get_allocation_remaining(system)
 
             if allocation is not None:
-                if allocation < 10:
+                if allocation < 5:
                     insights.append(
                         SystemInsight(
-                            type="warning",
-                            message=f"{name}: Allocation critically low ({allocation:.0f}% remaining). Request additional hours soon.",
+                            type=InsightType.ALERT.value,
+                            message=f"{name}: Allocation nearly exhausted ({allocation:.0f}% remaining). Jobs may be rejected.",
                             priority=5,
-                            related_metric="allocation",
+                            severity=InsightSeverity.CRITICAL,
+                            related_metric="allocation_percent_remaining",
                             cluster=name,
+                            project=system.get("project"),
+                            action_description="Request additional allocation hours immediately",
                         )
                     )
-                elif allocation < 25:
+                elif allocation < 20:
                     insights.append(
                         SystemInsight(
-                            type="warning",
-                            message=f"{name}: Allocation running low ({allocation:.0f}% remaining).",
-                            priority=3,
-                            related_metric="allocation",
+                            type=InsightType.WARNING.value,
+                            message=f"{name}: Allocation running low ({allocation:.0f}% remaining). Plan for renewal.",
+                            priority=4,
+                            severity=InsightSeverity.WARNING,
+                            related_metric="allocation_percent_remaining",
+                            cluster=name,
+                            project=system.get("project"),
+                            action_description="Request additional allocation hours soon",
+                        )
+                    )
+                elif allocation < 40:
+                    insights.append(
+                        SystemInsight(
+                            type=InsightType.INFO.value,
+                            message=f"{name}: Allocation at {allocation:.0f}% remaining.",
+                            priority=2,
+                            severity=InsightSeverity.INFO,
+                            related_metric="allocation_percent_remaining",
                             cluster=name,
                         )
                     )
 
-            # Queue depth warnings
+            # Queue depth insights
             for queue in system.get("queues", []):
                 pending = self._safe_int(queue.get("jobs", {}).get("pending", 0))
-                if pending > 50:
-                    queue_name = queue.get("name") or queue.get("queue_name")
+                queue_name = queue.get("name") or queue.get("queue_name")
+
+                if pending > 100:
                     insights.append(
                         SystemInsight(
-                            type="info",
-                            message=f"{name}/{queue_name}: High queue depth ({pending} pending jobs). Consider alternative systems.",
-                            priority=2,
-                            related_metric="queue_depth",
+                            type=InsightType.WARNING.value,
+                            message=f"{name}/{queue_name}: Very high queue depth ({pending} pending jobs). Expect long wait times.",
+                            priority=4,
+                            severity=InsightSeverity.WARNING,
+                            related_metric="queue_pending_jobs",
                             cluster=name,
+                            queue=queue_name,
+                            action_description="Consider alternative systems or queues",
+                        )
+                    )
+                elif pending > 50:
+                    insights.append(
+                        SystemInsight(
+                            type=InsightType.RECOMMENDATION.value,
+                            message=f"{name}/{queue_name}: High queue depth ({pending} pending jobs). Alternative queues may start faster.",
+                            priority=2,
+                            severity=InsightSeverity.SUGGESTION,
+                            related_metric="queue_pending_jobs",
+                            cluster=name,
+                            queue=queue_name,
+                        )
+                    )
+
+            # Storage warnings
+            for storage in system.get("storage", []):
+                percent_used = storage.get("percent_used", 0)
+                mount = storage.get("mount_point") or storage.get("path", "storage")
+
+                if percent_used >= 95:
+                    insights.append(
+                        SystemInsight(
+                            type=InsightType.ALERT.value,
+                            message=f"{name}: {mount} is {percent_used:.0f}% full. Jobs may fail due to no space.",
+                            priority=5,
+                            severity=InsightSeverity.CRITICAL,
+                            related_metric="storage_percent_used",
+                            cluster=name,
+                            storage=mount,
+                            action_description="Clean up files or move data immediately",
+                            action_command=f"du -sh ~/* | sort -h",
+                        )
+                    )
+                elif percent_used >= 80:
+                    insights.append(
+                        SystemInsight(
+                            type=InsightType.WARNING.value,
+                            message=f"{name}: {mount} is {percent_used:.0f}% full. Consider cleanup.",
+                            priority=3,
+                            severity=InsightSeverity.WARNING,
+                            related_metric="storage_percent_used",
+                            cluster=name,
+                            storage=mount,
+                            action_description="Clean up old files to free space",
                         )
                     )
 
@@ -385,28 +455,54 @@ class RecommendationEngine:
         for system in self.systems:
             status = system.get("status", "").upper()
             name = system.get("cluster") or system.get("name", "Unknown")
+            status_reason = system.get("status_reason", "")
 
-            if status == "DEGRADED":
+            if status == "DOWN":
                 insights.append(
                     SystemInsight(
-                        type="warning",
-                        message=f"{name}: System is degraded. Jobs may experience delays.",
+                        type=InsightType.ALERT.value,
+                        message=f"{name}: System is DOWN. {status_reason}".strip(),
+                        priority=5,
+                        severity=InsightSeverity.CRITICAL,
+                        related_metric="system_status",
+                        system=name,
+                        cluster=name,
+                        action_description="Use alternative system",
+                    )
+                )
+            elif status == "DEGRADED":
+                insights.append(
+                    SystemInsight(
+                        type=InsightType.WARNING.value,
+                        message=f"{name}: System is degraded. {status_reason}. Jobs may experience delays.".strip(),
                         priority=4,
-                        related_metric="status",
+                        severity=InsightSeverity.WARNING,
+                        related_metric="system_status",
+                        system=name,
                         cluster=name,
                     )
                 )
             elif status == "MAINTENANCE":
                 insights.append(
                     SystemInsight(
-                        type="warning",
-                        message=f"{name}: System under maintenance. Consider alternative systems.",
+                        type=InsightType.WARNING.value,
+                        message=f"{name}: System under maintenance. {status_reason}".strip(),
                         priority=4,
-                        related_metric="status",
+                        severity=InsightSeverity.WARNING,
+                        related_metric="system_status",
+                        system=name,
                         cluster=name,
+                        action_description="Consider alternative systems",
                     )
                 )
 
-        # Sort by priority (highest first)
-        insights.sort(key=lambda x: x.priority, reverse=True)
+        # Sort by severity (CRITICAL first) then by priority
+        severity_order = {
+            InsightSeverity.CRITICAL: 0,
+            InsightSeverity.WARNING: 1,
+            InsightSeverity.INFO: 2,
+            InsightSeverity.SUGGESTION: 3,
+        }
+        insights.sort(key=lambda x: (severity_order.get(x.severity, 4), -x.priority))
+
         return insights

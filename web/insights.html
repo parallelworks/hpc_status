@@ -68,18 +68,22 @@
       <article class="card">
         <p>Total insights</p>
         <h2 id="total-insights">--</h2>
+        <span class="card-tooltip" title="Recommendations and alerts generated from fleet analysis">ⓘ</span>
       </article>
       <article class="card alert">
         <p>Warnings</p>
         <h2 id="warning-count">--</h2>
+        <span class="card-tooltip" title="Issues requiring attention: low allocations, storage near capacity, system degradation">ⓘ</span>
       </article>
       <article class="card">
         <p>Informational</p>
         <h2 id="info-count">--</h2>
+        <span class="card-tooltip" title="General status updates and optimization suggestions">ⓘ</span>
       </article>
       <article class="card">
         <p>Last updated</p>
         <h2 id="last-updated">--</h2>
+        <span class="card-tooltip" title="When insights were last generated from fleet data">ⓘ</span>
       </article>
     </section>
 
@@ -87,7 +91,7 @@
       <div class="panel-head">
         <div>
           <p class="eyebrow">Fleet analysis</p>
-          <h3>Recommendations and alerts</h3>
+          <h3>Recommendations and alerts <span class="panel-help" title="Insights are sorted by severity: CRITICAL (blocks work), WARNING (needs attention), INFO (status updates), SUGGESTION (optimizations)">ⓘ</span></h3>
           <p id="insights-note" class="muted-text">Loading insights...</p>
         </div>
       </div>

@@ -68,28 +68,32 @@
       <article class="card">
         <p>Connected clusters</p>
         <h2 id="connected-count">--</h2>
+        <span class="card-tooltip" title="Clusters with active queue data collection">ⓘ</span>
       </article>
       <article class="card">
         <p>Queues observed</p>
         <h2 id="queue-count">--</h2>
+        <span class="card-tooltip" title="Total scheduler queues/partitions across all clusters. Each queue has policies for walltime, node limits, and access.">ⓘ</span>
       </article>
       <article class="card">
         <p>Running jobs</p>
         <h2 id="running-jobs">--</h2>
+        <span class="card-tooltip" title="Jobs currently executing on compute nodes">ⓘ</span>
       </article>
       <article class="card">
         <p>Pending jobs</p>
         <h2 id="pending-jobs">--</h2>
+        <span class="card-tooltip" title="Jobs waiting in queue for resources. High pending counts may indicate system congestion.">ⓘ</span>
       </article>
     </section>
 
     <section class="panel duo-panel">
       <div class="panel-block">
-        <p class="eyebrow">Queue disposition</p>
+        <p class="eyebrow">Queue disposition <span class="eyebrow-help" title="Visual summary of queue activity: active (has running jobs), backlog (jobs pending), or idle (no activity)">ⓘ</span></p>
         <div id="fleet-queue-tags" class="queue-chip-collection muted-text">Refresh to populate queue stats.</div>
       </div>
       <div class="panel-block">
-        <p class="eyebrow">Fleet core utilization</p>
+        <p class="eyebrow">Fleet core utilization <span class="eyebrow-help" title="Percentage of total compute cores currently in use across all connected clusters">ⓘ</span></p>
         <div id="fleet-core-donut" class="donut-chart placeholder">Awaiting data…</div>
       </div>
     </section>
@@ -108,23 +112,23 @@
       </div>
       <p id="queue-cluster-note" class="muted-text"></p>
       <div class="cluster-stats-row">
-        <div class="metric-card">
+        <div class="metric-card" title="Jobs currently executing on compute nodes">
           <p>Running jobs</p>
           <strong id="cluster-running-jobs">--</strong>
         </div>
-        <div class="metric-card">
+        <div class="metric-card" title="Jobs waiting in queue for available resources">
           <p>Pending jobs</p>
           <strong id="cluster-pending-jobs">--</strong>
         </div>
-        <div class="metric-card">
+        <div class="metric-card" title="Total CPU cores currently allocated to running jobs">
           <p>Cores running</p>
           <strong id="cluster-running-cores">--</strong>
         </div>
-        <div class="metric-card">
+        <div class="metric-card" title="CPU cores requested by pending jobs">
           <p>Cores pending</p>
           <strong id="cluster-pending-cores">--</strong>
         </div>
-        <div class="donut-chart cluster-donut" id="cluster-core-donut">
+        <div class="donut-chart cluster-donut" id="cluster-core-donut" title="Visual representation of core utilization">
           <div class="placeholder">Select a cluster</div>
         </div>
       </div>
@@ -132,19 +136,19 @@
 
     <section class="table-panel">
       <div class="table-head">
-        <h3>Node availability</h3>
+        <h3>Node availability <span class="panel-help" title="Breakdown of compute resources by node type. Nodes are individual servers; cores are CPU processors within each node.">ⓘ</span></h3>
         <p id="node-meta" class="muted-text"></p>
       </div>
       <div class="table-scroll">
         <table class="quota-table">
           <thead>
             <tr>
-              <th>Node type</th>
-              <th>Nodes available</th>
-              <th>Cores per node</th>
-              <th>Cores available</th>
-              <th>Cores running</th>
-              <th>Cores free</th>
+              <th>Node type <span class="th-help" title="Category of compute node (e.g., standard, GPU, bigmem)">ⓘ</span></th>
+              <th>Nodes available <span class="th-help" title="Number of nodes ready to accept jobs">ⓘ</span></th>
+              <th>Cores per node <span class="th-help" title="CPU cores on each node of this type">ⓘ</span></th>
+              <th>Cores available <span class="th-help" title="Total cores that could be allocated (nodes × cores per node)">ⓘ</span></th>
+              <th>Cores running <span class="th-help" title="Cores currently executing jobs">ⓘ</span></th>
+              <th>Cores free <span class="th-help" title="Cores available for new jobs">ⓘ</span></th>
             </tr>
           </thead>
           <tbody id="node-body">
@@ -158,7 +162,7 @@
 
     <section>
       <div class="panel-head">
-        <h3>Queue depth</h3>
+        <h3>Queue depth <span class="panel-help" title="Each card shows a scheduler queue with its running/pending job counts. Queues have different policies: batch (long jobs), debug (testing), gpu (accelerators).">ⓘ</span></h3>
         <p id="queue-depth-meta" class="muted-text"></p>
       </div>
       <div id="queue-grid" class="queue-grid">

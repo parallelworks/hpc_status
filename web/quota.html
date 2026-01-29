@@ -68,28 +68,32 @@
       <article class="card">
         <p>Connected clusters</p>
         <h2 id="cluster-count">--</h2>
+        <span class="card-tooltip" title="Clusters with allocation data available">ⓘ</span>
       </article>
       <article class="card">
         <p>Total allocations</p>
         <h2 id="total-allocations">--</h2>
+        <span class="card-tooltip" title="Number of project allocations (compute time grants) being tracked">ⓘ</span>
       </article>
       <article class="card">
         <p>Hours used</p>
         <h2 id="total-used">--</h2>
+        <span class="card-tooltip" title="Core-hours consumed across all allocations. One core-hour = 1 CPU core running for 1 hour.">ⓘ</span>
       </article>
       <article class="card">
         <p>Hours remaining</p>
         <h2 id="total-remaining">--</h2>
+        <span class="card-tooltip" title="Core-hours still available. When exhausted, jobs may be rejected or deprioritized.">ⓘ</span>
       </article>
     </section>
 
     <section class="panel duo-panel">
       <div class="panel-block">
-        <p class="eyebrow">Queues in use</p>
+        <p class="eyebrow">Queues in use <span class="eyebrow-help" title="Quick view of active queues across your allocations">ⓘ</span></p>
         <div id="fleet-queue-tags" class="queue-chip-collection muted-text">Refresh to populate queue snapshot.</div>
       </div>
       <div class="panel-block">
-        <p class="eyebrow">Fleet availability</p>
+        <p class="eyebrow">Fleet availability <span class="eyebrow-help" title="Overall allocation consumption: green=remaining hours, red=used hours">ⓘ</span></p>
         <div id="fleet-usage-donut" class="donut-chart placeholder">Refresh to populate usage.</div>
       </div>
     </section>
@@ -98,7 +102,7 @@
       <div class="panel-head">
         <div>
           <p class="eyebrow">Connected fleet</p>
-          <h3>Cluster usage and queue posture</h3>
+          <h3>Cluster usage and queue posture <span class="panel-help" title="Each card shows a cluster's allocation status: hours used/remaining, plus subproject breakdowns and active queues">ⓘ</span></h3>
           <p id="cluster-grid-note" class="muted-text">Loading cluster usage…</p>
         </div>
       </div>

@@ -121,24 +121,24 @@ class TestRecommendationEngine:
         assert total == 100
 
     def test_generate_insights_allocation_warning(self, sample_systems):
-        # Modify sample to have low allocation
-        sample_systems[0]["usage"]["percent_remaining"] = 8
+        # Modify sample to have low allocation (< 5% for CRITICAL)
+        sample_systems[0]["usage"]["percent_remaining"] = 3
         engine = RecommendationEngine(sample_systems)
 
         insights = engine.generate_insights()
 
-        allocation_insights = [i for i in insights if i.related_metric == "allocation"]
+        allocation_insights = [i for i in insights if i.related_metric == "allocation_percent_remaining"]
         assert len(allocation_insights) > 0
-        assert any("critically low" in i.message.lower() for i in allocation_insights)
+        assert any("exhausted" in i.message.lower() or "low" in i.message.lower() for i in allocation_insights)
 
     def test_generate_insights_queue_depth(self, sample_systems):
-        # Add high queue depth
-        sample_systems[1]["queues"][0]["jobs"]["pending"] = 100
+        # Add high queue depth (> 100 for WARNING severity)
+        sample_systems[1]["queues"][0]["jobs"]["pending"] = 150
         engine = RecommendationEngine(sample_systems)
 
         insights = engine.generate_insights()
 
-        queue_insights = [i for i in insights if i.related_metric == "queue_depth"]
+        queue_insights = [i for i in insights if i.related_metric == "queue_pending_jobs"]
         assert len(queue_insights) > 0
 
     def test_parse_walltime(self, sample_systems):

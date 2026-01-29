@@ -1,4 +1,4 @@
-import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle, buildApiUrl } from "./page-utils.js";
+import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle, buildApiUrl, initHelpPanel, formatRelativeTime, initQuickTips } from "./page-utils.js";
 
 const DATA_URL = buildApiUrl("api/cluster-usage").toString();
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -508,24 +508,24 @@ const buildClusterCard = (cluster) => {
             <small>${donutDetail}</small>
           </div>
           <ul class="cluster-metrics">
-            <li><span>Allocated</span><strong>${formatHours(totals.allocations)}</strong></li>
-            <li><span>Used</span><strong>${formatHours(totals.used)}</strong></li>
-            <li><span>Remaining</span><strong>${formatHours(totals.remaining)}</strong></li>
+            <li title="Total core-hours granted to this cluster"><span>Allocated</span><strong>${formatHours(totals.allocations)}</strong></li>
+            <li title="Core-hours already consumed"><span>Used</span><strong>${formatHours(totals.used)}</strong></li>
+            <li title="Core-hours still available"><span>Remaining</span><strong>${formatHours(totals.remaining)}</strong></li>
           </ul>
         </div>
         <div class="cluster-subprojects">
           <div class="table-head compact">
-            <h5>Subprojects</h5>
+            <h5>Subprojects <span class="th-help" title="Allocations broken down by project or sub-account">ⓘ</span></h5>
             <span>${systems.length} total</span>
           </div>
           <div class="table-scroll mini">
             <table class="quota-table">
               <thead>
                 <tr>
-                  <th>System</th>
-                  <th>Subproject</th>
-                  <th>Allocated</th>
-                  <th>Availability</th>
+                  <th>System <span class="th-help" title="HPC system for this allocation">ⓘ</span></th>
+                  <th>Subproject <span class="th-help" title="Project code or sub-account identifier">ⓘ</span></th>
+                  <th>Allocated <span class="th-help" title="Total core-hours granted">ⓘ</span></th>
+                  <th>Availability <span class="th-help" title="Percentage of allocation still remaining">ⓘ</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -536,7 +536,7 @@ const buildClusterCard = (cluster) => {
         </div>
         <div class="cluster-queues">
           <div class="cluster-queues-head">
-            <h5>Queue snapshot</h5>
+            <h5>Queue snapshot <span class="th-help" title="Current queue activity: Active=has running jobs, Backlog=jobs waiting, Idle=no activity">ⓘ</span></h5>
             <span>${queues.length ? `${queues.length} queues` : "No queues"}</span>
           </div>
           <div class="queue-chip-collection">
@@ -650,6 +650,8 @@ const applyConfigBranding = () => {
 document.addEventListener("DOMContentLoaded", () => {
   cacheElements();
   initThemeToggle();
+  initHelpPanel();
+  initQuickTips();
   applyConfigBranding();
   const nav = document.querySelector("[data-cluster-nav]");
   if (!state.features.clusterPages) {

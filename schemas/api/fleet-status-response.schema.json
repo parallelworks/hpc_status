@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/api/fleet-status-response.schema.json",
+  "title": "Fleet Status API Response",
+  "description": "Response from GET /api/status - Complete fleet status including all systems",
+
+  "type": "object",
+  "properties": {
+    "meta": {
+      "$ref": "../common/timestamp.schema.json#/$defs/ObservationMeta",
+      "description": "Metadata about this response"
+    },
+
+    "summary": {
+      "type": "object",
+      "description": "Aggregated fleet statistics",
+      "properties": {
+        "total_systems": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of monitored systems"
+        },
+        "status_counts": {
+          "type": "object",
+          "description": "Count of systems by status",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "examples": [{ "UP": 9, "DEGRADED": 1, "DOWN": 0 }]
+        },
+        "uptime_ratio": {
+          "$ref": "../common/units.schema.json#/$defs/Ratio",
+          "description": "Fraction of systems that are UP"
+        },
+        "uptime_percent": {
+          "$ref": "../common/units.schema.json#/$defs/Percentage",
+          "description": "Percentage of systems that are UP"
+        },
+        "site_counts": {
+          "type": "object",
+          "description": "Count of systems by site/DSRC",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "scheduler_counts": {
+          "type": "object",
+          "description": "Count of systems by scheduler type",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "total_capacity": {
+          "type": "object",
+          "description": "Aggregate capacity across all UP systems",
+          "properties": {
+            "cores": {
+              "$ref": "../common/units.schema.json#/$defs/CoreCount"
+            },
+            "nodes": {
+              "$ref": "../common/units.schema.json#/$defs/NodeCount"
+            },
+            "gpus": {
+              "$ref": "../common/units.schema.json#/$defs/GpuCount"
+            }
+          }
+        },
+        "total_availability": {
+          "type": "object",
+          "description": "Aggregate availability across all UP systems",
+          "properties": {
+            "cores_available": {
+              "$ref": "../common/units.schema.json#/$defs/CoreCount"
+            },
+            "utilization_percent": {
+              "$ref": "../common/units.schema.json#/$defs/Percentage"
+            }
+          }
+        }
+      },
+      "required": ["total_systems", "status_counts"]
+    },
+
+    "systems": {
+      "type": "array",
+      "description": "Status of each monitored system",
+      "items": {
+        "$ref": "../models/system-status.schema.json"
+      }
+    },
+
+    "insights": {
+      "type": "array",
+      "description": "Fleet-wide insights and recommendations",
+      "items": {
+        "$ref": "../models/system-insight.schema.json"
+      }
+    }
+  },
+
+  "required": ["meta", "summary", "systems"],
+
+  "examples": [
+    {
+      "meta": {
+        "observed_at": "2026-01-29T15:30:00Z",
+        "source": "hpcmp_collector",
+        "from_cache": false
+      },
+      "summary": {
+        "total_systems": 10,
+        "status_counts": {
+          "UP": 9,
+          "DEGRADED": 1
+        },
+        "uptime_ratio": 0.9,
+        "uptime_percent": 90,
+        "site_counts": {
+          "NAVO": 2,
+          "ERDC": 3,
+          "AFRL": 3,
+          "ARL": 2
+        },
+        "scheduler_counts": {
+          "PBS": 8,
+          "SLURM": 2
+        }
+      },
+      "systems": [
+        {
+          "system": "Nautilus",
+          "system_id": "nautilus",
+          "status": "UP",
+          "scheduler": "PBS",
+          "site": {
+            "name": "NAVO"
+          },
+          "access": {
+            "login_host": "nautilus.navo.hpc.mil"
+          },
+          "observed_at": "2026-01-29T15:30:00Z"
+        }
+      ],
+      "insights": [
+        {
+          "type": "INFO",
+          "severity": "INFO",
+          "message": "All HPCMP systems operational. Fleet uptime: 90%"
+        }
+      ]
+    }
+  ]
+}

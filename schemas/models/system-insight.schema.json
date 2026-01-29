@@ -1,0 +1,218 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/models/system-insight.schema.json",
+  "title": "SystemInsight",
+  "description": "A generated insight, recommendation, or alert about an HPC system or cluster",
+
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique identifier for this insight",
+      "examples": ["ins_nautilus_queue_depth_20260129", "ins_alloc_low_proj001"]
+    },
+
+    "type": {
+      "$ref": "../common/status-enum.schema.json#/$defs/InsightType",
+      "description": "Category of insight"
+    },
+
+    "severity": {
+      "$ref": "../common/status-enum.schema.json#/$defs/InsightSeverity",
+      "description": "Severity/priority level"
+    },
+
+    "priority": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "description": "Numeric priority (5 = highest, 1 = lowest)",
+      "x-deprecated": "Use severity instead"
+    },
+
+    "message": {
+      "type": "string",
+      "description": "Human-readable insight message",
+      "examples": [
+        "Queue 'standard' on Nautilus has 200 jobs waiting. Consider using 'debug' for short jobs.",
+        "Allocation PROJ001 is 92% used with 45 days remaining in the period."
+      ]
+    },
+
+    "summary": {
+      "type": "string",
+      "maxLength": 100,
+      "description": "Short summary suitable for notifications",
+      "examples": ["High queue depth on Nautilus", "Low allocation remaining"]
+    },
+
+    "scope": {
+      "type": "object",
+      "description": "What this insight applies to",
+      "properties": {
+        "system": {
+          "type": "string",
+          "description": "System name if system-specific"
+        },
+        "cluster": {
+          "type": "string",
+          "description": "Cluster name if cluster-specific"
+        },
+        "queue": {
+          "type": "string",
+          "description": "Queue name if queue-specific"
+        },
+        "project": {
+          "type": "string",
+          "description": "Project/allocation if project-specific"
+        },
+        "storage": {
+          "type": "string",
+          "description": "Storage mount point if storage-specific"
+        }
+      }
+    },
+
+    "metric": {
+      "type": "object",
+      "description": "The metric that triggered this insight",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Metric name",
+          "examples": ["queue_pending_jobs", "allocation_percent_used", "storage_percent_used"]
+        },
+        "value": {
+          "type": "number",
+          "description": "Current metric value"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Threshold that was exceeded"
+        },
+        "unit": {
+          "type": "string",
+          "description": "Unit of the metric",
+          "examples": ["jobs", "percent", "hours"]
+        }
+      }
+    },
+
+    "action": {
+      "type": "object",
+      "description": "Suggested action to address this insight",
+      "properties": {
+        "description": {
+          "type": "string",
+          "description": "Human-readable action description"
+        },
+        "command": {
+          "type": "string",
+          "description": "CLI command to take action (if applicable)"
+        },
+        "link": {
+          "type": "string",
+          "format": "uri",
+          "description": "Link to more information or action"
+        }
+      }
+    },
+
+    "related_insights": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "IDs of related insights"
+    },
+
+    "created_at": {
+      "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+      "description": "When this insight was generated"
+    },
+
+    "expires_at": {
+      "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+      "description": "When this insight should be considered stale"
+    },
+
+    "acknowledged": {
+      "type": "boolean",
+      "description": "Whether a user has acknowledged this insight",
+      "default": false
+    },
+
+    "acknowledged_at": {
+      "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+      "description": "When this insight was acknowledged"
+    }
+  },
+
+  "required": ["type", "severity", "message"],
+
+  "examples": [
+    {
+      "id": "ins_nautilus_queue_depth_20260129_1530",
+      "type": "RECOMMENDATION",
+      "severity": "INFO",
+      "message": "Queue 'standard' on Nautilus has 150 pending jobs. For jobs under 30 minutes, the 'debug' queue has no wait time.",
+      "summary": "Consider debug queue for short jobs",
+      "scope": {
+        "system": "Nautilus",
+        "queue": "standard"
+      },
+      "metric": {
+        "name": "queue_pending_jobs",
+        "value": 150,
+        "threshold": 100,
+        "unit": "jobs"
+      },
+      "action": {
+        "description": "Submit short jobs to the debug queue",
+        "command": "qsub -q debug job.pbs"
+      },
+      "created_at": "2026-01-29T15:30:00Z",
+      "expires_at": "2026-01-29T16:30:00Z"
+    },
+    {
+      "id": "ins_alloc_low_proj001_20260129",
+      "type": "WARNING",
+      "severity": "WARNING",
+      "message": "Allocation PROJ001 is 92% used with 45 days remaining in FY2026. At current burn rate, depletion expected by 2026-02-28.",
+      "summary": "Allocation PROJ001 running low",
+      "scope": {
+        "project": "PROJ001"
+      },
+      "metric": {
+        "name": "allocation_percent_used",
+        "value": 92,
+        "threshold": 80,
+        "unit": "percent"
+      },
+      "action": {
+        "description": "Request additional allocation hours or reduce usage"
+      },
+      "created_at": "2026-01-29T15:30:00Z"
+    },
+    {
+      "id": "ins_storage_critical_home_20260129",
+      "type": "ALERT",
+      "severity": "CRITICAL",
+      "message": "Home directory on Jean is 97% full (97 GB of 100 GB). Jobs may fail if storage is exhausted.",
+      "summary": "Home directory nearly full",
+      "scope": {
+        "system": "Jean",
+        "storage": "$HOME"
+      },
+      "metric": {
+        "name": "storage_percent_used",
+        "value": 97,
+        "threshold": 95,
+        "unit": "percent"
+      },
+      "action": {
+        "description": "Clean up old files or move data to $WORKDIR",
+        "command": "du -sh ~/* | sort -h"
+      },
+      "created_at": "2026-01-29T15:30:00Z"
+    }
+  ]
+}

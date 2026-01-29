@@ -1,0 +1,243 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/api/cluster-usage-response.schema.json",
+  "title": "Cluster Usage API Response",
+  "description": "Response from GET /api/cluster-usage - Queue and allocation data for all clusters",
+
+  "type": "object",
+  "properties": {
+    "meta": {
+      "$ref": "../common/timestamp.schema.json#/$defs/ObservationMeta",
+      "description": "Metadata about this response"
+    },
+
+    "clusters": {
+      "type": "object",
+      "description": "Map of cluster name to cluster data",
+      "additionalProperties": {
+        "$ref": "#/$defs/ClusterData"
+      }
+    },
+
+    "insights": {
+      "type": "array",
+      "description": "Cross-cluster insights and recommendations",
+      "items": {
+        "$ref": "../models/system-insight.schema.json"
+      }
+    }
+  },
+
+  "required": ["meta", "clusters"],
+
+  "$defs": {
+    "ClusterData": {
+      "type": "object",
+      "description": "Complete data for a single cluster",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display name of the cluster"
+        },
+
+        "cluster_id": {
+          "type": "string",
+          "description": "Normalized identifier"
+        },
+
+        "uri": {
+          "type": "string",
+          "description": "PW cluster URI"
+        },
+
+        "connection_status": {
+          "$ref": "../common/status-enum.schema.json#/$defs/ClusterConnectionStatus",
+          "description": "Current connection status"
+        },
+
+        "scheduler": {
+          "$ref": "../common/status-enum.schema.json#/$defs/SchedulerType",
+          "description": "Job scheduler type"
+        },
+
+        "last_updated": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+          "description": "When this cluster's data was last refreshed"
+        },
+
+        "queues": {
+          "type": "array",
+          "description": "All queues/partitions on this cluster",
+          "items": {
+            "$ref": "../models/queue-info.schema.json"
+          }
+        },
+
+        "queue_summary": {
+          "type": "object",
+          "description": "Aggregated queue statistics",
+          "properties": {
+            "total_queues": {
+              "type": "integer"
+            },
+            "active_queues": {
+              "type": "integer"
+            },
+            "total_jobs_running": {
+              "$ref": "../common/units.schema.json#/$defs/JobCount"
+            },
+            "total_jobs_pending": {
+              "$ref": "../common/units.schema.json#/$defs/JobCount"
+            }
+          }
+        },
+
+        "allocations": {
+          "type": "array",
+          "description": "Compute allocations accessible on this cluster",
+          "items": {
+            "$ref": "../models/allocation-info.schema.json"
+          }
+        },
+
+        "allocation_summary": {
+          "type": "object",
+          "description": "Aggregated allocation statistics",
+          "properties": {
+            "total_hours_allocated": {
+              "$ref": "../common/units.schema.json#/$defs/ComputeHours"
+            },
+            "total_hours_used": {
+              "$ref": "../common/units.schema.json#/$defs/ComputeHours"
+            },
+            "total_hours_remaining": {
+              "$ref": "../common/units.schema.json#/$defs/ComputeHours"
+            },
+            "overall_percent_used": {
+              "$ref": "../common/units.schema.json#/$defs/Percentage"
+            }
+          }
+        },
+
+        "storage": {
+          "type": "array",
+          "description": "User storage on this cluster",
+          "items": {
+            "$ref": "../models/storage-info.schema.json"
+          }
+        },
+
+        "storage_summary": {
+          "type": "object",
+          "description": "Aggregated storage statistics",
+          "properties": {
+            "warnings_count": {
+              "type": "integer",
+              "description": "Number of storage areas in WARNING state"
+            },
+            "critical_count": {
+              "type": "integer",
+              "description": "Number of storage areas in CRITICAL state"
+            }
+          }
+        },
+
+        "resources": {
+          "$ref": "../models/resource-pool.schema.json",
+          "description": "Cluster-wide resource pool"
+        },
+
+        "insights": {
+          "type": "array",
+          "description": "Cluster-specific insights",
+          "items": {
+            "$ref": "../models/system-insight.schema.json"
+          }
+        },
+
+        "header_text": {
+          "type": "string",
+          "description": "Header/banner text from the scheduler"
+        },
+
+        "fiscal_year_info": {
+          "type": "string",
+          "description": "Fiscal year information"
+        }
+      },
+
+      "required": ["name", "connection_status"]
+    }
+  },
+
+  "examples": [
+    {
+      "meta": {
+        "observed_at": "2026-01-29T15:30:00Z",
+        "source": "pw_cluster_collector"
+      },
+      "clusters": {
+        "nautilus": {
+          "name": "Nautilus",
+          "cluster_id": "nautilus",
+          "uri": "nautilus.navo.hpc.mil",
+          "connection_status": "CONNECTED",
+          "scheduler": "PBS",
+          "last_updated": "2026-01-29T15:28:00Z",
+          "queues": [
+            {
+              "name": "standard",
+              "state": "ACTIVE",
+              "queue_type": "BATCH",
+              "constraints": {
+                "max_walltime_seconds": 86400,
+                "max_walltime_display": "24 hours"
+              },
+              "jobs": {
+                "running": 145,
+                "pending": 89
+              }
+            }
+          ],
+          "queue_summary": {
+            "total_queues": 5,
+            "active_queues": 4,
+            "total_jobs_running": 245,
+            "total_jobs_pending": 178
+          },
+          "allocations": [
+            {
+              "project": "ONRDC12345678",
+              "hours": {
+                "allocated": 250000,
+                "used": 180000,
+                "remaining": 70000
+              },
+              "usage": {
+                "percent_used": 72.0,
+                "percent_remaining": 28.0
+              },
+              "status": "HEALTHY"
+            }
+          ],
+          "storage": [
+            {
+              "mount_point": "$HOME",
+              "storage_type": "HOME",
+              "capacity": { "total_gb": 100 },
+              "usage": { "used_gb": 82, "percent_used": 82 },
+              "status": "WARNING"
+            }
+          ]
+        }
+      },
+      "insights": [
+        {
+          "type": "RECOMMENDATION",
+          "severity": "INFO",
+          "message": "Nautilus standard queue has lowest wait time. Recommended for batch jobs."
+        }
+      ]
+    }
+  ]
+}

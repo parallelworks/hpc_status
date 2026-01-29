@@ -79,34 +79,36 @@
           <article class="card">
             <p>Total systems</p>
             <h2 id="total-systems" aria-live="polite">--</h2>
+            <span class="card-tooltip" data-help="total-systems" title="Number of HPC systems being monitored across all sites">ⓘ</span>
           </article>
           <article class="card">
             <p>Fleet uptime</p>
             <h2 id="fleet-uptime" aria-live="polite">--</h2>
-            <span class="card-tooltip" title="Percentage of systems currently operational">ⓘ</span>
+            <span class="card-tooltip" data-help="fleet-uptime" title="Percentage of systems with UP status. Systems may be DOWN, DEGRADED, or in MAINTENANCE.">ⓘ</span>
           </article>
           <article class="card alert">
             <p>Systems not UP</p>
             <h2 id="degraded-count" aria-live="polite">--</h2>
-            <span class="card-tooltip" title="Systems that are degraded, in maintenance, or down">ⓘ</span>
+            <span class="card-tooltip" data-help="systems-not-up" title="Count of systems that are DEGRADED (reduced capacity), in MAINTENANCE, or completely DOWN">ⓘ</span>
           </article>
           <article class="card">
             <p>Last observed</p>
             <h2 id="last-updated" aria-live="polite">--</h2>
+            <span class="card-tooltip" data-help="last-observed" title="When status data was last collected from the HPC systems">ⓘ</span>
           </article>
         </section>
 
         <section class="grid" aria-label="Fleet breakdown">
           <div class="panel">
-            <h3>Status breakdown</h3>
+            <h3>Status breakdown <span class="panel-help" data-help="status-breakdown" title="UP=operational, DEGRADED=reduced capacity, MAINTENANCE=planned work, DOWN=offline">ⓘ</span></h3>
             <ul id="status-breakdown" class="legend" aria-label="Status counts"></ul>
           </div>
           <div class="panel">
-            <h3>Site coverage</h3>
+            <h3>Site coverage <span class="panel-help" data-help="site-coverage" title="Distribution of systems across data centers (DSRCs or research facilities)">ⓘ</span></h3>
             <ul id="dsrc-breakdown" class="legend" aria-label="Site distribution"></ul>
           </div>
           <div class="panel">
-            <h3>Scheduler types</h3>
+            <h3>Scheduler types <span class="panel-help" data-help="scheduler-types" title="PBS and Slurm are job schedulers that manage workloads on HPC systems">ⓘ</span></h3>
             <ul id="scheduler-breakdown" class="legend" aria-label="Scheduler distribution"></ul>
           </div>
         </section>
@@ -139,12 +141,12 @@
             <table>
               <thead>
                 <tr>
-                  <th scope="col">System</th>
-                  <th scope="col">Status</th>
-                  <th scope="col">Site</th>
-                  <th scope="col">Login node</th>
-                  <th scope="col">Scheduler</th>
-                  <th scope="col">Last checked</th>
+                  <th scope="col">System <span class="th-help" title="HPC system name - click row for details">ⓘ</span></th>
+                  <th scope="col">Status <span class="th-help" title="UP (operational), DEGRADED (reduced capacity), MAINTENANCE, or DOWN">ⓘ</span></th>
+                  <th scope="col">Site <span class="th-help" title="Data center or research facility hosting this system">ⓘ</span></th>
+                  <th scope="col">Login node <span class="th-help" title="SSH hostname for accessing this system">ⓘ</span></th>
+                  <th scope="col">Scheduler <span class="th-help" title="Job scheduler (PBS or Slurm) managing workloads">ⓘ</span></th>
+                  <th scope="col">Last checked <span class="th-help" title="When status was last collected from this system">ⓘ</span></th>
                 </tr>
               </thead>
               <tbody id="systems-body">

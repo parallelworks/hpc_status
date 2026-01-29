@@ -1,4 +1,4 @@
-import { clampPercent, clusterPagesEnabled } from "./page-utils.js";
+import { clampPercent, clusterPagesEnabled, initHelpPanel, formatRelativeTime, initQuickTips } from "./page-utils.js";
 
 const featureFlags = {
   clusterPages: clusterPagesEnabled(),
@@ -345,7 +345,15 @@ function updateSummary() {
     .filter(([key]) => key !== "UP")
     .reduce((sum, [, val]) => sum + val, 0)) || 0;
   elements.degradedCount.textContent = nonUp;
-  elements.lastUpdated.textContent = meta.generated_at || "--";
+
+  // Show relative time for better user understanding
+  const timestamp = meta.generated_at || meta.observed_at;
+  if (timestamp) {
+    elements.lastUpdated.textContent = formatRelativeTime(timestamp);
+    elements.lastUpdated.title = `Collected: ${new Date(timestamp).toLocaleString()}`;
+  } else {
+    elements.lastUpdated.textContent = "--";
+  }
 
   buildLegend(elements.statusLegend, summary.status_counts);
   buildLegend(elements.dsrcLegend, summary.dsrc_counts, true);
@@ -1022,6 +1030,8 @@ function applyConfigTitle() {
 applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
 applyConfigTitle();
 registerEvents();
+initHelpPanel();
+initQuickTips();
 loadData();
 // Note: Insights loading moved to dedicated page (insights.html)
 setInterval(() => loadData({ showLoading: false, silentFallback: true }), 3 * 60 * 1000);
