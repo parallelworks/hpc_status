@@ -312,7 +312,7 @@ const QUICK_TIPS = {
     title: "Storage Tips",
     tips: [
       "<strong>$SCRATCH</strong> files are automatically deleted after 30-60 days - don't store important data there",
-      "Keep <strong>$HOME</strong> under 80% - it's your only backed-up storage",
+      "Keep <strong>$HOME</strong> under 80% - multiple directories including $HOME are backed up",
       "Move completed project data to <strong>archive</strong> storage to free up working space"
     ],
   },
