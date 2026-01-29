@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/common/units.schema.json",
+  "title": "HPC Status Monitor - Standard Units",
+  "description": "Common unit definitions for physical quantities in HPC monitoring",
+
+  "$defs": {
+    "CoreCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of CPU cores",
+      "x-unit": "cores",
+      "examples": [32, 128, 1024]
+    },
+
+    "GpuCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of GPU accelerators",
+      "x-unit": "gpus",
+      "examples": [0, 4, 8]
+    },
+
+    "NodeCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of compute nodes",
+      "x-unit": "nodes",
+      "examples": [1, 10, 100]
+    },
+
+    "JobCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of scheduler jobs",
+      "x-unit": "jobs",
+      "examples": [0, 50, 500]
+    },
+
+    "ComputeHours": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Compute time in core-hours or node-hours (context-dependent)",
+      "x-unit": "hours",
+      "examples": [1000, 50000, 1000000]
+    },
+
+    "DurationSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Time duration in seconds",
+      "x-unit": "seconds",
+      "examples": [3600, 86400, 604800]
+    },
+
+    "StorageBytes": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Storage capacity in bytes",
+      "x-unit": "bytes",
+      "examples": [1073741824, 1099511627776]
+    },
+
+    "StorageGigabytes": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Storage capacity in gigabytes (base 10: 1 GB = 10^9 bytes)",
+      "x-unit": "gigabytes",
+      "examples": [50.0, 500.0, 2000.0]
+    },
+
+    "Percentage": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Percentage value (0-100)",
+      "x-unit": "percent",
+      "examples": [0, 45.5, 100]
+    },
+
+    "Ratio": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Ratio value (0.0-1.0)",
+      "x-unit": "ratio",
+      "examples": [0, 0.455, 1.0]
+    },
+
+    "MemoryGigabytes": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Memory capacity in gigabytes",
+      "x-unit": "gigabytes",
+      "examples": [64, 256, 1024]
+    },
+
+    "WalltimeString": {
+      "type": "string",
+      "pattern": "^([0-9]+:)?[0-9]{2}:[0-9]{2}:[0-9]{2}$",
+      "description": "Walltime in [DD:]HH:MM:SS format",
+      "examples": ["24:00:00", "168:00:00", "1:00:00:00"]
+    },
+
+    "ISO8601Duration": {
+      "type": "string",
+      "pattern": "^P(?:\\d+Y)?(?:\\d+M)?(?:\\d+D)?(?:T(?:\\d+H)?(?:\\d+M)?(?:\\d+S)?)?$",
+      "description": "Duration in ISO 8601 format",
+      "examples": ["PT24H", "P7D", "PT30M"]
+    }
+  }
+}

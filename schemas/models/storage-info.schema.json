@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/models/storage-info.schema.json",
+  "title": "StorageInfo",
+  "description": "Storage capacity and usage for a filesystem",
+
+  "type": "object",
+  "properties": {
+    "mount_point": {
+      "type": "string",
+      "description": "Logical mount point or environment variable name",
+      "examples": ["$HOME", "$WORKDIR", "$SCRATCH", "/scratch", "/project"]
+    },
+
+    "path": {
+      "type": "string",
+      "description": "Actual filesystem path",
+      "examples": ["/home/user", "/work/user", "/scratch/user"]
+    },
+
+    "filesystem": {
+      "type": "string",
+      "description": "Underlying filesystem or device",
+      "examples": ["/dev/sda1", "nfs://storage.example.com/home", "lustre://mdt0"]
+    },
+
+    "storage_type": {
+      "type": "string",
+      "enum": ["HOME", "WORK", "SCRATCH", "PROJECT", "ARCHIVE", "OTHER"],
+      "description": "Semantic type of storage",
+      "x-enum-descriptions": {
+        "HOME": "User home directory (usually quota-limited, backed up)",
+        "WORK": "Working directory for active projects (larger quota)",
+        "SCRATCH": "Temporary high-speed storage (may be purged)",
+        "PROJECT": "Shared project storage",
+        "ARCHIVE": "Long-term archival storage",
+        "OTHER": "Other storage type"
+      }
+    },
+
+    "capacity": {
+      "type": "object",
+      "description": "Storage capacity",
+      "properties": {
+        "total_bytes": {
+          "$ref": "../common/units.schema.json#/$defs/StorageBytes",
+          "description": "Total storage capacity"
+        },
+        "total_gb": {
+          "$ref": "../common/units.schema.json#/$defs/StorageGigabytes",
+          "description": "Total storage in gigabytes"
+        },
+        "total_display": {
+          "type": "string",
+          "description": "Human-readable total",
+          "examples": ["100 GB", "2 TB", "50 GB"]
+        }
+      }
+    },
+
+    "usage": {
+      "type": "object",
+      "description": "Current storage usage",
+      "properties": {
+        "used_bytes": {
+          "$ref": "../common/units.schema.json#/$defs/StorageBytes",
+          "description": "Storage currently used"
+        },
+        "used_gb": {
+          "$ref": "../common/units.schema.json#/$defs/StorageGigabytes",
+          "description": "Storage used in gigabytes"
+        },
+        "available_bytes": {
+          "$ref": "../common/units.schema.json#/$defs/StorageBytes",
+          "description": "Storage available for use"
+        },
+        "available_gb": {
+          "$ref": "../common/units.schema.json#/$defs/StorageGigabytes",
+          "description": "Storage available in gigabytes"
+        },
+        "percent_used": {
+          "$ref": "../common/units.schema.json#/$defs/Percentage",
+          "description": "Percentage of storage used"
+        },
+        "used_display": {
+          "type": "string",
+          "description": "Human-readable usage",
+          "examples": ["45 GB used of 100 GB", "1.8 TB / 2 TB"]
+        }
+      }
+    },
+
+    "quota": {
+      "type": "object",
+      "description": "Quota information (if different from filesystem capacity)",
+      "properties": {
+        "quota_bytes": {
+          "$ref": "../common/units.schema.json#/$defs/StorageBytes",
+          "description": "User's quota limit"
+        },
+        "quota_gb": {
+          "$ref": "../common/units.schema.json#/$defs/StorageGigabytes",
+          "description": "Quota in gigabytes"
+        },
+        "quota_type": {
+          "type": "string",
+          "enum": ["SOFT", "HARD"],
+          "description": "Whether quota is soft (warning) or hard (enforced)"
+        },
+        "grace_period_remaining": {
+          "$ref": "../common/units.schema.json#/$defs/DurationSeconds",
+          "description": "Time remaining before soft quota becomes enforced"
+        }
+      }
+    },
+
+    "status": {
+      "$ref": "../common/status-enum.schema.json#/$defs/StorageHealthStatus",
+      "description": "Health status based on usage thresholds"
+    },
+
+    "status_thresholds": {
+      "type": "object",
+      "description": "Thresholds used for status determination",
+      "properties": {
+        "warning_percent": {
+          "$ref": "../common/units.schema.json#/$defs/Percentage",
+          "description": "Usage percent that triggers WARNING status",
+          "default": 80
+        },
+        "critical_percent": {
+          "$ref": "../common/units.schema.json#/$defs/Percentage",
+          "description": "Usage percent that triggers CRITICAL status",
+          "default": 95
+        }
+      }
+    },
+
+    "purge_policy": {
+      "type": "object",
+      "description": "Automatic purge policy (for scratch storage)",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether automatic purging is enabled"
+        },
+        "retention_days": {
+          "type": "integer",
+          "description": "Files older than this may be purged"
+        },
+        "last_purge": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+          "description": "When the last purge occurred"
+        },
+        "next_purge": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+          "description": "When the next purge is scheduled"
+        }
+      }
+    },
+
+    "observed_at": {
+      "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+      "description": "When this storage info was collected"
+    }
+  },
+
+  "required": ["mount_point", "status"],
+
+  "examples": [
+    {
+      "mount_point": "$HOME",
+      "path": "/home/jsmith",
+      "storage_type": "HOME",
+      "capacity": {
+        "total_gb": 100,
+        "total_display": "100 GB"
+      },
+      "usage": {
+        "used_gb": 82,
+        "available_gb": 18,
+        "percent_used": 82,
+        "used_display": "82 GB used of 100 GB"
+      },
+      "status": "WARNING",
+      "status_thresholds": {
+        "warning_percent": 80,
+        "critical_percent": 95
+      },
+      "observed_at": "2026-01-29T15:30:00Z"
+    },
+    {
+      "mount_point": "$SCRATCH",
+      "path": "/scratch/jsmith",
+      "storage_type": "SCRATCH",
+      "capacity": {
+        "total_gb": 10000,
+        "total_display": "10 TB"
+      },
+      "usage": {
+        "used_gb": 2500,
+        "available_gb": 7500,
+        "percent_used": 25
+      },
+      "status": "HEALTHY",
+      "purge_policy": {
+        "enabled": true,
+        "retention_days": 30
+      },
+      "observed_at": "2026-01-29T15:30:00Z"
+    }
+  ]
+}

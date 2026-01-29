@@ -46,7 +46,10 @@
       </div>
       <div class="hero-actions">
         <a class="ghost-btn" href="index.html">← Fleet dashboard</a>
-        <button id="refresh-btn" class="ghost-btn">Refresh data</button>
+        <button id="refresh-btn" class="ghost-btn">
+          <span class="btn-icon" aria-hidden="true">↻</span>
+          <span>Refresh</span>
+        </button>
         <button id="theme-toggle" class="theme-btn" aria-label="Toggle color theme">
           <span class="theme-icon" aria-hidden="true">🌙</span>
           <span class="theme-label">Dark</span>
@@ -68,19 +71,22 @@
       <article class="card">
         <p>Connected clusters</p>
         <h2 id="cluster-count">--</h2>
+        <span class="card-tooltip" title="Clusters reporting storage information">ⓘ</span>
       </article>
       <article class="card">
         <p>Filesystems monitored</p>
         <h2 id="filesystem-count">--</h2>
+        <span class="card-tooltip" title="Total storage mounts tracked: $HOME, $WORKDIR, $SCRATCH, and project directories">ⓘ</span>
       </article>
       <article class="card alert">
         <p>Near capacity</p>
         <h2 id="warning-count">--</h2>
-        <span class="card-tooltip" title="Filesystems above 80% usage">&#9432;</span>
+        <span class="card-tooltip" title="Filesystems above 80% usage. High usage may cause job failures or prevent file creation.">ⓘ</span>
       </article>
       <article class="card">
         <p>Last updated</p>
         <h2 id="last-updated">--</h2>
+        <span class="card-tooltip" title="When storage data was last collected">ⓘ</span>
       </article>
     </section>
 
@@ -96,7 +102,7 @@
       <div class="panel-head">
         <div>
           <p class="eyebrow">Filesystem overview</p>
-          <h3>Storage capacity by cluster</h3>
+          <h3>Storage capacity by cluster <span class="panel-help" title="$HOME: backed up, small quota. $WORKDIR: larger quota for active projects. $SCRATCH: high-speed temp storage, subject to purge (auto-delete of old files).">ⓘ</span></h3>
           <p id="storage-grid-note" class="muted-text">Loading storage data...</p>
         </div>
       </div>

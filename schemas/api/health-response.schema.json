@@ -1,0 +1,251 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/api/health-response.schema.json",
+  "title": "Health Check API Response",
+  "description": "Response from GET /api/health - Server and collector health status",
+
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["HEALTHY", "DEGRADED", "UNHEALTHY"],
+      "description": "Overall health status of the service",
+      "x-enum-descriptions": {
+        "HEALTHY": "All components operational",
+        "DEGRADED": "Some components have issues but service is functional",
+        "UNHEALTHY": "Service is not functioning correctly"
+      }
+    },
+
+    "version": {
+      "type": "string",
+      "description": "Service version",
+      "examples": ["2.0.0", "2.1.0-dev"]
+    },
+
+    "uptime": {
+      "type": "object",
+      "description": "Service uptime information",
+      "properties": {
+        "seconds": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Seconds since service started"
+        },
+        "started_at": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+          "description": "When the service started"
+        },
+        "display": {
+          "type": "string",
+          "description": "Human-readable uptime",
+          "examples": ["2 hours", "3 days, 4 hours"]
+        }
+      }
+    },
+
+    "collectors": {
+      "type": "object",
+      "description": "Status of each data collector",
+      "additionalProperties": {
+        "$ref": "#/$defs/CollectorHealth"
+      }
+    },
+
+    "data_freshness": {
+      "type": "object",
+      "description": "Age of cached data",
+      "properties": {
+        "fleet_status": {
+          "$ref": "#/$defs/DataFreshness"
+        },
+        "cluster_usage": {
+          "$ref": "#/$defs/DataFreshness"
+        },
+        "storage": {
+          "$ref": "#/$defs/DataFreshness"
+        }
+      }
+    },
+
+    "configuration": {
+      "type": "object",
+      "description": "Active configuration summary",
+      "properties": {
+        "platform": {
+          "type": "string",
+          "description": "Deployment platform",
+          "examples": ["generic", "hpcmp", "noaa"]
+        },
+        "enabled_collectors": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of enabled collector names"
+        },
+        "refresh_interval_seconds": {
+          "type": "integer",
+          "description": "Data refresh interval"
+        }
+      }
+    },
+
+    "checks": {
+      "type": "array",
+      "description": "Individual health checks",
+      "items": {
+        "$ref": "#/$defs/HealthCheck"
+      }
+    }
+  },
+
+  "required": ["status"],
+
+  "$defs": {
+    "CollectorHealth": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Collector name"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["OK", "WARNING", "ERROR", "DISABLED"],
+          "description": "Collector status"
+        },
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether this collector is enabled"
+        },
+        "last_run": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+          "description": "When this collector last ran successfully"
+        },
+        "last_error": {
+          "type": "string",
+          "description": "Last error message if status is ERROR"
+        },
+        "run_count": {
+          "type": "integer",
+          "description": "Total number of collection runs"
+        },
+        "error_count": {
+          "type": "integer",
+          "description": "Number of failed collection runs"
+        },
+        "average_duration_ms": {
+          "type": "number",
+          "description": "Average collection duration in milliseconds"
+        }
+      }
+    },
+
+    "DataFreshness": {
+      "type": "object",
+      "properties": {
+        "last_updated": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp"
+        },
+        "age_seconds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "stale": {
+          "type": "boolean",
+          "description": "Whether data is considered stale"
+        },
+        "stale_threshold_seconds": {
+          "type": "integer",
+          "description": "Age at which data is considered stale"
+        }
+      }
+    },
+
+    "HealthCheck": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Check name"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["PASS", "WARN", "FAIL"]
+        },
+        "message": {
+          "type": "string",
+          "description": "Check result message"
+        },
+        "duration_ms": {
+          "type": "number",
+          "description": "Time to run this check"
+        }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "status": "HEALTHY",
+      "version": "2.0.0",
+      "uptime": {
+        "seconds": 7200,
+        "started_at": "2026-01-29T13:30:00Z",
+        "display": "2 hours"
+      },
+      "collectors": {
+        "hpcmp_fleet": {
+          "name": "HPCMP Fleet Collector",
+          "status": "OK",
+          "enabled": true,
+          "last_run": "2026-01-29T15:28:00Z",
+          "run_count": 36,
+          "error_count": 0,
+          "average_duration_ms": 2500
+        },
+        "pw_cluster": {
+          "name": "PW Cluster Collector",
+          "status": "OK",
+          "enabled": true,
+          "last_run": "2026-01-29T15:29:00Z",
+          "run_count": 60,
+          "error_count": 2,
+          "average_duration_ms": 5000
+        }
+      },
+      "data_freshness": {
+        "fleet_status": {
+          "last_updated": "2026-01-29T15:28:00Z",
+          "age_seconds": 120,
+          "stale": false,
+          "stale_threshold_seconds": 600
+        },
+        "cluster_usage": {
+          "last_updated": "2026-01-29T15:29:00Z",
+          "age_seconds": 60,
+          "stale": false,
+          "stale_threshold_seconds": 300
+        }
+      },
+      "configuration": {
+        "platform": "hpcmp",
+        "enabled_collectors": ["hpcmp_fleet", "pw_cluster", "storage"],
+        "refresh_interval_seconds": 120
+      },
+      "checks": [
+        {
+          "name": "database_connection",
+          "status": "PASS",
+          "message": "SQLite database accessible",
+          "duration_ms": 5
+        },
+        {
+          "name": "cache_directory",
+          "status": "PASS",
+          "message": "Cache directory writable",
+          "duration_ms": 2
+        }
+      ]
+    }
+  ]
+}

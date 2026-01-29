@@ -1,0 +1,199 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/models/queue-info.schema.json",
+  "title": "QueueInfo",
+  "description": "Information about a scheduler queue (PBS) or partition (Slurm)",
+
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Queue/partition name as known to the scheduler",
+      "examples": ["standard", "debug", "gpu", "batch"]
+    },
+
+    "queue_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "description": "Normalized identifier for cross-system comparison",
+      "examples": ["standard", "debug", "gpu"]
+    },
+
+    "state": {
+      "$ref": "../common/status-enum.schema.json#/$defs/QueueState",
+      "description": "Current queue state"
+    },
+
+    "queue_type": {
+      "type": "string",
+      "enum": ["BATCH", "DEBUG", "GPU", "INTERACTIVE", "BIGMEM", "RESERVATION", "OTHER"],
+      "description": "Semantic type of the queue (normalized)",
+      "x-enum-descriptions": {
+        "BATCH": "Standard batch processing queue",
+        "DEBUG": "Short jobs for testing and debugging",
+        "GPU": "Queue with GPU resources",
+        "INTERACTIVE": "Interactive/login sessions",
+        "BIGMEM": "High-memory nodes",
+        "RESERVATION": "Reserved for specific projects/users",
+        "OTHER": "Other specialized queue"
+      }
+    },
+
+    "constraints": {
+      "type": "object",
+      "description": "Queue policies and limits (static constraints)",
+      "properties": {
+        "max_walltime_seconds": {
+          "$ref": "../common/units.schema.json#/$defs/DurationSeconds",
+          "description": "Maximum job walltime allowed"
+        },
+        "max_walltime_display": {
+          "type": "string",
+          "description": "Human-readable walltime limit",
+          "examples": ["24 hours", "30 minutes", "7 days"]
+        },
+        "min_cores": {
+          "$ref": "../common/units.schema.json#/$defs/CoreCount",
+          "description": "Minimum cores per job"
+        },
+        "max_cores": {
+          "$ref": "../common/units.schema.json#/$defs/CoreCount",
+          "description": "Maximum cores per job"
+        },
+        "min_nodes": {
+          "$ref": "../common/units.schema.json#/$defs/NodeCount",
+          "description": "Minimum nodes per job"
+        },
+        "max_nodes": {
+          "$ref": "../common/units.schema.json#/$defs/NodeCount",
+          "description": "Maximum nodes per job"
+        },
+        "max_jobs_per_user": {
+          "$ref": "../common/units.schema.json#/$defs/JobCount",
+          "description": "Maximum concurrent jobs per user"
+        },
+        "max_jobs_running": {
+          "$ref": "../common/units.schema.json#/$defs/JobCount",
+          "description": "Maximum total running jobs in queue"
+        },
+        "requires_reservation": {
+          "type": "boolean",
+          "description": "Whether a reservation is required to submit"
+        },
+        "requires_project": {
+          "type": "boolean",
+          "description": "Whether a project/allocation is required"
+        }
+      }
+    },
+
+    "resources": {
+      "$ref": "resource-pool.schema.json",
+      "description": "Resource pool for this queue (cores, etc.)"
+    },
+
+    "jobs": {
+      "type": "object",
+      "description": "Current job counts",
+      "properties": {
+        "running": {
+          "$ref": "../common/units.schema.json#/$defs/JobCount",
+          "description": "Jobs currently executing"
+        },
+        "pending": {
+          "$ref": "../common/units.schema.json#/$defs/JobCount",
+          "description": "Jobs waiting to start"
+        },
+        "held": {
+          "$ref": "../common/units.schema.json#/$defs/JobCount",
+          "description": "Jobs in held state"
+        },
+        "total": {
+          "$ref": "../common/units.schema.json#/$defs/JobCount",
+          "description": "Total jobs in queue"
+        }
+      }
+    },
+
+    "wait_estimate": {
+      "type": "object",
+      "description": "Estimated wait time for new jobs",
+      "properties": {
+        "median_seconds": {
+          "$ref": "../common/units.schema.json#/$defs/DurationSeconds",
+          "description": "Median wait time for recently started jobs"
+        },
+        "p90_seconds": {
+          "$ref": "../common/units.schema.json#/$defs/DurationSeconds",
+          "description": "90th percentile wait time"
+        },
+        "confidence": {
+          "$ref": "../common/units.schema.json#/$defs/Ratio",
+          "description": "Confidence in the estimate (0-1)"
+        },
+        "sample_size": {
+          "type": "integer",
+          "description": "Number of jobs used to compute estimate"
+        },
+        "display": {
+          "type": "string",
+          "description": "Human-readable wait estimate",
+          "examples": ["< 5 minutes", "1-2 hours", "unknown"]
+        }
+      }
+    },
+
+    "recommended_for": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["SHORT_JOBS", "LONG_JOBS", "DEBUGGING", "GPU_WORKLOADS", "HIGH_MEMORY", "LARGE_SCALE"]
+      },
+      "description": "Workload types this queue is recommended for"
+    },
+
+    "scheduler_native": {
+      "type": "object",
+      "description": "Raw scheduler-specific data",
+      "additionalProperties": true
+    }
+  },
+
+  "required": ["name", "state"],
+
+  "examples": [
+    {
+      "name": "standard",
+      "queue_id": "standard",
+      "state": "ACTIVE",
+      "queue_type": "BATCH",
+      "constraints": {
+        "max_walltime_seconds": 86400,
+        "max_walltime_display": "24 hours",
+        "max_nodes": 100,
+        "max_jobs_per_user": 50
+      },
+      "resources": {
+        "resource_type": "CORES",
+        "unit": "cores",
+        "capacity": { "total": 50000 },
+        "availability": {
+          "idle": 8500,
+          "allocated": 38000,
+          "pending": 12000
+        }
+      },
+      "jobs": {
+        "running": 145,
+        "pending": 89,
+        "held": 3,
+        "total": 237
+      },
+      "wait_estimate": {
+        "median_seconds": 300,
+        "display": "~5 minutes"
+      },
+      "recommended_for": ["LONG_JOBS", "LARGE_SCALE"]
+    }
+  ]
+}

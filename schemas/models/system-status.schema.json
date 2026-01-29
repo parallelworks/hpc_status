@@ -1,0 +1,186 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/models/system-status.schema.json",
+  "title": "SystemStatus",
+  "description": "Operational status of an HPC system, representing whether the system is accessible and accepting jobs",
+
+  "type": "object",
+  "properties": {
+    "system": {
+      "type": "string",
+      "description": "Display name of the HPC system",
+      "examples": ["Nautilus", "Frontier", "Perlmutter"]
+    },
+
+    "system_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "description": "Machine-readable identifier (lowercase, alphanumeric)",
+      "examples": ["nautilus", "frontier", "perlmutter"]
+    },
+
+    "status": {
+      "$ref": "../common/status-enum.schema.json#/$defs/SystemOperationalStatus",
+      "description": "Current operational status"
+    },
+
+    "status_reason": {
+      "type": "string",
+      "description": "Human-readable explanation for non-UP status",
+      "examples": ["Scheduled maintenance until 2026-01-30", "Network issues affecting login nodes"]
+    },
+
+    "scheduler": {
+      "$ref": "../common/status-enum.schema.json#/$defs/SchedulerType",
+      "description": "Job scheduler used by this system"
+    },
+
+    "site": {
+      "type": "object",
+      "description": "Physical site/center information",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Site name",
+          "examples": ["NAVO", "NERSC", "OLCF"]
+        },
+        "organization": {
+          "type": "string",
+          "description": "Organization operating the site",
+          "examples": ["DoD HPCMP", "DOE", "NOAA"]
+        },
+        "location": {
+          "type": "string",
+          "description": "Geographic location",
+          "examples": ["Stennis Space Center, MS", "Berkeley, CA"]
+        }
+      }
+    },
+
+    "access": {
+      "type": "object",
+      "description": "Access endpoints for the system",
+      "properties": {
+        "login_host": {
+          "type": "string",
+          "format": "hostname",
+          "description": "Primary login node hostname",
+          "examples": ["nautilus.navo.hpc.mil", "perlmutter.nersc.gov"]
+        },
+        "login_hosts": {
+          "type": "array",
+          "items": { "type": "string", "format": "hostname" },
+          "description": "All available login nodes"
+        },
+        "documentation_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Link to system documentation"
+        }
+      }
+    },
+
+    "capacity": {
+      "type": "object",
+      "description": "Static capacity (total hardware resources)",
+      "properties": {
+        "total_nodes": {
+          "$ref": "../common/units.schema.json#/$defs/NodeCount",
+          "description": "Total compute nodes in the system"
+        },
+        "total_cores": {
+          "$ref": "../common/units.schema.json#/$defs/CoreCount",
+          "description": "Total CPU cores in the system"
+        },
+        "total_gpus": {
+          "$ref": "../common/units.schema.json#/$defs/GpuCount",
+          "description": "Total GPU accelerators in the system"
+        },
+        "total_memory_gb": {
+          "$ref": "../common/units.schema.json#/$defs/MemoryGigabytes",
+          "description": "Total memory across all nodes"
+        },
+        "architecture": {
+          "type": "string",
+          "description": "Hardware architecture description",
+          "examples": ["Cray EX (AMD EPYC)", "HPE Apollo (Intel Xeon)"]
+        }
+      }
+    },
+
+    "availability": {
+      "type": "object",
+      "description": "Dynamic availability (current resource state)",
+      "properties": {
+        "nodes_up": {
+          "$ref": "../common/units.schema.json#/$defs/NodeCount",
+          "description": "Nodes currently online and healthy"
+        },
+        "nodes_down": {
+          "$ref": "../common/units.schema.json#/$defs/NodeCount",
+          "description": "Nodes currently offline or failed"
+        },
+        "cores_available": {
+          "$ref": "../common/units.schema.json#/$defs/CoreCount",
+          "description": "Cores currently idle and allocatable"
+        },
+        "cores_in_use": {
+          "$ref": "../common/units.schema.json#/$defs/CoreCount",
+          "description": "Cores currently running jobs"
+        },
+        "utilization_percent": {
+          "$ref": "../common/units.schema.json#/$defs/Percentage",
+          "description": "Overall system utilization (cores_in_use / total_cores * 100)"
+        }
+      }
+    },
+
+    "observed_at": {
+      "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp",
+      "description": "When this status was last observed"
+    },
+
+    "source_url": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL from which this status was obtained"
+    },
+
+    "scheduler_native": {
+      "type": "object",
+      "description": "Raw scheduler-specific data (not normalized)",
+      "additionalProperties": true
+    }
+  },
+
+  "required": ["system", "status", "observed_at"],
+
+  "examples": [
+    {
+      "system": "Nautilus",
+      "system_id": "nautilus",
+      "status": "UP",
+      "scheduler": "PBS",
+      "site": {
+        "name": "NAVO",
+        "organization": "DoD HPCMP"
+      },
+      "access": {
+        "login_host": "nautilus.navo.hpc.mil"
+      },
+      "capacity": {
+        "total_nodes": 2500,
+        "total_cores": 150000,
+        "total_gpus": 0
+      },
+      "availability": {
+        "nodes_up": 2480,
+        "nodes_down": 20,
+        "cores_available": 45000,
+        "cores_in_use": 100800,
+        "utilization_percent": 67.2
+      },
+      "observed_at": "2026-01-29T15:30:00Z"
+    }
+  ]
+}

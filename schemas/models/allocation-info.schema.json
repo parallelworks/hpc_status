@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/models/allocation-info.schema.json",
+  "title": "AllocationInfo",
+  "description": "Information about a compute time allocation (project hours)",
+
+  "type": "object",
+  "properties": {
+    "project": {
+      "type": "string",
+      "description": "Project or subproject identifier",
+      "examples": ["PROJ001", "ABC12345", "my-research-project"]
+    },
+
+    "project_id": {
+      "type": "string",
+      "description": "Normalized project identifier",
+      "pattern": "^[A-Za-z0-9_-]+$"
+    },
+
+    "system": {
+      "type": "string",
+      "description": "System this allocation applies to",
+      "examples": ["Nautilus", "Perlmutter"]
+    },
+
+    "allocation_type": {
+      "type": "string",
+      "enum": ["STARTUP", "STANDARD", "DISCRETIONARY", "RESERVATION", "OTHER"],
+      "description": "Type of allocation",
+      "x-enum-descriptions": {
+        "STARTUP": "Initial allocation for new projects",
+        "STANDARD": "Regular awarded allocation",
+        "DISCRETIONARY": "Discretionary/opportunistic allocation",
+        "RESERVATION": "Time-bound reservation",
+        "OTHER": "Other allocation type"
+      }
+    },
+
+    "period": {
+      "type": "object",
+      "description": "Allocation period (typically fiscal year or quarter)",
+      "properties": {
+        "start": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Date",
+          "description": "Start of allocation period"
+        },
+        "end": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Date",
+          "description": "End of allocation period"
+        },
+        "label": {
+          "type": "string",
+          "description": "Human-readable period label",
+          "examples": ["FY2026", "Q1 2026", "CY2026"]
+        }
+      }
+    },
+
+    "hours": {
+      "type": "object",
+      "description": "Compute hour tracking",
+      "properties": {
+        "allocated": {
+          "$ref": "../common/units.schema.json#/$defs/ComputeHours",
+          "description": "Total hours allocated for the period"
+        },
+        "used": {
+          "$ref": "../common/units.schema.json#/$defs/ComputeHours",
+          "description": "Hours consumed by completed and running jobs"
+        },
+        "remaining": {
+          "$ref": "../common/units.schema.json#/$defs/ComputeHours",
+          "description": "Hours remaining (allocated - used)"
+        },
+        "pending": {
+          "$ref": "../common/units.schema.json#/$defs/ComputeHours",
+          "description": "Hours committed to queued jobs (may exceed remaining)"
+        },
+        "background": {
+          "$ref": "../common/units.schema.json#/$defs/ComputeHours",
+          "description": "Hours used by background/scavenger jobs (if tracked separately)"
+        }
+      },
+      "required": ["allocated", "used", "remaining"]
+    },
+
+    "usage": {
+      "type": "object",
+      "description": "Usage metrics and projections",
+      "properties": {
+        "percent_used": {
+          "$ref": "../common/units.schema.json#/$defs/Percentage",
+          "description": "Percentage of allocation used"
+        },
+        "percent_remaining": {
+          "$ref": "../common/units.schema.json#/$defs/Percentage",
+          "description": "Percentage of allocation remaining"
+        },
+        "burn_rate_hours_per_day": {
+          "$ref": "../common/units.schema.json#/$defs/ComputeHours",
+          "description": "Average hours consumed per day (recent window)"
+        },
+        "projected_depletion_date": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Date",
+          "description": "Estimated date allocation will be exhausted"
+        },
+        "days_remaining_at_current_rate": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Days until depletion at current burn rate"
+        }
+      }
+    },
+
+    "status": {
+      "type": "string",
+      "enum": ["HEALTHY", "LOW", "CRITICAL", "EXHAUSTED", "EXPIRED"],
+      "description": "Health status of the allocation",
+      "x-enum-descriptions": {
+        "HEALTHY": "Adequate hours remaining (>20%)",
+        "LOW": "Running low (5-20% remaining)",
+        "CRITICAL": "Nearly exhausted (<5% remaining)",
+        "EXHAUSTED": "No hours remaining",
+        "EXPIRED": "Allocation period has ended"
+      }
+    },
+
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Active warnings about this allocation",
+      "examples": [
+        ["Projected to deplete before period end"],
+        ["Usage rate increased 50% this week"]
+      ]
+    }
+  },
+
+  "required": ["project", "hours"],
+
+  "examples": [
+    {
+      "project": "ONRDC12345678",
+      "project_id": "onrdc12345678",
+      "system": "Nautilus",
+      "allocation_type": "STANDARD",
+      "period": {
+        "start": "2025-10-01",
+        "end": "2026-09-30",
+        "label": "FY2026"
+      },
+      "hours": {
+        "allocated": 250000,
+        "used": 180000,
+        "remaining": 70000,
+        "pending": 15000
+      },
+      "usage": {
+        "percent_used": 72.0,
+        "percent_remaining": 28.0,
+        "burn_rate_hours_per_day": 500,
+        "projected_depletion_date": "2026-06-15",
+        "days_remaining_at_current_rate": 140
+      },
+      "status": "HEALTHY"
+    }
+  ]
+}

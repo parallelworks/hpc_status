@@ -1,0 +1,752 @@
+openapi: 3.1.0
+info:
+  title: HPC Status Monitor API
+  description: |
+    REST API for monitoring HPC fleet status, queue health, allocations, and storage.
+
+    This API provides a unified view of heterogeneous HPC systems across multiple
+    sites and schedulers (PBS, Slurm), enabling:
+    - Fleet-wide status monitoring
+    - Queue and partition health tracking
+    - Compute allocation management
+    - Storage capacity monitoring
+    - AI-assisted job placement recommendations
+
+    ## Key Concepts
+
+    - **Capacity**: Total/maximum resources (static, changes with hardware)
+    - **Availability**: Currently usable resources (dynamic, changes with load)
+    - **System Status**: UP, DOWN, DEGRADED, MAINTENANCE, UNKNOWN
+    - **Queue State**: ACTIVE, INACTIVE, DRAINING, OFFLINE
+    - **Insight Severity**: CRITICAL, WARNING, INFO, SUGGESTION
+
+    See `/docs/glossary.md` for full terminology definitions.
+  version: 2.0.0
+  contact:
+    name: HPC Status Monitor
+  license:
+    name: MIT
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+  - url: '{protocol}://{host}:{port}{prefix}'
+    description: Configurable server
+    variables:
+      protocol:
+        default: http
+        enum: [http, https]
+      host:
+        default: localhost
+      port:
+        default: '8080'
+      prefix:
+        default: ''
+        description: URL prefix for reverse proxy deployments
+
+tags:
+  - name: Fleet
+    description: Fleet-wide status and summary endpoints
+  - name: Clusters
+    description: Individual cluster data (queues, allocations, storage)
+  - name: Systems
+    description: Individual system details
+  - name: Insights
+    description: Recommendations and alerts
+  - name: Operations
+    description: Server health and data refresh
+
+paths:
+  /api/status:
+    get:
+      summary: Get fleet status
+      description: |
+        Returns the complete fleet status including all monitored systems.
+        This is the primary endpoint for understanding overall fleet health.
+      operationId: getFleetStatus
+      tags: [Fleet]
+      responses:
+        '200':
+          description: Fleet status payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FleetStatusResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/fleet/summary:
+    get:
+      summary: Get fleet summary
+      description: |
+        Returns a condensed fleet overview optimized for automation and dashboards.
+        Smaller payload than `/api/status` with just key metrics.
+      operationId: getFleetSummary
+      tags: [Fleet]
+      responses:
+        '200':
+          description: Fleet summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FleetSummary'
+
+  /api/cluster-usage:
+    get:
+      summary: Get all cluster usage data
+      description: |
+        Returns queue and allocation data for all monitored clusters.
+        Includes insights and recommendations.
+      operationId: getAllClusterUsage
+      tags: [Clusters]
+      responses:
+        '200':
+          description: All cluster data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterUsageResponse'
+
+  /api/cluster-usage/{cluster}:
+    get:
+      summary: Get specific cluster data
+      description: Returns detailed data for a specific cluster including queues, allocations, and storage.
+      operationId: getClusterUsage
+      tags: [Clusters]
+      parameters:
+        - name: cluster
+          in: path
+          required: true
+          description: Cluster name (case-insensitive)
+          schema:
+            type: string
+          examples:
+            nautilus:
+              value: nautilus
+            jean:
+              value: jean
+      responses:
+        '200':
+          description: Cluster data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClusterData'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/system/{system}:
+    get:
+      summary: Get system details
+      description: Returns detailed information for a specific HPC system.
+      operationId: getSystemDetails
+      tags: [Systems]
+      parameters:
+        - name: system
+          in: path
+          required: true
+          description: System name (case-insensitive)
+          schema:
+            type: string
+      responses:
+        '200':
+          description: System details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/system-markdown/{system}:
+    get:
+      summary: Get system markdown briefing
+      description: Returns a pre-generated markdown briefing for a system.
+      operationId: getSystemMarkdown
+      tags: [Systems]
+      parameters:
+        - name: system
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Markdown content
+          content:
+            text/markdown:
+              schema:
+                type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/insights:
+    get:
+      summary: Get all insights
+      description: |
+        Returns all current insights and recommendations sorted by severity.
+        Insights are generated from system status, queue health, allocations, and storage.
+      operationId: getInsights
+      tags: [Insights]
+      responses:
+        '200':
+          description: List of insights
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  insights:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SystemInsight'
+                  counts:
+                    type: object
+                    properties:
+                      critical:
+                        type: integer
+                      warning:
+                        type: integer
+                      info:
+                        type: integer
+                      suggestion:
+                        type: integer
+
+  /api/storage:
+    get:
+      summary: Get storage data
+      description: Returns storage capacity and usage for all monitored filesystems.
+      operationId: getStorageData
+      tags: [Clusters]
+      responses:
+        '200':
+          description: Storage data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  clusters:
+                    type: object
+                    additionalProperties:
+                      type: array
+                      items:
+                        $ref: '#/components/schemas/StorageInfo'
+
+  /api/health:
+    get:
+      summary: Health check
+      description: Returns server health status and collector states.
+      operationId: getHealth
+      tags: [Operations]
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Server is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /api/refresh:
+    post:
+      summary: Trigger data refresh
+      description: |
+        Triggers an immediate refresh of all data collectors.
+        Subject to rate limiting (default: 30 second cooldown).
+      operationId: triggerRefresh
+      tags: [Operations]
+      responses:
+        '200':
+          description: Refresh initiated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: refreshing
+                  message:
+                    type: string
+                    example: Data refresh initiated
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+components:
+  schemas:
+    FleetStatusResponse:
+      type: object
+      required: [meta, summary, systems]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ObservationMeta'
+        summary:
+          $ref: '#/components/schemas/FleetSummary'
+        systems:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemStatus'
+        insights:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemInsight'
+
+    FleetSummary:
+      type: object
+      required: [total_systems, status_counts]
+      properties:
+        total_systems:
+          type: integer
+          minimum: 0
+        status_counts:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            UP: 9
+            DEGRADED: 1
+        uptime_ratio:
+          type: number
+          minimum: 0
+          maximum: 1
+        uptime_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+        site_counts:
+          type: object
+          additionalProperties:
+            type: integer
+        scheduler_counts:
+          type: object
+          additionalProperties:
+            type: integer
+
+    SystemStatus:
+      type: object
+      required: [system, status, observed_at]
+      properties:
+        system:
+          type: string
+          description: Display name
+          example: Nautilus
+        system_id:
+          type: string
+          description: Machine-readable identifier
+          example: nautilus
+        status:
+          $ref: '#/components/schemas/SystemOperationalStatus'
+        status_reason:
+          type: string
+          description: Explanation for non-UP status
+        scheduler:
+          $ref: '#/components/schemas/SchedulerType'
+        site:
+          type: object
+          properties:
+            name:
+              type: string
+            organization:
+              type: string
+        access:
+          type: object
+          properties:
+            login_host:
+              type: string
+              format: hostname
+        capacity:
+          $ref: '#/components/schemas/SystemCapacity'
+        availability:
+          $ref: '#/components/schemas/SystemAvailability'
+        observed_at:
+          type: string
+          format: date-time
+
+    SystemCapacity:
+      type: object
+      description: Static capacity (total hardware)
+      properties:
+        total_nodes:
+          type: integer
+        total_cores:
+          type: integer
+        total_gpus:
+          type: integer
+        total_memory_gb:
+          type: number
+        architecture:
+          type: string
+
+    SystemAvailability:
+      type: object
+      description: Dynamic availability (current state)
+      properties:
+        nodes_up:
+          type: integer
+        nodes_down:
+          type: integer
+        cores_available:
+          type: integer
+        cores_in_use:
+          type: integer
+        utilization_percent:
+          type: number
+          minimum: 0
+          maximum: 100
+
+    ClusterUsageResponse:
+      type: object
+      required: [meta, clusters]
+      properties:
+        meta:
+          $ref: '#/components/schemas/ObservationMeta'
+        clusters:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/ClusterData'
+        insights:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemInsight'
+
+    ClusterData:
+      type: object
+      required: [name, connection_status]
+      properties:
+        name:
+          type: string
+        cluster_id:
+          type: string
+        uri:
+          type: string
+        connection_status:
+          type: string
+          enum: [CONNECTED, DISCONNECTED, ERROR, UNKNOWN]
+        scheduler:
+          $ref: '#/components/schemas/SchedulerType'
+        last_updated:
+          type: string
+          format: date-time
+        queues:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueueInfo'
+        allocations:
+          type: array
+          items:
+            $ref: '#/components/schemas/AllocationInfo'
+        storage:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorageInfo'
+        insights:
+          type: array
+          items:
+            $ref: '#/components/schemas/SystemInsight'
+
+    QueueInfo:
+      type: object
+      required: [name, state]
+      properties:
+        name:
+          type: string
+        state:
+          $ref: '#/components/schemas/QueueState'
+        queue_type:
+          type: string
+          enum: [BATCH, DEBUG, GPU, INTERACTIVE, BIGMEM, RESERVATION, OTHER]
+        constraints:
+          type: object
+          properties:
+            max_walltime_seconds:
+              type: integer
+              x-unit: seconds
+            max_walltime_display:
+              type: string
+              example: "24 hours"
+            max_nodes:
+              type: integer
+            max_cores:
+              type: integer
+        jobs:
+          type: object
+          properties:
+            running:
+              type: integer
+            pending:
+              type: integer
+            held:
+              type: integer
+        wait_estimate:
+          type: object
+          properties:
+            median_seconds:
+              type: integer
+              x-unit: seconds
+            display:
+              type: string
+              example: "~5 minutes"
+
+    AllocationInfo:
+      type: object
+      required: [project, hours]
+      properties:
+        project:
+          type: string
+        system:
+          type: string
+        hours:
+          type: object
+          required: [allocated, used, remaining]
+          properties:
+            allocated:
+              type: integer
+              x-unit: core-hours
+            used:
+              type: integer
+              x-unit: core-hours
+            remaining:
+              type: integer
+              x-unit: core-hours
+            pending:
+              type: integer
+              x-unit: core-hours
+        usage:
+          type: object
+          properties:
+            percent_used:
+              type: number
+            percent_remaining:
+              type: number
+            burn_rate_hours_per_day:
+              type: number
+              x-unit: core-hours/day
+            projected_depletion_date:
+              type: string
+              format: date
+        status:
+          $ref: '#/components/schemas/AllocationStatus'
+
+    StorageInfo:
+      type: object
+      required: [mount_point, status]
+      properties:
+        mount_point:
+          type: string
+          example: "$HOME"
+        storage_type:
+          type: string
+          enum: [HOME, WORK, SCRATCH, PROJECT, ARCHIVE, OTHER]
+        capacity:
+          type: object
+          properties:
+            total_gb:
+              type: number
+              x-unit: gigabytes
+        usage:
+          type: object
+          properties:
+            used_gb:
+              type: number
+              x-unit: gigabytes
+            available_gb:
+              type: number
+              x-unit: gigabytes
+            percent_used:
+              type: number
+        status:
+          $ref: '#/components/schemas/StorageHealthStatus'
+
+    SystemInsight:
+      type: object
+      required: [type, severity, message]
+      properties:
+        id:
+          type: string
+        type:
+          $ref: '#/components/schemas/InsightType'
+        severity:
+          $ref: '#/components/schemas/InsightSeverity'
+        message:
+          type: string
+        scope:
+          type: object
+          properties:
+            system:
+              type: string
+            cluster:
+              type: string
+            queue:
+              type: string
+            project:
+              type: string
+            storage:
+              type: string
+        metric:
+          type: object
+          properties:
+            name:
+              type: string
+            value:
+              type: number
+            threshold:
+              type: number
+        action:
+          type: object
+          properties:
+            description:
+              type: string
+            command:
+              type: string
+
+    HealthResponse:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [HEALTHY, DEGRADED, UNHEALTHY]
+        version:
+          type: string
+        uptime:
+          type: object
+          properties:
+            seconds:
+              type: integer
+            started_at:
+              type: string
+              format: date-time
+        collectors:
+          type: object
+          additionalProperties:
+            type: object
+            properties:
+              status:
+                type: string
+                enum: [OK, WARNING, ERROR, DISABLED]
+              last_run:
+                type: string
+                format: date-time
+
+    ObservationMeta:
+      type: object
+      required: [observed_at]
+      properties:
+        observed_at:
+          type: string
+          format: date-time
+        source:
+          type: string
+        from_cache:
+          type: boolean
+        cache_age_seconds:
+          type: integer
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum: [NOT_FOUND, VALIDATION_ERROR, RATE_LIMITED, COLLECTOR_ERROR, TIMEOUT, INTERNAL_ERROR]
+            message:
+              type: string
+            details:
+              type: object
+            request_id:
+              type: string
+
+    # Enumerations
+    SystemOperationalStatus:
+      type: string
+      enum: [UP, DOWN, DEGRADED, MAINTENANCE, UNKNOWN]
+      description: Operational status of an HPC system
+
+    QueueState:
+      type: string
+      enum: [ACTIVE, INACTIVE, DRAINING, OFFLINE]
+      description: State of a scheduler queue or partition
+
+    SchedulerType:
+      type: string
+      enum: [PBS, SLURM, LSF, SGE, UNKNOWN]
+      description: Type of job scheduler
+
+    InsightSeverity:
+      type: string
+      enum: [CRITICAL, WARNING, INFO, SUGGESTION]
+      description: Severity level of an insight
+
+    InsightType:
+      type: string
+      enum: [RECOMMENDATION, WARNING, ALERT, INFO]
+      description: Category of insight
+
+    AllocationStatus:
+      type: string
+      enum: [HEALTHY, LOW, CRITICAL, EXHAUSTED, EXPIRED]
+      description: Health status of an allocation
+
+    StorageHealthStatus:
+      type: string
+      enum: [HEALTHY, WARNING, CRITICAL]
+      description: Health status of storage
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: NOT_FOUND
+              message: "System 'unknown' not found"
+
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+          description: Request limit per window
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+          description: Requests remaining in window
+        X-RateLimit-Reset:
+          schema:
+            type: integer
+          description: Unix timestamp when window resets
+        Retry-After:
+          schema:
+            type: integer
+          description: Seconds to wait before retrying
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error:
+              code: RATE_LIMITED
+              message: "Rate limit exceeded. Retry after 30 seconds."
+              details:
+                retry_after_seconds: 30
+
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

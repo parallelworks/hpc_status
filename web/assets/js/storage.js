@@ -2,7 +2,7 @@
  * Storage page - Filesystem capacity monitoring
  */
 
-import { initThemeToggle } from "./page-utils.js";
+import { initThemeToggle, initHelpPanel, formatRelativeTime, initQuickTips } from "./page-utils.js";
 
 const defaultApiBase = (() => {
   const basePath = document.documentElement.dataset.basePath || "/";
@@ -111,8 +111,8 @@ const renderSummary = () => {
     elements.warningCount.textContent = summary.warningCount;
   }
   if (elements.lastUpdated && state.lastUpdated) {
-    const date = new Date(state.lastUpdated);
-    elements.lastUpdated.textContent = date.toLocaleTimeString();
+    elements.lastUpdated.textContent = formatRelativeTime(state.lastUpdated);
+    elements.lastUpdated.title = `Collected: ${new Date(state.lastUpdated).toLocaleString()}`;
   }
 
   renderWarnings(summary.warnings);
@@ -139,12 +139,18 @@ const renderWarnings = (warnings) => {
     .map((w) => {
       const icon = w.percent >= 90 ? "&#x26A0;&#xFE0F;" : "&#x26A0;";
       const severity = w.percent >= 90 ? "warning" : "info";
+      const recommendation = w.percent >= 95
+        ? "Critical: May cause job failures. Clean up files immediately."
+        : w.percent >= 90
+        ? "High usage: Consider removing unused files or moving data to archive."
+        : "Elevated usage: Monitor and plan cleanup.";
       return `
-        <li class="insight-item ${severity}">
+        <li class="insight-item ${severity}" title="${recommendation}">
           <span class="insight-icon">${icon}</span>
           <div class="insight-content">
             <p><strong>${w.cluster}</strong> ${w.type}: ${w.percent}% used</p>
             <small>${w.filesystem}</small>
+            <p class="metric-explanation">${recommendation}</p>
           </div>
         </li>
       `;
@@ -247,17 +253,17 @@ const buildStorageCard = (cluster) => {
         </div>
         <div class="cluster-subprojects">
           <div class="table-head compact">
-            <h5>Filesystem Details</h5>
+            <h5>Filesystem Details <span class="th-help" title="$HOME: backed up, small quota. $WORK: larger quota for projects. $SCRATCH: fast temp storage, may be purged.">ⓘ</span></h5>
           </div>
           <div class="table-scroll mini">
             <table class="quota-table">
               <thead>
                 <tr>
-                  <th>Type</th>
-                  <th>Size</th>
-                  <th>Used</th>
-                  <th>Available</th>
-                  <th>Usage</th>
+                  <th>Type <span class="th-help" title="Filesystem type: home, work, scratch, etc.">ⓘ</span></th>
+                  <th>Size <span class="th-help" title="Total capacity of this filesystem">ⓘ</span></th>
+                  <th>Used <span class="th-help" title="Storage currently in use">ⓘ</span></th>
+                  <th>Available <span class="th-help" title="Free space remaining">ⓘ</span></th>
+                  <th>Usage <span class="th-help" title="Percent used. Warning at 80%, critical at 95%">ⓘ</span></th>
                 </tr>
               </thead>
               <tbody>
@@ -330,6 +336,11 @@ const clearBanner = () => {
 const disableRefresh = (disabled) => {
   if (elements.refreshBtn) {
     elements.refreshBtn.disabled = disabled;
+    if (disabled) {
+      elements.refreshBtn.classList.add("is-loading");
+    } else {
+      elements.refreshBtn.classList.remove("is-loading");
+    }
   }
 };
 
@@ -401,6 +412,8 @@ const bindEvents = () => {
 document.addEventListener("DOMContentLoaded", () => {
   cacheElements();
   initThemeToggle();
+  initHelpPanel();
+  initQuickTips();
   applyConfigBranding();
 
   const nav = document.querySelector("[data-cluster-nav]");

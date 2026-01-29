@@ -1,4 +1,4 @@
-import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle, buildApiUrl } from "./page-utils.js";
+import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle, buildApiUrl, initHelpPanel, formatRelativeTime, initQuickTips } from "./page-utils.js";
 
 const DATA_URL = buildApiUrl("api/cluster-usage").toString();
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -89,7 +89,11 @@ const disableRefresh = (disabled) => {
   const btn = elements.refreshBtn;
   if (!btn) return;
   btn.disabled = disabled;
-  btn.textContent = disabled ? "Refreshing…" : "Refresh data";
+  if (disabled) {
+    btn.classList.add("is-loading");
+  } else {
+    btn.classList.remove("is-loading");
+  }
 };
 
 const showGeneratingPlaceholder = (message = "Cluster monitor is generating queue data…") => {
@@ -746,6 +750,8 @@ const applyConfigBranding = () => {
 const bootstrap = () => {
   cacheElements();
   initThemeToggle();
+  initHelpPanel();
+  initQuickTips();
   applyConfigBranding();
   const nav = document.querySelector("[data-cluster-nav]");
   if (!state.features.clusterPages) {

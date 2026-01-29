@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hpc-status.example.com/schemas/api/error-response.schema.json",
+  "title": "Error Response",
+  "description": "Standard error response format for all API errors",
+
+  "type": "object",
+  "properties": {
+    "error": {
+      "type": "object",
+      "description": "Error details",
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Machine-readable error code",
+          "enum": [
+            "NOT_FOUND",
+            "VALIDATION_ERROR",
+            "RATE_LIMITED",
+            "COLLECTOR_ERROR",
+            "TIMEOUT",
+            "INTERNAL_ERROR",
+            "SERVICE_UNAVAILABLE",
+            "BAD_REQUEST",
+            "UNAUTHORIZED",
+            "FORBIDDEN"
+          ],
+          "x-enum-descriptions": {
+            "NOT_FOUND": "Requested resource does not exist",
+            "VALIDATION_ERROR": "Request parameters failed validation",
+            "RATE_LIMITED": "Too many requests, try again later",
+            "COLLECTOR_ERROR": "Data collection from HPC system failed",
+            "TIMEOUT": "Request timed out waiting for data",
+            "INTERNAL_ERROR": "Unexpected server error",
+            "SERVICE_UNAVAILABLE": "Service temporarily unavailable",
+            "BAD_REQUEST": "Malformed request",
+            "UNAUTHORIZED": "Authentication required",
+            "FORBIDDEN": "Insufficient permissions"
+          }
+        },
+        "message": {
+          "type": "string",
+          "description": "Human-readable error message",
+          "examples": [
+            "System 'unknown-system' not found",
+            "Rate limit exceeded. Retry after 30 seconds.",
+            "Failed to collect data from Nautilus: connection timeout"
+          ]
+        },
+        "details": {
+          "type": "object",
+          "description": "Additional error context (varies by error type)",
+          "additionalProperties": true,
+          "examples": [
+            { "parameter": "system", "value": "unknown-system", "allowed": ["nautilus", "jean", "onyx"] },
+            { "retry_after_seconds": 30 },
+            { "collector": "hpcmp", "last_success": "2026-01-29T15:00:00Z" }
+          ]
+        },
+        "request_id": {
+          "type": "string",
+          "description": "Unique request identifier for debugging",
+          "examples": ["req_abc123xyz"]
+        }
+      },
+      "required": ["code", "message"]
+    },
+    "meta": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "$ref": "../common/timestamp.schema.json#/$defs/ISO8601Timestamp"
+        },
+        "api_version": {
+          "type": "string",
+          "description": "API version that generated this error"
+        }
+      }
+    }
+  },
+  "required": ["error"],
+
+  "examples": [
+    {
+      "error": {
+        "code": "NOT_FOUND",
+        "message": "System 'unknown-system' not found in fleet",
+        "details": {
+          "parameter": "system",
+          "value": "unknown-system",
+          "suggestion": "Use /api/status to list available systems"
+        },
+        "request_id": "req_20260129_153000_abc123"
+      },
+      "meta": {
+        "timestamp": "2026-01-29T15:30:00Z"
+      }
+    },
+    {
+      "error": {
+        "code": "RATE_LIMITED",
+        "message": "Rate limit exceeded. Retry after 30 seconds.",
+        "details": {
+          "retry_after_seconds": 30,
+          "limit": 60,
+          "window_seconds": 60,
+          "current_count": 62
+        }
+      }
+    },
+    {
+      "error": {
+        "code": "COLLECTOR_ERROR",
+        "message": "Failed to collect data from Nautilus",
+        "details": {
+          "collector": "hpcmp_fleet",
+          "system": "Nautilus",
+          "reason": "Connection timeout after 30 seconds",
+          "last_success": "2026-01-29T15:00:00Z",
+          "cached_data_available": true
+        }
+      }
+    },
+    {
+      "error": {
+        "code": "VALIDATION_ERROR",
+        "message": "Invalid parameter value",
+        "details": {
+          "parameter": "limit",
+          "value": "-5",
+          "constraint": "must be a positive integer"
+        }
+      }
+    }
+  ]
+}
