@@ -79,6 +79,11 @@ class HPCMPCollector(BaseCollector):
         # verify=False means skip SSL verification (insecure mode)
         # Pass the inverse to _determine_verify which expects insecure flag
         self._verify = self._determine_verify(not verify, ca_bundle)
+        self._session: Optional[requests.Session] = None
+
+        # Disable warnings once at init if not verifying SSL
+        if self._verify is False:
+            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
     @property
     def name(self) -> str:
@@ -126,30 +131,53 @@ class HPCMPCollector(BaseCollector):
             return ca_bundle
         return DEFAULT_CA_BUNDLE
 
+    def _get_session(self) -> requests.Session:
+        """Get or create a requests session with retry configuration.
+
+        Reuses the session for connection pooling efficiency.
+        """
+        if self._session is None:
+            session = requests.Session()
+            retry = Retry(
+                total=4,
+                connect=4,
+                read=4,
+                backoff_factor=0.5,
+                status_forcelist=(429, 500, 502, 503, 504),
+                allowed_methods=("GET", "HEAD"),
+            )
+            # Limit connection pool to prevent resource exhaustion
+            adapter = HTTPAdapter(
+                max_retries=retry,
+                pool_connections=5,
+                pool_maxsize=10,
+            )
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+            session.verify = self._verify
+            session.headers.update({"User-Agent": "hpc-status-monitor/2.0"})
+            self._session = session
+        return self._session
+
     def _make_session(self) -> requests.Session:
-        """Create a requests session with retry configuration."""
-        session = requests.Session()
-        retry = Retry(
-            total=4,
-            connect=4,
-            read=4,
-            backoff_factor=0.5,
-            status_forcelist=(429, 500, 502, 503, 504),
-            allowed_methods=("GET", "HEAD"),
-        )
-        adapter = HTTPAdapter(max_retries=retry)
-        session.mount("https://", adapter)
-        session.mount("http://", adapter)
-        session.verify = self._verify
-        session.headers.update({"User-Agent": "hpc-status-monitor/2.0"})
-        return session
+        """Create a requests session with retry configuration.
+
+        Deprecated: Use _get_session() for connection reuse.
+        """
+        return self._get_session()
+
+    def close(self) -> None:
+        """Close the session and release resources."""
+        if self._session is not None:
+            try:
+                self._session.close()
+            except Exception:
+                pass
+            self._session = None
 
     def _fetch_status(self) -> Tuple[List[Dict[str, str]], BeautifulSoup]:
         """Fetch and parse the status page."""
-        session = self._make_session()
-        if self._verify is False:
-            urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
+        session = self._get_session()
         resp = session.get(self.url, timeout=self.timeout)
         resp.raise_for_status()
         soup = BeautifulSoup(resp.text, "html.parser")

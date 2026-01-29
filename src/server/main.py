@@ -30,35 +30,143 @@ DEFAULT_CLUSTER_MONITOR_INTERVAL = 120
 
 
 def create_generate_payload_fn(config: Config, store: DataStore):
-    """Create the payload generation function based on config."""
-    def generate_payload():
-        # Import here to avoid circular imports
-        from ..collectors.hpcmp import HPCMPCollector
+    """Create the payload generation function based on config.
 
-        collector_config = config.get_collector_config("hpcmp")
-        collector = HPCMPCollector(
-            url=collector_config.extra.get("url", "https://centers.hpc.mil/systems/unclassified.html"),
-            timeout=collector_config.timeout,
-            verify=False,  # Default to insecure for DoD sites
-        )
+    For HPCMP platform: Uses the HPCMP collector to scrape centers.hpc.mil
+    For generic/NOAA platforms: Uses PW cluster collector to get available clusters
+    """
+    platform = config.platform.lower()
 
-        # Use collect_with_details to get both status and markdown content
-        try:
-            data, markdown_dict = collector.collect_with_details()
+    if platform == "hpcmp":
+        # Use HPCMP collector for DoD HPC systems
+        def generate_hpcmp_payload():
+            from ..collectors.hpcmp import HPCMPCollector
 
-            # Save markdown files for each system
-            for slug, content in markdown_dict.items():
-                store.save_markdown(slug, content)
+            collector_config = config.get_collector_config("hpcmp")
+            collector = HPCMPCollector(
+                url=collector_config.extra.get("url", "https://centers.hpc.mil/systems/unclassified.html"),
+                timeout=collector_config.timeout,
+                verify=False,  # Default to insecure for DoD sites
+            )
 
-            print(f"[hpcmp] Collected {len(data.get('systems', []))} systems, generated {len(markdown_dict)} briefings")
-        except Exception as e:
-            # Fall back to basic collect if detailed collection fails
-            print(f"[hpcmp] Detailed collection failed, using basic: {e}")
-            data = collector.collect()
+            # Use collect_with_details to get both status and markdown content
+            try:
+                data, markdown_dict = collector.collect_with_details()
 
-        return data
+                # Save markdown files for each system
+                for slug, content in markdown_dict.items():
+                    store.save_markdown(slug, content)
 
-    return generate_payload
+                print(f"[hpcmp] Collected {len(data.get('systems', []))} systems, generated {len(markdown_dict)} briefings")
+            except Exception as e:
+                # Fall back to basic collect if detailed collection fails
+                print(f"[hpcmp] Detailed collection failed, using basic: {e}")
+                data = collector.collect()
+            finally:
+                # Clean up session resources
+                collector.close()
+
+            return data
+
+        return generate_hpcmp_payload
+    else:
+        # Use PW cluster collector for generic/noaa platforms
+        def generate_pwcluster_payload():
+            from ..collectors.pw_cluster import PWClusterCollector
+            import datetime as dt
+
+            collector = PWClusterCollector()
+
+            # Check if PW CLI is available
+            if not collector.is_available():
+                print("[pw_cluster] PW CLI not available, returning empty status")
+                return {
+                    "meta": {
+                        "source_url": None,
+                        "source_name": "PW Clusters",
+                        "generated_at": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+                        "collector": "pw_cluster",
+                    },
+                    "summary": {
+                        "total_systems": 0,
+                        "status_counts": {},
+                        "dsrc_counts": {},
+                        "scheduler_counts": {},
+                        "uptime_ratio": 0,
+                    },
+                    "systems": [],
+                }
+
+            try:
+                # Get active clusters from PW CLI
+                clusters = collector.get_active_clusters()
+                print(f"[pw_cluster] Found {len(clusters)} active clusters")
+
+                # Build systems list from clusters
+                systems = []
+                now_iso = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+                for cluster in clusters:
+                    cluster_name = cluster["uri"].split("/")[-1]
+                    systems.append({
+                        "system": cluster_name,
+                        "status": "UP" if cluster["status"] == "on" else "DOWN",
+                        "dsrc": cluster.get("type", "pw"),
+                        "login": cluster["uri"],
+                        "scheduler": "slurm",  # Default assumption
+                        "raw_alt": f"PW cluster: {cluster['uri']}",
+                        "source_url": None,
+                        "observed_at": now_iso,
+                    })
+
+                # Calculate summary statistics
+                from collections import Counter
+                statuses = Counter(s["status"] for s in systems)
+                dsrcs = Counter(s["dsrc"] for s in systems)
+                scheds = Counter(s["scheduler"] for s in systems)
+                uptime_ratio = sum(1 for s in systems if s["status"] == "UP") / len(systems) if systems else 0
+
+                data = {
+                    "meta": {
+                        "source_url": None,
+                        "source_name": "PW Clusters",
+                        "generated_at": now_iso,
+                        "collector": "pw_cluster",
+                    },
+                    "summary": {
+                        "total_systems": len(systems),
+                        "status_counts": dict(statuses),
+                        "dsrc_counts": dict(dsrcs),
+                        "scheduler_counts": dict(scheds),
+                        "uptime_ratio": round(uptime_ratio, 3),
+                    },
+                    "systems": systems,
+                }
+
+                print(f"[pw_cluster] Collected {len(systems)} systems for fleet status")
+                return data
+
+            except Exception as e:
+                print(f"[pw_cluster] Collection failed: {e}")
+                return {
+                    "meta": {
+                        "source_url": None,
+                        "source_name": "PW Clusters",
+                        "generated_at": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
+                        "collector": "pw_cluster",
+                        "error": str(e),
+                    },
+                    "summary": {
+                        "total_systems": 0,
+                        "status_counts": {},
+                        "dsrc_counts": {},
+                        "scheduler_counts": {},
+                        "uptime_ratio": 0,
+                    },
+                    "systems": [],
+                }
+
+        return generate_pwcluster_payload
 
 
 def run_server(args) -> None:

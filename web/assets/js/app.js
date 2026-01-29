@@ -41,7 +41,7 @@ const apiBase = (() => {
 const STATUS_URL = new URL("api/status", apiBase).toString();
 const REFRESH_URL = new URL("api/refresh", apiBase).toString();
 const CLUSTER_USAGE_URL = new URL("api/cluster-usage", apiBase).toString();
-const INSIGHTS_URL = new URL("api/insights", apiBase).toString();
+// Note: Insights moved to dedicated page (insights.html)
 
 const THEME_STORAGE_KEY = "hpc-status-theme";
 const detailCache = new Map();
@@ -1023,9 +1023,8 @@ applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
 applyConfigTitle();
 registerEvents();
 loadData();
-loadInsights();
+// Note: Insights loading moved to dedicated page (insights.html)
 setInterval(() => loadData({ showLoading: false, silentFallback: true }), 3 * 60 * 1000);
-setInterval(() => loadInsights({ force: true }), 2 * 60 * 1000);
 if (featureFlags.clusterPages) {
   loadUsageData();
   setInterval(() => loadUsageData({ force: true }), 5 * 60 * 1000);

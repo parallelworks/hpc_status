@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import tempfile
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -48,14 +49,32 @@ class DataStore:
     # --- JSON Cache (fast reads) ---
 
     def save_cache(self, name: str, data: Dict[str, Any]) -> None:
-        """Save data to JSON cache file.
+        """Save data to JSON cache file atomically.
+
+        Uses atomic write (write to temp file then rename) to prevent
+        file corruption if interrupted during write.
 
         Args:
             name: Cache name (e.g., 'fleet_status', 'cluster_usage')
             data: Data to cache
         """
         cache_file = self.cache_dir / f"{name}.json"
-        cache_file.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+        content = json.dumps(data, indent=2, default=str)
+
+        # Write to temp file then rename for atomic operation
+        fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(content)
+            # Atomic rename
+            os.replace(tmp_path, cache_file)
+        except Exception:
+            # Clean up temp file on failure
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
     def load_cache(self, name: str, max_age: Optional[timedelta] = None) -> Optional[Dict[str, Any]]:
         """Load data from JSON cache file.
@@ -153,9 +172,22 @@ class DataStore:
 
     # --- SQLite (historical data, queries) ---
 
+    def _get_connection(self) -> sqlite3.Connection:
+        """Get a database connection with proper configuration.
+
+        Uses WAL mode for better concurrent read/write performance
+        and sets appropriate timeouts to avoid blocking.
+        """
+        conn = sqlite3.connect(self.db_path, timeout=30.0)
+        # Enable WAL mode for better concurrent access
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA synchronous=NORMAL")
+        return conn
+
     def _init_db(self) -> None:
         """Create database tables if they don't exist."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS snapshots (
                     id INTEGER PRIMARY KEY,
@@ -189,7 +221,7 @@ class DataStore:
             collector: Collector name (e.g., 'hpcmp', 'pw_cluster')
             data: Snapshot data
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute(
                 "INSERT INTO snapshots (collector, timestamp, data) VALUES (?, ?, ?)",
                 (collector, datetime.utcnow().isoformat(), json.dumps(data)),
@@ -207,7 +239,7 @@ class DataStore:
         Returns:
             Snapshot data or None
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             query = """
                 SELECT data, timestamp FROM snapshots
                 WHERE collector = ?
@@ -227,7 +259,7 @@ class DataStore:
 
     def save_system_status(self, system_name: str, status: str, details: Optional[Dict] = None) -> None:
         """Record a system status change for historical tracking."""
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             conn.execute(
                 "INSERT INTO system_history (system_name, status, timestamp, details) VALUES (?, ?, ?, ?)",
                 (system_name, status, datetime.utcnow().isoformat(), json.dumps(details) if details else None),
@@ -240,7 +272,7 @@ class DataStore:
 
         Returns list of (timestamp, status, details) tuples.
         """
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             if since:
                 query = """
                     SELECT timestamp, status, details FROM system_history
@@ -274,7 +306,7 @@ class DataStore:
         """
         cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
         deleted = 0
-        with sqlite3.connect(self.db_path) as conn:
+        with self._get_connection() as conn:
             cursor = conn.execute("DELETE FROM snapshots WHERE timestamp < ?", (cutoff,))
             deleted += cursor.rowcount
             cursor = conn.execute("DELETE FROM system_history WHERE timestamp < ?", (cutoff,))
