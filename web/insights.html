@@ -4,7 +4,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Storage | HPC Status Dashboard</title>
+  <title>Insights | HPC Status Dashboard</title>
   <script>
     (function () {
       function deriveBasePath(pathname) {
@@ -39,9 +39,9 @@
     <header class="hero">
       <div>
         <p class="eyebrow" id="header-eyebrow">HPC STATUS</p>
-        <h1>Storage</h1>
+        <h1>Insights</h1>
         <p class="lede">
-          Monitor filesystem capacity across home, work, and scratch directories.
+          Recommendations and alerts based on fleet status, allocations, and queue health.
         </p>
       </div>
       <div class="hero-actions">
@@ -58,25 +58,24 @@
       <a href="index.html">Fleet status</a>
       <a href="queues.html">Queue health</a>
       <a href="quota.html">Quota usage</a>
-      <a href="storage.html" aria-current="page">Storage</a>
-      <a href="insights.html">Insights</a>
+      <a href="storage.html">Storage</a>
+      <a href="insights.html" aria-current="page">Insights</a>
     </nav>
 
     <p id="data-status" class="status-banner" role="status" hidden></p>
 
     <section class="cards">
       <article class="card">
-        <p>Connected clusters</p>
-        <h2 id="cluster-count">--</h2>
-      </article>
-      <article class="card">
-        <p>Filesystems monitored</p>
-        <h2 id="filesystem-count">--</h2>
+        <p>Total insights</p>
+        <h2 id="total-insights">--</h2>
       </article>
       <article class="card alert">
-        <p>Near capacity</p>
+        <p>Warnings</p>
         <h2 id="warning-count">--</h2>
-        <span class="card-tooltip" title="Filesystems above 80% usage">&#9432;</span>
+      </article>
+      <article class="card">
+        <p>Informational</p>
+        <h2 id="info-count">--</h2>
       </article>
       <article class="card">
         <p>Last updated</p>
@@ -84,34 +83,28 @@
       </article>
     </section>
 
-    <section id="warnings-section" class="insights-panel" aria-label="Storage warnings" hidden>
-      <div class="insights-header">
-        <h3>Storage Alerts</h3>
-        <span id="warnings-count" class="badge">0</span>
-      </div>
-      <ul id="warnings-list" class="insights-list" aria-live="polite"></ul>
-    </section>
-
-    <section>
+    <section class="panel">
       <div class="panel-head">
         <div>
-          <p class="eyebrow">Filesystem overview</p>
-          <h3>Storage capacity by cluster</h3>
-          <p id="storage-grid-note" class="muted-text">Loading storage data...</p>
+          <p class="eyebrow">Fleet analysis</p>
+          <h3>Recommendations and alerts</h3>
+          <p id="insights-note" class="muted-text">Loading insights...</p>
         </div>
       </div>
-      <div id="storage-grid" class="cluster-grid">
-        <article class="card placeholder">Loading storage data...</article>
+      <div id="insights-container">
+        <ul id="insights-list" class="insights-list-full" aria-live="polite">
+          <li class="placeholder">Loading insights...</li>
+        </ul>
       </div>
     </section>
 
     <footer class="footer">
-      <small>Storage data collected from connected clusters</small>
+      <small>Insights generated from fleet and cluster data</small>
       <small>HPC Status Monitor v2.0</small>
     </footer>
   </div>
 
-  <script type="module" src="assets/js/storage.js"></script>
+  <script type="module" src="assets/js/insights.js"></script>
 </body>
 
 </html>
