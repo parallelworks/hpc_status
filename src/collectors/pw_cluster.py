@@ -152,7 +152,7 @@ class PWClusterCollector(BaseCollector):
                 status = parts[1].strip()
                 cluster_type = parts[2].strip()
 
-                if cluster_type == "existing" and status == "on":
+                if cluster_type == "existing" and status == "active":
                     clusters.append(
                         {
                             "uri": uri,
