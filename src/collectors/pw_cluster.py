@@ -103,7 +103,7 @@ class PWClusterCollector(BaseCollector):
                 "pw",
                 "clusters",
                 "ls",
-                "--status=on",
+                "--status=active",
                 "-o",
                 "table",
                 "--owned",
