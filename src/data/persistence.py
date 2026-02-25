@@ -64,7 +64,12 @@ class DataStore:
         # Write to temp file then rename for atomic operation
         fd, tmp_path = tempfile.mkstemp(dir=self.cache_dir, suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as f:
+            try:
+                f = os.fdopen(fd, "w", encoding="utf-8")
+            except Exception:
+                os.close(fd)
+                raise
+            with f:
                 f.write(content)
             # Atomic rename
             os.replace(tmp_path, cache_file)
