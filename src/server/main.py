@@ -16,7 +16,7 @@ from typing import Optional
 
 from .config import Config
 from .routes import DashboardRequestHandler
-from .workers import DashboardState, RefreshWorker, ClusterMonitorWorker
+from .workers import DashboardState, RefreshWorker, ClusterMonitorWorker, _log
 from ..data.persistence import DataStore, get_data_dir
 
 # Default paths
@@ -57,10 +57,10 @@ def create_generate_payload_fn(config: Config, store: DataStore):
                 for slug, content in markdown_dict.items():
                     store.save_markdown(slug, content)
 
-                print(f"[hpcmp] Collected {len(data.get('systems', []))} systems, generated {len(markdown_dict)} briefings")
+                _log(f"[hpcmp] Collected {len(data.get('systems', []))} systems, generated {len(markdown_dict)} briefings")
             except Exception as e:
                 # Fall back to basic collect if detailed collection fails
-                print(f"[hpcmp] Detailed collection failed, using basic: {e}")
+                _log(f"[hpcmp] Detailed collection failed, using basic: {e}")
                 data = collector.collect()
             finally:
                 # Clean up session resources
@@ -79,7 +79,7 @@ def create_generate_payload_fn(config: Config, store: DataStore):
 
             # Check if PW CLI is available
             if not collector.is_available():
-                print("[pw_cluster] PW CLI not available, returning empty status")
+                _log("[pw_cluster] PW CLI not available, returning empty status")
                 return {
                     "meta": {
                         "source_url": None,
@@ -99,7 +99,7 @@ def create_generate_payload_fn(config: Config, store: DataStore):
 
             # Get active clusters from PW CLI (raises on SSH failure)
             clusters = collector.get_active_clusters()
-            print(f"[pw_cluster] Found {len(clusters)} active clusters")
+            _log(f"[pw_cluster] Found {len(clusters)} active clusters")
 
             # Build systems list from clusters
             systems = []
@@ -142,7 +142,7 @@ def create_generate_payload_fn(config: Config, store: DataStore):
                 "systems": systems,
             }
 
-            print(f"[pw_cluster] Collected {len(systems)} systems for fleet status")
+            _log(f"[pw_cluster] Collected {len(systems)} systems for fleet status")
             return data
 
         return generate_pwcluster_payload
@@ -152,7 +152,7 @@ def run_server(args) -> None:
     """Run the dashboard server."""
     # Load configuration
     config = Config.load(args.config)
-    print(f"[config] Loaded: ui.title={config.ui.title!r}, platform={config.platform!r}")
+    _log(f"[config] Loaded: ui.title={config.ui.title!r}, platform={config.platform!r}")
 
     # Override config with CLI args
     if args.host:
@@ -177,13 +177,14 @@ def run_server(args) -> None:
     state = DashboardState(store, generate_fn, source_name="fleet_status")
 
     # Do initial refresh
-    print("[dashboard] Loading initial data...")
+    _log("[dashboard] Loading initial data...")
     if not state.is_ready():
         ok, detail = state.refresh(blocking=True)
         if not ok:
-            print(f"[dashboard] Initial refresh: {detail}")
+            _log(f"[dashboard] Initial refresh: {detail}")
 
     # Start refresh worker
+    _log(f"[dashboard] Starting fleet refresh worker (interval={args.refresh_interval}s)")
     worker = RefreshWorker(state, interval_seconds=args.refresh_interval)
     worker.start()
 
@@ -194,6 +195,7 @@ def run_server(args) -> None:
     cluster_monitor_interval = max(60, args.cluster_monitor_interval)
 
     if cluster_monitor_enabled:
+        _log(f"[dashboard] Starting cluster monitor (interval={cluster_monitor_interval}s)")
         cluster_worker = ClusterMonitorWorker(
             store=store,
             interval_seconds=cluster_monitor_interval,
@@ -203,6 +205,8 @@ def run_server(args) -> None:
             pause_duration=config.rate_limiting.pause_duration,
         )
         cluster_worker.start()
+    else:
+        _log("[dashboard] Cluster monitor disabled")
 
     # Configure the request handler
     DashboardRequestHandler.server_state = state
@@ -218,15 +222,15 @@ def run_server(args) -> None:
     handler = functools.partial(DashboardRequestHandler, directory=str(web_dir))
     server = ThreadingHTTPServer((config.server.host, config.server.port), handler)
 
-    print(f"[dashboard] Serving on http://{config.server.host}:{config.server.port}")
+    _log(f"[dashboard] Serving on http://{config.server.host}:{config.server.port}")
     if config.server.url_prefix:
-        print(f"[dashboard] URL prefix: {config.server.url_prefix}")
-    print(f"[dashboard] Data directory: {store.data_dir}")
+        _log(f"[dashboard] URL prefix: {config.server.url_prefix}")
+    _log(f"[dashboard] Data directory: {store.data_dir}")
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[dashboard] Shutting down...")
+        _log("\n[dashboard] Shutting down...")
     finally:
         worker.stop()
         worker.join(timeout=5)

@@ -546,7 +546,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 return data.get("clusters") or data.get("usage") or data
             return data
         except Exception as exc:
-            print(f"[api] Unable to parse cluster usage data: {exc}")
+            print(f"[api] Unable to parse cluster usage data: {exc}", flush=True)
             return None
 
     def _build_system_summary(self, payload: Dict) -> Dict:
