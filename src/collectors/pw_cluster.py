@@ -16,6 +16,11 @@ from typing import Any, Dict, List, Optional
 from .base import BaseCollector, CollectorError
 
 
+def _log(msg: str) -> None:
+    """Print with flush for reliable output in daemon threads."""
+    print(msg, flush=True)
+
+
 class PWClusterCollector(BaseCollector):
     """Collector for PW-connected clusters.
 
@@ -214,13 +219,13 @@ class PWClusterCollector(BaseCollector):
             )
             return self._parse_usage_output(result.stdout)
         except subprocess.CalledProcessError as e:
-            print(f"[pw_cluster] Error getting usage for {cluster_uri}: {e}")
+            _log(f"[pw_cluster] Error getting usage for {cluster_uri}: {e}")
             return None
         except subprocess.TimeoutExpired:
-            print(f"[pw_cluster] Timeout getting usage for {cluster_uri}")
+            _log(f"[pw_cluster] Timeout getting usage for {cluster_uri}")
             return None
         except Exception as e:
-            print(f"[pw_cluster] Unexpected error for {cluster_uri}: {e}")
+            _log(f"[pw_cluster] Unexpected error for {cluster_uri}: {e}")
             return None
 
     def _get_cluster_queues(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
@@ -236,13 +241,13 @@ class PWClusterCollector(BaseCollector):
             )
             return self._parse_queue_output(result.stdout)
         except subprocess.CalledProcessError as e:
-            print(f"[pw_cluster] Error getting queues for {cluster_uri}: {e}")
+            _log(f"[pw_cluster] Error getting queues for {cluster_uri}: {e}")
             return None
         except subprocess.TimeoutExpired:
-            print(f"[pw_cluster] Timeout getting queues for {cluster_uri}")
+            _log(f"[pw_cluster] Timeout getting queues for {cluster_uri}")
             return None
         except Exception as e:
-            print(f"[pw_cluster] Unexpected error for {cluster_uri}: {e}")
+            _log(f"[pw_cluster] Unexpected error for {cluster_uri}: {e}")
             return None
 
     def _parse_usage_output(self, usage_output: str) -> Dict[str, Any]:
@@ -420,7 +425,7 @@ class PWClusterCollector(BaseCollector):
                 return None
             return self._parse_gpu_output(result.stdout)
         except Exception as e:
-            print(f"[pw_cluster] Error getting GPU info for {cluster_uri}: {e}")
+            _log(f"[pw_cluster] Error getting GPU info for {cluster_uri}: {e}")
             return None
 
     def _parse_gpu_output(self, gpu_output: str) -> Dict[str, Any]:
@@ -489,7 +494,7 @@ class PWClusterCollector(BaseCollector):
                 return None
             return self._parse_system_output(result.stdout)
         except Exception as e:
-            print(f"[pw_cluster] Error getting system info for {cluster_uri}: {e}")
+            _log(f"[pw_cluster] Error getting system info for {cluster_uri}: {e}")
             return None
 
     def _parse_system_output(self, output: str) -> Dict[str, Any]:
@@ -559,7 +564,7 @@ class PWClusterCollector(BaseCollector):
 
             return self._parse_storage_output(result.stdout)
         except Exception as e:
-            print(f"[pw_cluster] Error getting storage for {cluster_uri}: {e}")
+            _log(f"[pw_cluster] Error getting storage for {cluster_uri}: {e}")
             return None
 
     def _parse_storage_output(self, output: str) -> Dict[str, Any]:

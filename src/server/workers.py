@@ -16,6 +16,11 @@ from typing import Any, Dict, Optional, Tuple
 from ..data.persistence import DataStore
 
 
+def _log(msg: str) -> None:
+    """Print with flush for reliable output in daemon threads."""
+    print(msg, flush=True)
+
+
 class DashboardState:
     """Manages dashboard state with caching and persistence.
 
@@ -66,7 +71,7 @@ class DashboardState:
             systems = payload.get("systems", []) if isinstance(payload, dict) else []
             if not systems and self._payload and self._payload.get("systems"):
                 msg = "Collection returned 0 systems; keeping stale data"
-                print(f"[{self.source_name}] {msg}")
+                _log(f"[{self.source_name}] {msg}")
                 with self._payload_lock:
                     self._last_error = msg
                     self._last_refresh_ts = time.time()
@@ -173,16 +178,29 @@ class ClusterMonitorWorker(threading.Thread):
     def run(self) -> None:
         # Initialize collector lazily
         from ..collectors.pw_cluster import PWClusterCollector
+
+        _log(f"[cluster-monitor] Starting (interval={self.interval}s, "
+             f"failure_threshold={self._failure_threshold}, "
+             f"pause_duration={self._pause_duration}s)")
+
         self._collector = PWClusterCollector()
 
+        if not self._collector.is_available():
+            _log("[cluster-monitor] WARNING: pw CLI not available, will retry each cycle")
+
         if not self._run_immediately:
+            _log(f"[cluster-monitor] Waiting {self.interval}s before first collection")
             if self._stop_event.wait(self.interval):
                 return
 
+        _log("[cluster-monitor] Running first collection now")
         while not self._stop_event.is_set():
             self._collect_data()
+            _log(f"[cluster-monitor] Next collection in {self.interval}s")
             if self._stop_event.wait(self.interval):
                 break
+
+        _log("[cluster-monitor] Stopped")
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -194,7 +212,7 @@ class ClusterMonitorWorker(threading.Thread):
 
         # Circuit breaker: pause longer after repeated failures
         if self._consecutive_failures >= self._failure_threshold:
-            print(
+            _log(
                 f"[cluster-monitor] Circuit breaker open: "
                 f"{self._consecutive_failures} consecutive failures, "
                 f"pausing {self._pause_duration}s"
@@ -204,13 +222,13 @@ class ClusterMonitorWorker(threading.Thread):
             self._consecutive_failures = 0
 
         try:
-            print("[cluster-monitor] Collecting cluster data...")
+            _log("[cluster-monitor] Collecting cluster data...")
             data = self._collector.collect()
             clusters = data.get("clusters", [])
 
             if not clusters:
                 self._consecutive_failures += 1
-                print(
+                _log(
                     f"[cluster-monitor] Empty result "
                     f"(failure {self._consecutive_failures}/{self._failure_threshold}); "
                     f"keeping existing cache"
@@ -223,7 +241,7 @@ class ClusterMonitorWorker(threading.Thread):
             self._consecutive_failures = 0
             self.store.save_cache("cluster_usage", clusters)
             self.store.save_snapshot("pw_cluster", data)
-            print(f"[cluster-monitor] Collected data for {data['meta']['cluster_count']} clusters")
+            _log(f"[cluster-monitor] Collected data for {data['meta']['cluster_count']} clusters")
 
             # Periodic database cleanup
             self._collection_count += 1
@@ -231,12 +249,12 @@ class ClusterMonitorWorker(threading.Thread):
                 try:
                     deleted = self.store.cleanup_old_data(days=30)
                     if deleted > 0:
-                        print(f"[cluster-monitor] Cleaned up {deleted} old records")
+                        _log(f"[cluster-monitor] Cleaned up {deleted} old records")
                 except Exception as cleanup_exc:
-                    print(f"[cluster-monitor] Cleanup failed: {cleanup_exc}")
+                    _log(f"[cluster-monitor] Cleanup failed: {cleanup_exc}")
         except Exception as exc:
             self._consecutive_failures += 1
-            print(
+            _log(
                 f"[cluster-monitor] Collection failed "
                 f"(failure {self._consecutive_failures}/{self._failure_threshold}): {exc}"
             )
@@ -278,7 +296,7 @@ class CollectorManager:
         """Start all registered workers."""
         for name, worker in self._workers.items():
             if not worker.is_alive():
-                print(f"[collector-manager] Starting {name} worker")
+                _log(f"[collector-manager] Starting {name} worker")
                 worker.start()
 
     def stop_all(self, timeout: float = 5.0) -> None:
