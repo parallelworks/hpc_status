@@ -87,7 +87,17 @@ class TestPWClusterCollector:
         collector = PWClusterCollector()
         clusters = collector._parse_cluster_table(sample_pw_clusters_output)
 
-        # Should only include 'on' and 'existing' clusters
+        # Should only include active existing clusters
+        assert len(clusters) == 2
+        assert clusters[0]["uri"] == "pw://user/nautilus"
+        assert clusters[0]["status"] == "active"
+        assert clusters[1]["uri"] == "pw://user/jean"
+
+    def test_parse_cluster_table_pipe_format(self, sample_pw_clusters_output_pipe):
+        collector = PWClusterCollector()
+        clusters = collector._parse_cluster_table(sample_pw_clusters_output_pipe)
+
+        # Legacy pipe-delimited format should also work
         assert len(clusters) == 2
         assert clusters[0]["uri"] == "pw://user/nautilus"
         assert clusters[0]["status"] == "on"

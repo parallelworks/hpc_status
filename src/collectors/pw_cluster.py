@@ -135,33 +135,40 @@ class PWClusterCollector(BaseCollector):
             raise CollectorError(self.name, f"Unexpected error: {e}", e)
 
     def _parse_cluster_table(self, table_output: str) -> List[Dict[str, str]]:
-        """Parse the cluster table output from pw CLI."""
+        """Parse the cluster table output from pw CLI.
+
+        Handles both pipe-delimited and space-separated table formats.
+        """
         clusters = []
         lines = table_output.strip().split("\n")
 
+        # Detect format: pipe-delimited vs space-separated
+        has_pipes = any("|" in line and not line.startswith("+") for line in lines)
+
         for line in lines:
-            # Skip separator lines
+            # Skip separator and empty lines
             if line.startswith("+") or not line.strip():
                 continue
             # Skip header lines
-            if "URI" in line or "STATUS" in line or "TYPE" in line:
+            if "URI" in line and "STATUS" in line:
                 continue
 
-            # Clean up the line
-            clean_line = line.strip().strip("|").strip()
+            clean_line = line.strip()
             if not clean_line:
                 continue
 
-            # Split by pipe character
-            parts = [part.strip() for part in clean_line.split("|") if part.strip()]
+            # Parse columns based on format
+            if has_pipes:
+                parts = [p.strip() for p in clean_line.strip("|").split("|") if p.strip()]
+            else:
+                parts = clean_line.split()
 
             if len(parts) >= 3:
                 uri = parts[0].strip()
                 status = parts[1].strip().lower()
                 cluster_type = parts[2].strip().lower()
 
-                # Accept "on" or "active" — the CLI uses "on" in table output
-                # even when filtered with --status=active
+                # Accept "on" or "active" status for existing clusters
                 if cluster_type == "existing" and status in ("on", "active"):
                     clusters.append(
                         {

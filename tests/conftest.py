@@ -40,7 +40,18 @@ def sample_hpcmp_html():
 
 @pytest.fixture
 def sample_pw_clusters_output():
-    """Sample output from pw clusters ls command."""
+    """Sample output from pw clusters ls command (space-separated format)."""
+    return '''
+URI                    STATUS  TYPE
+pw://user/nautilus     active  existing
+pw://user/jean         active  existing
+pw://user/onyx         off     existing
+'''
+
+
+@pytest.fixture
+def sample_pw_clusters_output_pipe():
+    """Sample output from pw clusters ls command (legacy pipe-delimited format)."""
     return '''
 +-----------------------------------+--------+-----------+
 | URI                               | STATUS | TYPE      |
@@ -94,7 +105,7 @@ def sample_cluster_usage_json():
             "cluster_metadata": {
                 "name": "nautilus",
                 "uri": "pw://user/nautilus",
-                "status": "on",
+                "status": "active",
                 "type": "existing",
                 "timestamp": "2026-01-22T12:00:00Z"
             },
