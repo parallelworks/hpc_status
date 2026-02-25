@@ -109,7 +109,7 @@ def create_generate_payload_fn(config: Config, store: DataStore):
                 cluster_name = cluster["uri"].split("/")[-1]
                 systems.append({
                     "system": cluster_name,
-                    "status": "UP" if cluster["status"] == "on" else "DOWN",
+                    "status": "UP" if cluster["status"] in ("on", "active") else "DOWN",
                     "dsrc": cluster.get("type", "pw"),
                     "login": cluster["uri"],
                     "scheduler": "slurm",  # Default assumption
