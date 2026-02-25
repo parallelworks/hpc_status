@@ -101,7 +101,7 @@ class PWClusterCollector(BaseCollector):
     def get_active_clusters(self) -> List[Dict[str, str]]:
         """Get active clusters using pw CLI command.
 
-        Returns list of clusters with type='existing' and status='on'.
+        Returns list of clusters with type='existing' and an active status.
 
         Raises:
             CollectorError: If the pw CLI command fails.
@@ -123,7 +123,10 @@ class PWClusterCollector(BaseCollector):
                 check=True,
                 timeout=30,
             )
-            return self._parse_cluster_table(result.stdout)
+            _log(f"[pw_cluster] pw clusters ls output:\n{result.stdout.strip()}")
+            clusters = self._parse_cluster_table(result.stdout)
+            _log(f"[pw_cluster] Parsed {len(clusters)} active clusters from table")
+            return clusters
         except subprocess.CalledProcessError as e:
             raise CollectorError(self.name, f"Error getting clusters: {e}", e)
         except subprocess.TimeoutExpired as e:
@@ -154,10 +157,12 @@ class PWClusterCollector(BaseCollector):
 
             if len(parts) >= 3:
                 uri = parts[0].strip()
-                status = parts[1].strip()
-                cluster_type = parts[2].strip()
+                status = parts[1].strip().lower()
+                cluster_type = parts[2].strip().lower()
 
-                if cluster_type == "existing" and status == "active":
+                # Accept "on" or "active" — the CLI uses "on" in table output
+                # even when filtered with --status=active
+                if cluster_type == "existing" and status in ("on", "active"):
                     clusters.append(
                         {
                             "uri": uri,
@@ -165,6 +170,8 @@ class PWClusterCollector(BaseCollector):
                             "type": cluster_type,
                         }
                     )
+                else:
+                    _log(f"[pw_cluster] Skipping cluster: uri={uri} status={status} type={cluster_type}")
 
         return clusters
 
