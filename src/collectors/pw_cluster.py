@@ -97,6 +97,9 @@ class PWClusterCollector(BaseCollector):
         """Get active clusters using pw CLI command.
 
         Returns list of clusters with type='existing' and status='on'.
+
+        Raises:
+            CollectorError: If the pw CLI command fails.
         """
         try:
             cmd = [
@@ -117,14 +120,11 @@ class PWClusterCollector(BaseCollector):
             )
             return self._parse_cluster_table(result.stdout)
         except subprocess.CalledProcessError as e:
-            print(f"[pw_cluster] Error getting clusters: {e}")
-            return []
-        except subprocess.TimeoutExpired:
-            print("[pw_cluster] Timeout getting cluster list")
-            return []
+            raise CollectorError(self.name, f"Error getting clusters: {e}", e)
+        except subprocess.TimeoutExpired as e:
+            raise CollectorError(self.name, "Timeout getting cluster list", e)
         except Exception as e:
-            print(f"[pw_cluster] Unexpected error: {e}")
-            return []
+            raise CollectorError(self.name, f"Unexpected error: {e}", e)
 
     def _parse_cluster_table(self, table_output: str) -> List[Dict[str, str]]:
         """Parse the cluster table output from pw CLI."""

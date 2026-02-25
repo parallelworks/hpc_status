@@ -97,74 +97,53 @@ def create_generate_payload_fn(config: Config, store: DataStore):
                     "systems": [],
                 }
 
-            try:
-                # Get active clusters from PW CLI
-                clusters = collector.get_active_clusters()
-                print(f"[pw_cluster] Found {len(clusters)} active clusters")
+            # Get active clusters from PW CLI (raises on SSH failure)
+            clusters = collector.get_active_clusters()
+            print(f"[pw_cluster] Found {len(clusters)} active clusters")
 
-                # Build systems list from clusters
-                systems = []
-                now_iso = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+            # Build systems list from clusters
+            systems = []
+            now_iso = dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
-                for cluster in clusters:
-                    cluster_name = cluster["uri"].split("/")[-1]
-                    systems.append({
-                        "system": cluster_name,
-                        "status": "UP" if cluster["status"] == "on" else "DOWN",
-                        "dsrc": cluster.get("type", "pw"),
-                        "login": cluster["uri"],
-                        "scheduler": "slurm",  # Default assumption
-                        "raw_alt": f"PW cluster: {cluster['uri']}",
-                        "source_url": None,
-                        "observed_at": now_iso,
-                    })
+            for cluster in clusters:
+                cluster_name = cluster["uri"].split("/")[-1]
+                systems.append({
+                    "system": cluster_name,
+                    "status": "UP" if cluster["status"] == "on" else "DOWN",
+                    "dsrc": cluster.get("type", "pw"),
+                    "login": cluster["uri"],
+                    "scheduler": "slurm",  # Default assumption
+                    "raw_alt": f"PW cluster: {cluster['uri']}",
+                    "source_url": None,
+                    "observed_at": now_iso,
+                })
 
-                # Calculate summary statistics
-                from collections import Counter
-                statuses = Counter(s["status"] for s in systems)
-                dsrcs = Counter(s["dsrc"] for s in systems)
-                scheds = Counter(s["scheduler"] for s in systems)
-                uptime_ratio = sum(1 for s in systems if s["status"] == "UP") / len(systems) if systems else 0
+            # Calculate summary statistics
+            from collections import Counter
+            statuses = Counter(s["status"] for s in systems)
+            dsrcs = Counter(s["dsrc"] for s in systems)
+            scheds = Counter(s["scheduler"] for s in systems)
+            uptime_ratio = sum(1 for s in systems if s["status"] == "UP") / len(systems) if systems else 0
 
-                data = {
-                    "meta": {
-                        "source_url": None,
-                        "source_name": "PW Clusters",
-                        "generated_at": now_iso,
-                        "collector": "pw_cluster",
-                    },
-                    "summary": {
-                        "total_systems": len(systems),
-                        "status_counts": dict(statuses),
-                        "dsrc_counts": dict(dsrcs),
-                        "scheduler_counts": dict(scheds),
-                        "uptime_ratio": round(uptime_ratio, 3),
-                    },
-                    "systems": systems,
-                }
+            data = {
+                "meta": {
+                    "source_url": None,
+                    "source_name": "PW Clusters",
+                    "generated_at": now_iso,
+                    "collector": "pw_cluster",
+                },
+                "summary": {
+                    "total_systems": len(systems),
+                    "status_counts": dict(statuses),
+                    "dsrc_counts": dict(dsrcs),
+                    "scheduler_counts": dict(scheds),
+                    "uptime_ratio": round(uptime_ratio, 3),
+                },
+                "systems": systems,
+            }
 
-                print(f"[pw_cluster] Collected {len(systems)} systems for fleet status")
-                return data
-
-            except Exception as e:
-                print(f"[pw_cluster] Collection failed: {e}")
-                return {
-                    "meta": {
-                        "source_url": None,
-                        "source_name": "PW Clusters",
-                        "generated_at": dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z",
-                        "collector": "pw_cluster",
-                        "error": str(e),
-                    },
-                    "summary": {
-                        "total_systems": 0,
-                        "status_counts": {},
-                        "dsrc_counts": {},
-                        "scheduler_counts": {},
-                        "uptime_ratio": 0,
-                    },
-                    "systems": [],
-                }
+            print(f"[pw_cluster] Collected {len(systems)} systems for fleet status")
+            return data
 
         return generate_pwcluster_payload
 
@@ -220,6 +199,8 @@ def run_server(args) -> None:
             interval_seconds=cluster_monitor_interval,
             python_executable=sys.executable,
             run_immediately=True,
+            failure_threshold=config.rate_limiting.failure_threshold,
+            pause_duration=config.rate_limiting.pause_duration,
         )
         cluster_worker.start()
 

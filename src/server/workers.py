@@ -61,6 +61,21 @@ class DashboardState:
             return False, "Refresh already in progress."
         try:
             payload = self.generate_fn()
+
+            # Guard: do not overwrite good data with empty results
+            systems = payload.get("systems", []) if isinstance(payload, dict) else []
+            if not systems and self._payload and self._payload.get("systems"):
+                msg = "Collection returned 0 systems; keeping stale data"
+                print(f"[{self.source_name}] {msg}")
+                with self._payload_lock:
+                    self._last_error = msg
+                    self._last_refresh_ts = time.time()
+                    if isinstance(self._payload, dict):
+                        self._payload.setdefault("meta", {})["stale"] = True
+                # Save snapshot for history but do NOT overwrite cache or payload
+                self.store.save_snapshot(self.source_name, payload)
+                return False, msg
+
             # Save to cache
             self.store.save_cache(self.source_name, payload)
             # Save snapshot to DB for history
@@ -137,6 +152,8 @@ class ClusterMonitorWorker(threading.Thread):
         interval_seconds: int,
         python_executable: Optional[str] = None,
         run_immediately: bool = True,
+        failure_threshold: int = 3,
+        pause_duration: int = 300,
     ):
         super().__init__(name="cluster-monitor-worker")
         self.store = store
@@ -145,6 +162,13 @@ class ClusterMonitorWorker(threading.Thread):
         self._stop_event = threading.Event()
         self._run_immediately = run_immediately
         self._collector = None
+        # Circuit breaker state
+        self._consecutive_failures = 0
+        self._failure_threshold = failure_threshold
+        self._pause_duration = pause_duration
+        # Periodic cleanup counter
+        self._collection_count = 0
+        self._cleanup_every = 100
 
     def run(self) -> None:
         # Initialize collector lazily
@@ -168,17 +192,54 @@ class ClusterMonitorWorker(threading.Thread):
         if not self._collector:
             return
 
+        # Circuit breaker: pause longer after repeated failures
+        if self._consecutive_failures >= self._failure_threshold:
+            print(
+                f"[cluster-monitor] Circuit breaker open: "
+                f"{self._consecutive_failures} consecutive failures, "
+                f"pausing {self._pause_duration}s"
+            )
+            if self._stop_event.wait(self._pause_duration):
+                return
+            self._consecutive_failures = 0
+
         try:
             print("[cluster-monitor] Collecting cluster data...")
             data = self._collector.collect()
+            clusters = data.get("clusters", [])
 
-            # Save to cache
-            self.store.save_cache("cluster_usage", data.get("clusters", []))
+            if not clusters:
+                self._consecutive_failures += 1
+                print(
+                    f"[cluster-monitor] Empty result "
+                    f"(failure {self._consecutive_failures}/{self._failure_threshold}); "
+                    f"keeping existing cache"
+                )
+                data.setdefault("meta", {})["empty_result"] = True
+                self.store.save_snapshot("pw_cluster", data)
+                return
+
+            # Success: reset failure counter and save
+            self._consecutive_failures = 0
+            self.store.save_cache("cluster_usage", clusters)
             self.store.save_snapshot("pw_cluster", data)
-
             print(f"[cluster-monitor] Collected data for {data['meta']['cluster_count']} clusters")
+
+            # Periodic database cleanup
+            self._collection_count += 1
+            if self._collection_count % self._cleanup_every == 0:
+                try:
+                    deleted = self.store.cleanup_old_data(days=30)
+                    if deleted > 0:
+                        print(f"[cluster-monitor] Cleaned up {deleted} old records")
+                except Exception as cleanup_exc:
+                    print(f"[cluster-monitor] Cleanup failed: {cleanup_exc}")
         except Exception as exc:
-            print(f"[cluster-monitor] Collection failed: {exc}")
+            self._consecutive_failures += 1
+            print(
+                f"[cluster-monitor] Collection failed "
+                f"(failure {self._consecutive_failures}/{self._failure_threshold}): {exc}"
+            )
 
 
 class CollectorManager:

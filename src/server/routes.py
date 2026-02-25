@@ -296,12 +296,19 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_collectors_status(self):
         """Return status of all collectors."""
-        # This would be connected to CollectorManager in a full implementation
+        pw_ready = False
+        hpcmp_ready = False
+
+        if self.data_store:
+            pw_ready = self.data_store.load_cache("cluster_usage") is not None
+        if self.server_state:
+            hpcmp_ready = self.server_state.is_ready()
+
         self._send_json(
             {
                 "collectors": {
-                    "hpcmp": {"available": True, "ready": True},
-                    "pw_cluster": {"available": True, "ready": True},
+                    "hpcmp": {"available": True, "ready": hpcmp_ready},
+                    "pw_cluster": {"available": True, "ready": pw_ready},
                 },
             }
         )
@@ -519,7 +526,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         # Try data store first
         if self.data_store:
             cached = self.data_store.load_cache("cluster_usage")
-            if cached:
+            if cached is not None:
                 if isinstance(cached, dict):
                     return cached.get("clusters") or cached.get("usage") or cached
                 return cached
