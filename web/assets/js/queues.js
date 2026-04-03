@@ -40,6 +40,11 @@ const hasScheduler = (cluster) => cluster?.cluster_metadata?.has_scheduler !== f
 const sanitizeNodes = (nodes) =>
   (nodes || []).filter((node) => String(node.node_type || "").toLowerCase() !== "nodes");
 
+/** Node types that indicate GPU/accelerator hardware */
+const GPU_NODE_PATTERN = /^(gpu|mla|ai[\/. ]?ml|viz)/i;
+
+const isGpuNodeType = (nodeType) => GPU_NODE_PATTERN.test(String(nodeType || "").trim());
+
 const computeFleetSummary = (clusters) => {
   const totals = {
     clusters: clusters.length,
@@ -49,6 +54,12 @@ const computeFleetSummary = (clusters) => {
     runningCores: 0,
     pendingCores: 0,
     availableCores: 0,
+    // Accelerator nodes (derived from node inventory)
+    accelNodes: 0,
+    accelCoresAvail: 0,
+    accelCoresRunning: 0,
+    accelCoresFree: 0,
+    accelClusters: 0,
   };
 
   clusters.forEach((cluster) => {
@@ -59,9 +70,19 @@ const computeFleetSummary = (clusters) => {
       totals.runningCores += toNumber(queue.cores_running);
       totals.pendingCores += toNumber(queue.cores_pending);
     });
+    let clusterHasAccel = false;
     parseNodes(cluster).forEach((node) => {
-      totals.availableCores += toNumber(node.cores_available);
+      const coresAvail = toNumber(node.cores_available);
+      totals.availableCores += coresAvail;
+      if (isGpuNodeType(node.node_type)) {
+        clusterHasAccel = true;
+        totals.accelNodes += toNumber(node.nodes_available);
+        totals.accelCoresAvail += coresAvail;
+        totals.accelCoresRunning += toNumber(node.cores_running);
+        totals.accelCoresFree += toNumber(node.cores_free);
+      }
     });
+    if (clusterHasAccel) totals.accelClusters += 1;
   });
 
   const utilization = totals.availableCores
@@ -163,6 +184,7 @@ const cacheElements = () => {
   elements.nodeMeta = getElement("node-meta");
   elements.queueDepthMeta = getElement("queue-depth-meta");
   elements.fleetCoreDonut = getElement("fleet-core-donut");
+  elements.fleetGpuDonut = getElement("fleet-gpu-donut");
   elements.fleetQueueTags = getElement("fleet-queue-tags");
 };
 
@@ -171,8 +193,14 @@ const bindEvents = () => {
     elements.refreshBtn.addEventListener("click", () => loadData({ silent: false }));
   }
   if (elements.clusterSelect) {
-    elements.clusterSelect.addEventListener("change", (event) => {
-      state.selectedIndex = Number(event.target.value) || 0;
+    elements.clusterSelect.addEventListener("click", (event) => {
+      const btn = event.target.closest(".cluster-picker-btn");
+      if (!btn) return;
+      state.selectedIndex = Number(btn.dataset.index) || 0;
+      // Update aria-selected on all buttons
+      elements.clusterSelect.querySelectorAll(".cluster-picker-btn").forEach((b) => {
+        b.setAttribute("aria-selected", b === btn ? "true" : "false");
+      });
       renderClusterDetail();
     });
   }
@@ -191,6 +219,24 @@ const renderFleetCoreDonut = (summary) => {
       <span>Utilized</span>
     </div>
     <small>${formatNumber(summary.runningCores)} / ${formatNumber(summary.availableCores)} cores</small>
+  `;
+};
+
+const renderFleetGpuDonut = (summary) => {
+  if (!elements.fleetGpuDonut) return;
+  if (!summary.accelNodes) {
+    elements.fleetGpuDonut.innerHTML = '<div class="placeholder">No accelerator nodes detected.</div>';
+    return;
+  }
+  const utilPercent = summary.accelCoresAvail
+    ? clampPercent((summary.accelCoresRunning / summary.accelCoresAvail) * 100)
+    : 0;
+  elements.fleetGpuDonut.innerHTML = `
+    <div class="donut" style="--donut-value:${utilPercent};--donut-primary:var(--info);">
+      <strong>${utilPercent.toFixed(0)}%</strong>
+      <span>In use</span>
+    </div>
+    <small>${formatNumber(summary.accelNodes)} nodes &middot; ${formatNumber(summary.accelCoresFree)} of ${formatNumber(summary.accelCoresAvail)} cores free</small>
   `;
 };
 
@@ -223,23 +269,25 @@ const renderSummary = () => {
     elements.pendingJobs.textContent = formatNumber(summary.pendingJobs);
   }
   renderFleetCoreDonut(summary);
+  renderFleetGpuDonut(summary);
   renderFleetQueueTags(aggregateQueueSnapshot(state.clusters));
 };
 
 const renderClusterOptions = () => {
   if (!elements.clusterSelect) return;
   if (!state.clusters.length) {
-    elements.clusterSelect.innerHTML = "";
-    elements.clusterSelect.disabled = true;
+    elements.clusterSelect.innerHTML = '<span class="muted-text">No clusters available</span>';
     return;
   }
-  elements.clusterSelect.disabled = false;
   elements.clusterSelect.innerHTML = state.clusters
     .map((cluster, idx) => {
       const name =
         cluster?.cluster_metadata?.name || cluster?.cluster_metadata?.uri || `Cluster ${idx + 1}`;
-      const selected = idx === state.selectedIndex ? "selected" : "";
-      return `<option value="${idx}" ${selected}>${name}</option>`;
+      const selected = idx === state.selectedIndex;
+      return `<button type="button" class="cluster-picker-btn" role="tab"
+        data-index="${idx}" aria-selected="${selected}">
+        <span class="picker-status"></span>${name}
+      </button>`;
     })
     .join("");
 };
