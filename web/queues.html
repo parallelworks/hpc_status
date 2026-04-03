@@ -31,6 +31,8 @@
       }
     })();
   </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link rel="stylesheet" href="assets/css/styles.css" />
 </head>
 
@@ -90,30 +92,30 @@
       </article>
     </section>
 
-    <section class="panel duo-panel">
+    <section class="panel fleet-overview-grid">
       <div class="panel-block">
         <p class="eyebrow">Queue disposition <span class="eyebrow-help" title="Visual summary of queue activity: active (has running jobs), backlog (jobs pending), or idle (no activity)">ⓘ</span></p>
         <div id="fleet-queue-tags" class="queue-chip-collection muted-text">Refresh to populate queue stats.</div>
       </div>
       <div class="panel-block">
-        <p class="eyebrow">Fleet core utilization <span class="eyebrow-help" title="Percentage of total compute cores currently in use across all connected clusters">ⓘ</span></p>
+        <p class="eyebrow">Core utilization <span class="eyebrow-help" title="Percentage of total compute cores currently in use across all connected clusters">ⓘ</span></p>
         <div id="fleet-core-donut" class="donut-chart placeholder">Awaiting data…</div>
+      </div>
+      <div class="panel-block">
+        <p class="eyebrow">GPU availability <span class="eyebrow-help" title="Fleet GPU count, average utilization, and free memory across all GPU-equipped clusters">ⓘ</span></p>
+        <div id="fleet-gpu-donut" class="donut-chart placeholder">Awaiting data…</div>
       </div>
     </section>
 
     <section class="panel">
-      <div class="panel-head">
+      <div class="cluster-picker" id="queue-cluster-select" role="tablist" aria-label="Select cluster"></div>
+      <div class="cluster-focus-header">
         <div>
-          <p class="eyebrow">Cluster focus</p>
           <h3 id="queue-cluster-title">Select a cluster</h3>
           <p id="queue-cluster-meta" class="muted-text"></p>
         </div>
-        <label class="inline-select">
-          <span>Cluster</span>
-          <select id="queue-cluster-select" aria-label="Select cluster"></select>
-        </label>
+        <p id="queue-cluster-note" class="muted-text"></p>
       </div>
-      <p id="queue-cluster-note" class="muted-text"></p>
       <div class="cluster-stats-row">
         <div class="metric-card" title="Jobs currently executing on compute nodes">
           <p>Running jobs</p>
@@ -175,7 +177,7 @@
 
     <footer class="footer">
       <small>Queue metrics collected from connected clusters</small>
-      <small>HPC Status Monitor v2.0</small>
+      <small>HPC Status Monitor v2.1</small>
     </footer>
   </div>
 
