@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -18,7 +18,8 @@ from ..data.persistence import DataStore
 
 def _log(msg: str) -> None:
     """Print with flush for reliable output in daemon threads."""
-    print(msg, flush=True)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
 
 
 class DashboardState:
@@ -171,6 +172,7 @@ class ClusterMonitorWorker(threading.Thread):
         self._consecutive_failures = 0
         self._failure_threshold = failure_threshold
         self._pause_duration = pause_duration
+        self._auth_expired = False
         # Periodic cleanup counter
         self._collection_count = 0
         self._cleanup_every = 100
@@ -188,6 +190,13 @@ class ClusterMonitorWorker(threading.Thread):
         if not self._collector.is_available():
             _log("[cluster-monitor] WARNING: pw CLI not available, will retry each cycle")
 
+        # Verify authentication before starting collection loop
+        auth_ok, auth_detail = self._collector.check_auth()
+        if not auth_ok:
+            _log(f"[cluster-monitor] FATAL: Not authenticated at startup: {auth_detail}")
+            _log("[cluster-monitor] Exiting — please re-authenticate and restart the service")
+            return
+
         if not self._run_immediately:
             _log(f"[cluster-monitor] Waiting {self.interval}s before first collection")
             if self._stop_event.wait(self.interval):
@@ -196,6 +205,10 @@ class ClusterMonitorWorker(threading.Thread):
         _log("[cluster-monitor] Running first collection now")
         while not self._stop_event.is_set():
             self._collect_data()
+            if self._auth_expired:
+                _log("[cluster-monitor] FATAL: Authentication token expired — exiting")
+                _log("[cluster-monitor] Please re-authenticate (pw auth) and restart the service")
+                break
             _log(f"[cluster-monitor] Next collection in {self.interval}s")
             if self._stop_event.wait(self.interval):
                 break
@@ -204,6 +217,19 @@ class ClusterMonitorWorker(threading.Thread):
 
     def stop(self) -> None:
         self._stop_event.set()
+
+    def _check_auth_or_expire(self) -> bool:
+        """Check authentication; set _auth_expired if token is gone.
+
+        Returns:
+            True if authenticated, False if expired.
+        """
+        auth_ok, detail = self._collector.check_auth()
+        if not auth_ok:
+            _log(f"[cluster-monitor] Authentication lost: {detail}")
+            self._auth_expired = True
+            return False
+        return True
 
     def _collect_data(self) -> None:
         """Collect data from PW clusters."""
@@ -217,6 +243,9 @@ class ClusterMonitorWorker(threading.Thread):
                 f"{self._consecutive_failures} consecutive failures, "
                 f"pausing {self._pause_duration}s"
             )
+            # Before pausing, check if auth is the problem
+            if not self._check_auth_or_expire():
+                return
             if self._stop_event.wait(self._pause_duration):
                 return
             self._consecutive_failures = 0
@@ -233,6 +262,10 @@ class ClusterMonitorWorker(threading.Thread):
                     f"(failure {self._consecutive_failures}/{self._failure_threshold}); "
                     f"keeping existing cache"
                 )
+                # On repeated empty results, verify auth is still valid
+                if self._consecutive_failures >= self._failure_threshold:
+                    if not self._check_auth_or_expire():
+                        return
                 data.setdefault("meta", {})["empty_result"] = True
                 self.store.save_snapshot("pw_cluster", data)
                 return
@@ -258,6 +291,9 @@ class ClusterMonitorWorker(threading.Thread):
                 f"[cluster-monitor] Collection failed "
                 f"(failure {self._consecutive_failures}/{self._failure_threshold}): {exc}"
             )
+            # On repeated exceptions, check if it's an auth problem
+            if self._consecutive_failures >= self._failure_threshold:
+                self._check_auth_or_expire()
 
 
 class CollectorManager:

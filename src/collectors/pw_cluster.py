@@ -18,7 +18,8 @@ from .base import BaseCollector, CollectorError
 
 def _log(msg: str) -> None:
     """Print with flush for reliable output in daemon threads."""
-    print(msg, flush=True)
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
 
 
 class PWClusterCollector(BaseCollector):
@@ -58,6 +59,35 @@ class PWClusterCollector(BaseCollector):
             return result.returncode == 0
         except Exception:
             return False
+
+    def check_auth(self) -> tuple:
+        """Check if the user is authenticated with PW.
+
+        Returns:
+            Tuple of (is_authenticated: bool, detail: str)
+        """
+        try:
+            result = subprocess.run(
+                ["pw", "auth", "whoami"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            output = result.stdout.strip()
+            stderr = result.stderr.strip()
+            if result.returncode == 0 and output:
+                _log(f"[pw_cluster] Authenticated as: {output}")
+                return True, output
+            else:
+                detail = stderr or output or "Unknown auth error"
+                _log(f"[pw_cluster] Authentication check failed (rc={result.returncode}): {detail}")
+                return False, detail
+        except subprocess.TimeoutExpired:
+            _log("[pw_cluster] Authentication check timed out")
+            return False, "Auth check timed out"
+        except Exception as e:
+            _log(f"[pw_cluster] Authentication check error: {e}")
+            return False, str(e)
 
     def collect(self) -> Dict[str, Any]:
         """Collect data from all active PW clusters.
