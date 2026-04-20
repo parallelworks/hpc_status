@@ -94,6 +94,38 @@ export const clusterPagesEnabled = () => {
   return config.clusterPagesEnabled !== false;
 };
 
+// Apply deployment branding (platform attribute, favicon, hero logo mark).
+// CSS keys off [data-platform="hpcmp"] so adding new platforms only
+// requires a brand image at assets/img/brand-<platform>.png plus matching
+// CSS overrides.
+export const initBrand = () => {
+  const platform = (window.APP_CONFIG && window.APP_CONFIG.platform) || "generic";
+  document.documentElement.dataset.platform = platform;
+
+  const base = document.documentElement.dataset.basePath || "/";
+  const iconHref = `${base}assets/img/brand-${platform}.png`.replace(/\/+/g, "/");
+
+  let icon = document.querySelector('link[rel="icon"]');
+  if (!icon) {
+    icon = document.createElement("link");
+    icon.rel = "icon";
+    document.head.appendChild(icon);
+  }
+  icon.type = "image/png";
+  icon.href = iconHref;
+
+  if (platform === "hpcmp") {
+    const heroHeading = document.querySelector(".hero > div:first-child");
+    if (heroHeading && !heroHeading.querySelector(".brand-mark")) {
+      const img = document.createElement("img");
+      img.className = "brand-mark";
+      img.src = iconHref;
+      img.alt = "HPCMP";
+      heroHeading.insertBefore(img, heroHeading.firstChild);
+    }
+  }
+};
+
 export const clampPercent = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {

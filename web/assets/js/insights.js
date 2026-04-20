@@ -3,7 +3,7 @@
  * Displays recommendations and alerts based on fleet status and cluster data
  */
 
-import { initHelpPanel, formatRelativeTime, initQuickTips } from "./page-utils.js";
+import { initHelpPanel, initBrand, formatRelativeTime, initQuickTips } from "./page-utils.js";
 
 const THEME_STORAGE_KEY = "hpc-status-theme";
 
@@ -279,6 +279,7 @@ function registerEvents() {
 applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
 initHelpPanel();
 initQuickTips();
+initBrand();
 registerEvents();
 loadInsights();
 
