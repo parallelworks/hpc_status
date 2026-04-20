@@ -127,27 +127,6 @@
   --accent-text: #3c0058;
 }
 
-/* Brand strip + mark in the hero, only shown on HPCMP deployments. */
-.brand-mark {
-  display: none;
-  width: 2.25rem;
-  height: 2.25rem;
-  border-radius: var(--radius-md);
-  object-fit: contain;
-  background: var(--brand, transparent);
-  padding: 2px;
-  flex-shrink: 0;
-}
-
-[data-platform="hpcmp"] .brand-mark {
-  display: inline-block;
-}
-
-[data-platform="hpcmp"] .hero {
-  border-top: 3px solid var(--brand);
-  padding-top: var(--space-6);
-}
-
 [data-platform="hpcmp"] .eyebrow {
   color: var(--accent-text);
   letter-spacing: 0.14em;

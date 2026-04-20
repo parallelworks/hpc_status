@@ -113,17 +113,6 @@ export const initBrand = () => {
   }
   icon.type = "image/png";
   icon.href = iconHref;
-
-  if (platform === "hpcmp") {
-    const heroHeading = document.querySelector(".hero > div:first-child");
-    if (heroHeading && !heroHeading.querySelector(".brand-mark")) {
-      const img = document.createElement("img");
-      img.className = "brand-mark";
-      img.src = iconHref;
-      img.alt = "HPCMP";
-      heroHeading.insertBefore(img, heroHeading.firstChild);
-    }
-  }
 };
 
 export const clampPercent = (value) => {
