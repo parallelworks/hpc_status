@@ -179,6 +179,14 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             if isinstance(ui_config, dict)
             else "HPC STATUS"
         )
+        deployment_cfg = (
+            config_data.get("deployment", {}) if isinstance(config_data, dict) else {}
+        )
+        platform = (
+            deployment_cfg.get("platform", "generic")
+            if isinstance(deployment_cfg, dict)
+            else "generic"
+        )
         body = (
             "window.APP_CONFIG=Object.assign({},window.APP_CONFIG||{},"
             + json.dumps(
@@ -188,6 +196,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                     "clusterMonitorInterval": self.cluster_monitor_interval,
                     "title": title,
                     "eyebrow": eyebrow,
+                    "platform": platform,
                 }
             )
             + ");"

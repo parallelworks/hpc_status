@@ -106,6 +106,54 @@
 }
 
 /* ----------------------------------------------------------------
+   HPCMP brand palette — applied when data-platform="hpcmp" on <html>
+   Primary: #3c0058 (HPCMP deep purple). Dark mode uses a lightened
+   tint so accent remains legible on near-black panels.
+   ---------------------------------------------------------------- */
+:root[data-platform="hpcmp"] {
+  --brand: #3c0058;
+  --brand-on: #ffffff;
+}
+
+:root[data-platform="hpcmp"][data-theme="dark"] {
+  --accent: #b37edb;
+  --accent-soft: rgba(179, 126, 219, 0.16);
+  --accent-text: #c99cea;
+}
+
+:root[data-platform="hpcmp"][data-theme="light"] {
+  --accent: #3c0058;
+  --accent-soft: rgba(60, 0, 88, 0.10);
+  --accent-text: #3c0058;
+}
+
+/* Brand strip + mark in the hero, only shown on HPCMP deployments. */
+.brand-mark {
+  display: none;
+  width: 2.25rem;
+  height: 2.25rem;
+  border-radius: var(--radius-md);
+  object-fit: contain;
+  background: var(--brand, transparent);
+  padding: 2px;
+  flex-shrink: 0;
+}
+
+[data-platform="hpcmp"] .brand-mark {
+  display: inline-block;
+}
+
+[data-platform="hpcmp"] .hero {
+  border-top: 3px solid var(--brand);
+  padding-top: var(--space-6);
+}
+
+[data-platform="hpcmp"] .eyebrow {
+  color: var(--accent-text);
+  letter-spacing: 0.14em;
+}
+
+/* ----------------------------------------------------------------
    4. Reset & Base
    ---------------------------------------------------------------- */
 *,

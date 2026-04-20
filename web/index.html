@@ -36,6 +36,7 @@
       } catch (err) {
         document.documentElement.dataset.theme = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
       }
+      document.documentElement.dataset.platform = (window.APP_CONFIG && window.APP_CONFIG.platform) || "generic";
     })();
   </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
