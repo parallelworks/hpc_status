@@ -1321,24 +1321,6 @@ th[data-sortable][data-sort-dir="desc"]::after {
   background: var(--panel-alt);
 }
 
-.queue-chip.is-active::before {
-  content: "\25B6";
-  font-size: 0.55rem;
-  margin-right: 0.15rem;
-}
-
-.queue-chip.is-backlog::before {
-  content: "\23F3";
-  font-size: 0.55rem;
-  margin-right: 0.15rem;
-}
-
-.queue-chip.is-idle::before {
-  content: "\2014";
-  font-size: 0.55rem;
-  margin-right: 0.15rem;
-}
-
 /* ----------------------------------------------------------------
    21. Cluster Cards & Metrics
    ---------------------------------------------------------------- */
