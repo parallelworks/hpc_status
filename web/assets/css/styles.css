@@ -1412,6 +1412,118 @@ th[data-sortable][data-sort-dir="desc"]::after {
   margin-top: var(--space-1);
 }
 
+/* "Most available systems" ranking — one button-row per cluster, clickable. */
+.availability-ranking {
+  margin-top: var(--space-3);
+}
+
+.availability-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.availability-row {
+  display: grid;
+  grid-template-columns: 28px minmax(140px, 1fr) minmax(180px, 2fr) auto auto auto;
+  gap: var(--space-3);
+  align-items: center;
+  width: 100%;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-alt);
+  color: var(--text);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s var(--ease-out), background 0.15s var(--ease-out), transform 0.15s var(--ease-out);
+}
+
+.availability-row:hover {
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
+.availability-row.is-selected {
+  border-color: var(--accent);
+  background: var(--panel);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.availability-rank {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  color: var(--muted);
+  text-align: center;
+}
+
+.availability-row.is-selected .availability-rank {
+  color: var(--accent);
+}
+
+.availability-name {
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.availability-bar {
+  display: block;
+  width: 100%;
+}
+
+.availability-track {
+  height: 0.7rem;
+  background: var(--border);
+}
+
+.availability-free {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.availability-free strong {
+  color: var(--success);
+  font-size: var(--text-base);
+}
+
+.availability-free small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.availability-util {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  min-width: 64px;
+  text-align: right;
+}
+
+.availability-note {
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+@media (max-width: 768px) {
+  /* On narrow screens, drop the bar/utilization columns and stack
+     compactly — rank · name · free · backlog stays readable. */
+  .availability-row {
+    grid-template-columns: 28px minmax(120px, 1fr) auto auto;
+  }
+  .availability-bar,
+  .availability-util {
+    display: none;
+  }
+}
+
 /* ----------------------------------------------------------------
    21. Cluster Cards & Metrics
    ---------------------------------------------------------------- */
