@@ -1321,6 +1321,97 @@ th[data-sortable][data-sort-dir="desc"]::after {
   background: var(--panel-alt);
 }
 
+/* Backlog severity chips (mutually exclusive: heavy / light / open). */
+.queue-chip.is-heavy {
+  border-color: rgba(212, 78, 92, 0.4);
+  background: rgba(212, 78, 92, 0.08);
+}
+
+.queue-chip.is-light {
+  border-color: rgba(212, 149, 47, 0.4);
+  background: rgba(212, 149, 47, 0.08);
+}
+
+.queue-chip.is-open {
+  border-color: rgba(52, 168, 92, 0.4);
+  background: rgba(52, 168, 92, 0.08);
+}
+
+/* Per-queue card backlog badge */
+.badge.backlog-badge {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.backlog-badge.is-heavy {
+  background: rgba(212, 78, 92, 0.12);
+  color: var(--danger);
+  border: 1px solid rgba(212, 78, 92, 0.4);
+}
+
+.backlog-badge.is-light {
+  background: rgba(212, 149, 47, 0.12);
+  color: var(--alert);
+  border: 1px solid rgba(212, 149, 47, 0.4);
+}
+
+.backlog-badge.is-open {
+  background: rgba(52, 168, 92, 0.12);
+  color: var(--success);
+  border: 1px solid rgba(52, 168, 92, 0.4);
+}
+
+.queue-backlog-note {
+  margin: var(--space-1) 0 0;
+  font-size: var(--text-xs);
+}
+
+/* Capacity-at-a-glance strip on the cluster panel */
+.capacity-strip {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin-top: var(--space-4);
+}
+
+.capacity-tile {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3) var(--space-4);
+  background: var(--panel-alt);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.capacity-tile.is-muted {
+  opacity: 0.6;
+}
+
+.capacity-tile .eyebrow {
+  margin: 0;
+}
+
+.capacity-tile strong {
+  font-size: var(--text-xl);
+  color: var(--success);
+}
+
+.capacity-tile.is-muted strong {
+  color: var(--muted);
+}
+
+.capacity-tile small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+
+.capacity-tile .progress-track {
+  margin-top: var(--space-1);
+}
+
 /* ----------------------------------------------------------------
    21. Cluster Cards & Metrics
    ---------------------------------------------------------------- */
@@ -1950,6 +2041,69 @@ th[data-sortable][data-sort-dir="desc"]::after {
   margin: 0 0 var(--space-2);
   font-size: var(--text-base);
   line-height: 1.5;
+}
+
+.insight-severity-label {
+  margin: 0 0 var(--space-1);
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.insight-item.critical .insight-severity-label {
+  color: var(--danger);
+}
+
+.insight-item.warning .insight-severity-label {
+  color: var(--alert);
+}
+
+.insight-item.suggestion .insight-severity-label {
+  color: var(--success);
+}
+
+.insight-action {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.insight-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.insight-cluster {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.insight-cluster:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.insight-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  font-size: var(--text-xs);
+  color: var(--muted);
 }
 
 .insight-meta {

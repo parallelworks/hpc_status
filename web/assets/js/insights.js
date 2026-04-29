@@ -45,7 +45,7 @@ const state = {
 };
 
 const elements = {
-  totalInsights: document.getElementById("total-insights"),
+  criticalCount: document.getElementById("critical-count"),
   warningCount: document.getElementById("warning-count"),
   infoCount: document.getElementById("info-count"),
   lastUpdated: document.getElementById("last-updated"),
@@ -142,19 +142,18 @@ async function loadInsights({ showLoading = true } = {}) {
 
 // Map insight types to severity descriptions for researcher context
 const severityDescriptions = {
-  critical: "Requires immediate attention - may block work",
+  critical: "Requires immediate attention — may block work",
   warning: "Should be addressed soon to prevent issues",
-  info: "Informational - no action required",
+  info: "Informational — no action required",
   suggestion: "Optional optimization for better efficiency",
 };
 
-// Map metric types to human-readable explanations
-const metricExplanations = {
-  allocation_percent_remaining: "Percentage of compute hours still available",
-  storage_percent_used: "Filesystem usage level",
-  queue_pending_jobs: "Jobs waiting for resources",
-  queue_wait_time: "Expected queue wait time",
-  system_status: "Current operational state",
+const SEVERITY_RANK = { critical: 0, warning: 1, info: 2, suggestion: 3 };
+const SEVERITY_LABEL = {
+  critical: "Action required",
+  warning: "Needs attention",
+  info: "Update",
+  suggestion: "Tip",
 };
 
 function renderInsights() {
@@ -162,37 +161,61 @@ function renderInsights() {
 
   if (!insights.length) {
     elements.insightsList.innerHTML = '<li class="placeholder">No insights available. All systems operating normally.</li>';
-    elements.insightsNote.textContent = "No recommendations at this time";
+    elements.insightsNote.textContent = "Fleet is operating normally — nothing to act on right now.";
     return;
   }
 
-  elements.insightsNote.textContent = `${insights.length} recommendation${insights.length === 1 ? "" : "s"}`;
+  // Sort the rendered list with critical first so users see blockers up top.
+  // Server already sorts, but guard against ordering drift if shape changes.
+  const sorted = [...insights].sort((a, b) => {
+    const aRank = SEVERITY_RANK[(a.type || "info").toLowerCase()] ?? 4;
+    const bRank = SEVERITY_RANK[(b.type || "info").toLowerCase()] ?? 4;
+    return aRank - bRank;
+  });
 
-  elements.insightsList.innerHTML = insights
+  const critical = sorted.filter((i) => (i.type || "").toLowerCase() === "critical").length;
+  const warnings = sorted.filter((i) => (i.type || "").toLowerCase() === "warning").length;
+  const noteParts = [];
+  if (critical) noteParts.push(`${critical} need${critical === 1 ? "s" : ""} immediate action`);
+  if (warnings) noteParts.push(`${warnings} need${warnings === 1 ? "s" : ""} attention soon`);
+  noteParts.push(`${sorted.length} total`);
+  elements.insightsNote.textContent = noteParts.join(" · ");
+
+  elements.insightsList.innerHTML = sorted
     .map((insight) => {
-      const typeClass = insight.type || "info";
-      // Enhanced icons with better visual distinction
+      const typeClass = (insight.type || "info").toLowerCase();
       const iconMap = {
-        critical: "&#x2717;", // X mark
-        warning: "&#x26A0;",  // Warning triangle
-        info: "&#x2139;",     // Info symbol
-        suggestion: "&#x2713;", // Checkmark
+        critical: "&#x2717;",
+        warning: "&#x26A0;",
+        info: "&#x2139;",
+        suggestion: "&#x2713;",
       };
       const icon = iconMap[typeClass] || "&#x2139;";
-      const cluster = insight.cluster ? `<small class="insight-cluster">${escapeHtml(insight.cluster)}</small>` : "";
-      const metric = insight.metric ? `<span class="insight-metric" title="${metricExplanations[insight.metric] || 'Metric value'}">${escapeHtml(insight.metric)}</span>` : "";
-      const priority = insight.priority ? `<span class="insight-priority">Priority: ${insight.priority}</span>` : "";
+      const severityLabel = SEVERITY_LABEL[typeClass] || "Update";
       const severityTip = severityDescriptions[typeClass] || "";
+
+      // Link the cluster pill to the queue health page so a user reading the
+      // insight can jump straight to the affected cluster.
+      const clusterChip = insight.cluster
+        ? `<a class="insight-cluster" href="queues.html" title="View queue health for ${escapeHtml(insight.cluster)}">${escapeHtml(insight.cluster)}</a>`
+        : "";
+      const queueChip = insight.queue
+        ? `<span class="insight-chip" title="Affected queue">${escapeHtml(insight.queue)}</span>`
+        : "";
+      const action = insight.action_description
+        ? `<p class="insight-action">${escapeHtml(insight.action_description)}</p>`
+        : "";
 
       return `
         <li class="insight-item ${typeClass}" title="${severityTip}">
-          <span class="insight-icon">${icon}</span>
+          <span class="insight-icon" aria-hidden="true">${icon}</span>
           <div class="insight-content">
+            <p class="insight-severity-label">${severityLabel}</p>
             <p>${escapeHtml(insight.message)}</p>
+            ${action}
             <div class="insight-meta">
-              ${cluster}
-              ${metric}
-              ${priority}
+              ${clusterChip}
+              ${queueChip}
             </div>
           </div>
         </li>
@@ -203,12 +226,18 @@ function renderInsights() {
 
 function updateSummary(generatedAt) {
   const { insights } = state;
-  const warnings = insights.filter((i) => i.type === "warning").length;
-  const infos = insights.filter((i) => i.type === "info").length;
+  const critical = insights.filter((i) => (i.type || "").toLowerCase() === "critical").length;
+  const warnings = insights.filter((i) => (i.type || "").toLowerCase() === "warning").length;
+  // Roll suggestions in with info — both are non-actionable and that's the
+  // distinction the user cares about. Splitting them was just noise.
+  const infos = insights.filter((i) => {
+    const type = (i.type || "").toLowerCase();
+    return type === "info" || type === "suggestion";
+  }).length;
 
-  elements.totalInsights.textContent = insights.length;
-  elements.warningCount.textContent = warnings;
-  elements.infoCount.textContent = infos;
+  if (elements.criticalCount) elements.criticalCount.textContent = critical;
+  if (elements.warningCount) elements.warningCount.textContent = warnings;
+  if (elements.infoCount) elements.infoCount.textContent = infos;
 
   if (generatedAt) {
     try {
