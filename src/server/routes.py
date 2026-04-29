@@ -342,6 +342,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                             "priority": insight.priority,
                             "metric": insight.related_metric,
                             "cluster": insight.cluster,
+                            "queue": insight.queue,
+                            "action_description": insight.action_description,
                         }
                     )
 
@@ -358,8 +360,16 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 name = metadata.get("name", "Unknown")
                 status = metadata.get("status", "").upper()
 
-                # Check cluster status
-                if status not in ("ON", "UP", "RUNNING", "ONLINE"):
+                # Check cluster status. Allowlist captures the names the
+                # different collectors emit for "operational" — PW returns
+                # ACTIVE, others use ON/UP/RUNNING/ONLINE.
+                if status and status not in (
+                    "ON",
+                    "UP",
+                    "RUNNING",
+                    "ONLINE",
+                    "ACTIVE",
+                ):
                     insights_list.append(
                         {
                             "type": "warning",
@@ -367,6 +377,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                             "priority": 4,
                             "metric": "status",
                             "cluster": name,
+                            "queue": None,
+                            "action_description": "Use an alternative system",
                         }
                     )
 
@@ -398,19 +410,59 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                                 }
                             )
 
-                # Check queue depth
+                # Check queue depth — relative to cluster capacity when we
+                # know it. "100 pending" means very different things on a
+                # 60k-core machine vs a 50-core one. We use pending cores
+                # over running cores; absolute counts are kept as a fallback
+                # for clusters with no node inventory reported.
                 queue_data = cluster.get("queue_data", {})
+                cluster_total_cores = sum(
+                    self._safe_number(node.get("cores_available", 0))
+                    for node in queue_data.get("nodes", [])
+                )
                 for queue in queue_data.get("queues", []):
-                    pending = self._safe_number(queue.get("jobs_pending", 0))
                     queue_name = queue.get("queue_name", "Unknown")
-                    if pending > 50:
+                    pending_jobs = self._safe_number(queue.get("jobs_pending", 0))
+                    pending_cores = self._safe_number(queue.get("cores_pending", 0))
+                    running_cores = self._safe_number(queue.get("cores_running", 0))
+
+                    severity = None
+                    if cluster_total_cores > 0 and pending_cores > 0:
+                        # Heavy backlog: pending demand is at least 25% of the
+                        # whole cluster's capacity — likely long waits.
+                        share = pending_cores / cluster_total_cores
+                        if share >= 0.25:
+                            severity = "warning"
+                            detail = (
+                                f"queue is holding {int(pending_cores):,} cores "
+                                f"({share*100:.0f}% of cluster capacity) of pending demand"
+                            )
+                        elif running_cores > 0 and pending_cores / running_cores >= 2:
+                            severity = "info"
+                            detail = (
+                                f"pending demand is {pending_cores/running_cores:.1f}× the running load"
+                            )
+                    elif pending_jobs > 100:
+                        severity = "warning"
+                        detail = f"{int(pending_jobs)} pending jobs"
+                    elif pending_jobs > 50:
+                        severity = "info"
+                        detail = f"{int(pending_jobs)} pending jobs"
+
+                    if severity:
                         insights_list.append(
                             {
-                                "type": "info",
-                                "message": f"{name}/{queue_name}: High queue depth ({int(pending)} pending jobs)",
-                                "priority": 2,
+                                "type": severity,
+                                "message": f"{name}/{queue_name}: {detail}",
+                                "priority": 4 if severity == "warning" else 2,
                                 "metric": "queue_depth",
                                 "cluster": name,
+                                "queue": queue_name,
+                                "action_description": (
+                                    "Consider an alternative queue or cluster for new jobs"
+                                    if severity == "warning"
+                                    else None
+                                ),
                             }
                         )
 

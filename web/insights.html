@@ -71,23 +71,23 @@
     <p id="data-status" class="status-banner" role="status" hidden></p>
 
     <section class="cards">
-      <article class="card">
-        <p>Total insights</p>
-        <h2 id="total-insights">--</h2>
-        <span class="card-tooltip" title="Recommendations and alerts generated from fleet analysis">ⓘ</span>
+      <article class="card alert" id="critical-card">
+        <p>Action required</p>
+        <h2 id="critical-count">--</h2>
+        <span class="card-tooltip" title="Critical issues blocking work: exhausted allocations, full storage, systems down. Address these first.">ⓘ</span>
       </article>
-      <article class="card alert">
-        <p>Warnings</p>
+      <article class="card" id="warning-card">
+        <p>Needs attention</p>
         <h2 id="warning-count">--</h2>
-        <span class="card-tooltip" title="Issues requiring attention: low allocations, storage near capacity, system degradation">ⓘ</span>
+        <span class="card-tooltip" title="Warnings — low allocations, storage filling up, queues with heavy backlog, systems in maintenance. Plan to address soon.">ⓘ</span>
       </article>
       <article class="card">
-        <p>Informational</p>
+        <p>Tips &amp; updates</p>
         <h2 id="info-count">--</h2>
-        <span class="card-tooltip" title="General status updates and optimization suggestions">ⓘ</span>
+        <span class="card-tooltip" title="Informational notes and suggestions for better scheduling. No action required.">ⓘ</span>
       </article>
       <article class="card">
-        <p>Last updated</p>
+        <p>Updated</p>
         <h2 id="last-updated">--</h2>
         <span class="card-tooltip" title="When insights were last generated from fleet data">ⓘ</span>
       </article>

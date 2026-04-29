@@ -92,18 +92,64 @@ const computeFleetSummary = (clusters) => {
   return { ...totals, utilization };
 };
 
+/**
+ * Bucket every queue into one of three mutually-exclusive states based on
+ * pending÷running pressure. Heavy backlog = pending exceeds running cores by
+ * 2× or more (avoid scheduling here). Light backlog = some pending but less
+ * than 2× running. Open = no backlog (idle or running with nothing waiting).
+ */
+const HEAVY_BACKLOG_RATIO = 2;
 const aggregateQueueSnapshot = (clusters) => {
-  const snapshot = { active: 0, backlog: 0, idle: 0 };
+  const snapshot = { heavy: 0, light: 0, open: 0 };
   clusters.forEach((cluster) => {
     parseQueues(cluster).forEach((queue) => {
-      const running = toNumber(queue.jobs_running);
-      const pending = toNumber(queue.jobs_pending);
-      if (pending > 0) snapshot.backlog += 1;
-      if (running > 0) snapshot.active += 1;
-      if (running === 0 && pending === 0) snapshot.idle += 1;
+      const running = toNumber(queue.cores_running);
+      const pending = toNumber(queue.cores_pending);
+      if (pending <= 0) {
+        snapshot.open += 1;
+      } else if (running === 0 || pending / running >= HEAVY_BACKLOG_RATIO) {
+        snapshot.heavy += 1;
+      } else {
+        snapshot.light += 1;
+      }
     });
   });
   return snapshot;
+};
+
+/**
+ * Sum capacity across node inventory. Used cores/nodes come from the running
+ * column of the node table — this is what's currently allocated, regardless
+ * of which queue the jobs are in. Free is what's actually schedulable.
+ */
+const computeClusterCapacity = (cluster) => {
+  const nodes = sanitizeNodes(parseNodes(cluster));
+  const totals = {
+    coresTotal: 0,
+    coresUsed: 0,
+    coresFree: 0,
+    nodesTotal: 0,
+    accelNodesTotal: 0,
+    accelCoresTotal: 0,
+    accelCoresUsed: 0,
+    nodeClasses: nodes.length,
+  };
+  nodes.forEach((node) => {
+    const total = toNumber(node.cores_available);
+    const used = toNumber(node.cores_running);
+    const free = toNumber(node.cores_free);
+    const nodeCount = toNumber(node.nodes_available);
+    totals.coresTotal += total;
+    totals.coresUsed += used;
+    totals.coresFree += free || Math.max(total - used, 0);
+    totals.nodesTotal += nodeCount;
+    if (isGpuNodeType(node.node_type)) {
+      totals.accelNodesTotal += nodeCount;
+      totals.accelCoresTotal += total;
+      totals.accelCoresUsed += used;
+    }
+  });
+  return totals;
 };
 
 const disableRefresh = (disabled) => {
@@ -123,6 +169,9 @@ const showGeneratingPlaceholder = (message = "Cluster monitor is generating queu
   clearClusterStats();
   if (elements.queueDepthMeta) elements.queueDepthMeta.textContent = "";
   if (elements.nodeMeta) elements.nodeMeta.textContent = "";
+  if (elements.capacityStrip) {
+    elements.capacityStrip.innerHTML = `<div class="placeholder">${message}</div>`;
+  }
 };
 
 const scheduleRetry = () => {
@@ -186,6 +235,7 @@ const cacheElements = () => {
   elements.fleetCoreDonut = getElement("fleet-core-donut");
   elements.fleetGpuDonut = getElement("fleet-gpu-donut");
   elements.fleetQueueTags = getElement("fleet-queue-tags");
+  elements.capacityStrip = getElement("cluster-capacity-strip");
 };
 
 const bindEvents = () => {
@@ -242,15 +292,15 @@ const renderFleetGpuDonut = (summary) => {
 
 const renderFleetQueueTags = (snapshot) => {
   if (!elements.fleetQueueTags) return;
-  const total = snapshot.active + snapshot.backlog + snapshot.idle;
+  const total = snapshot.heavy + snapshot.light + snapshot.open;
   if (!total) {
     elements.fleetQueueTags.textContent = "No queue data yet.";
     return;
   }
   elements.fleetQueueTags.innerHTML = `
-    <span class="queue-chip is-active">Active <small>${snapshot.active}</small></span>
-    <span class="queue-chip is-backlog">Backlog <small>${snapshot.backlog}</small></span>
-    <span class="queue-chip is-idle">Idle <small>${snapshot.idle}</small></span>
+    <span class="queue-chip is-heavy" title="Pending cores ≥ 2× running cores. New jobs likely face long waits.">Heavy backlog <small>${snapshot.heavy}</small></span>
+    <span class="queue-chip is-light" title="Some jobs waiting but less than 2× the running load.">Light backlog <small>${snapshot.light}</small></span>
+    <span class="queue-chip is-open" title="No pending jobs — running freely or idle.">Open <small>${snapshot.open}</small></span>
   `;
 };
 
@@ -292,7 +342,30 @@ const renderClusterOptions = () => {
     .join("");
 };
 
-const renderQueueGrid = (queues) => {
+/**
+ * Classify a queue's current pressure for display. Same buckets as the fleet
+ * snapshot: heavy / light / open. See HEAVY_BACKLOG_RATIO.
+ */
+const classifyQueueBacklog = (runningCores, pendingCores) => {
+  if (pendingCores <= 0) {
+    return { tier: "open", label: "Open", detail: "No backlog" };
+  }
+  if (runningCores === 0 || pendingCores / runningCores >= HEAVY_BACKLOG_RATIO) {
+    const ratio = runningCores ? pendingCores / runningCores : null;
+    return {
+      tier: "heavy",
+      label: "Heavy backlog",
+      detail: ratio ? `${ratio.toFixed(1)}× pending vs. running` : "All demand pending",
+    };
+  }
+  return {
+    tier: "light",
+    label: "Light backlog",
+    detail: `${(pendingCores / runningCores).toFixed(1)}× pending vs. running`,
+  };
+};
+
+const renderQueueGrid = (queues, clusterCoresTotal = 0) => {
   if (!elements.queueGrid) return;
   if (!queues.length) {
     setQueueGridPlaceholder("No queue information available for this cluster.");
@@ -309,52 +382,52 @@ const renderQueueGrid = (queues) => {
       const pendingJobs = toNumber(queue.jobs_pending);
       const runningCores = toNumber(queue.cores_running);
       const pendingCores = toNumber(queue.cores_pending);
-      const totalJobs = runningJobs + pendingJobs;
-      const totalCores = runningCores + pendingCores;
-      const jobsRatio = clampPercent(totalJobs ? (runningJobs / totalJobs) * 100 : 0);
-      const pendingJobsRatio = clampPercent(totalJobs ? 100 - jobsRatio : 0);
-      const coresRatio = clampPercent(totalCores ? (runningCores / totalCores) * 100 : 0);
-      const pendingCoresRatio = clampPercent(totalCores ? 100 - coresRatio : 0);
+      const backlog = classifyQueueBacklog(runningCores, pendingCores);
+      // Bar widths are scaled against the cluster's total core capacity when
+      // available, so the visual fill represents the queue's footprint on the
+      // system rather than just its share of demand. Falls back to local
+      // running+pending so single-queue clusters still render a meaningful bar.
+      const denom = clusterCoresTotal > 0
+        ? clusterCoresTotal
+        : Math.max(runningCores + pendingCores, 1);
+      const runningWidth = clampPercent((runningCores / denom) * 100);
+      const pendingWidth = clampPercent((pendingCores / denom) * 100);
+      const footprintLabel = clusterCoresTotal > 0
+        ? `${formatNumber(runningCores + pendingCores)} of ${formatNumber(clusterCoresTotal)} cluster cores`
+        : `${formatNumber(runningCores + pendingCores)} cores in flight`;
       return `
-        <article class="queue-card">
+        <article class="queue-card" data-backlog="${backlog.tier}">
           <header class="queue-card-head">
             <h4>${queue.queue_name || "Queue"}</h4>
-            <span class="badge">${queue.queue_type || "—"}</span>
+            <span class="badge backlog-badge is-${backlog.tier}" title="${backlog.detail}">${backlog.label}</span>
           </header>
           <dl class="queue-card-metrics">
             <div>
-              <dt>Running jobs</dt>
+              <dt>Jobs running</dt>
               <dd>${formatNumber(runningJobs)}</dd>
             </div>
             <div>
-              <dt>Pending jobs</dt>
+              <dt>Jobs waiting</dt>
               <dd>${formatNumber(pendingJobs)}</dd>
             </div>
             <div>
-              <dt>Cores running</dt>
+              <dt>Cores in use</dt>
               <dd>${formatNumber(runningCores)}</dd>
             </div>
             <div>
-              <dt>Cores pending</dt>
+              <dt>Cores waiting</dt>
               <dd>${formatNumber(pendingCores)}</dd>
             </div>
           </dl>
           <div class="usage-progress compact">
-            <span>Job mix</span>
+            <span>Cluster footprint</span>
             <div class="progress-track progress-split">
-              <div class="progress-value is-running" style="width:${jobsRatio}%"></div>
-              <div class="progress-value is-pending" style="width:${pendingJobsRatio}%"></div>
+              <div class="progress-value is-running" style="width:${runningWidth}%" title="${formatNumber(runningCores)} cores running"></div>
+              <div class="progress-value is-pending" style="width:${pendingWidth}%" title="${formatNumber(pendingCores)} cores waiting"></div>
             </div>
-            <small>${totalJobs ? `${Math.round(jobsRatio)}% running / ${Math.round(100 - jobsRatio)}% pending` : "No jobs"}</small>
+            <small>${footprintLabel}</small>
           </div>
-          <div class="usage-progress compact">
-            <span>Core demand</span>
-            <div class="progress-track progress-split">
-              <div class="progress-value is-running" style="width:${coresRatio}%"></div>
-              <div class="progress-value is-pending" style="width:${pendingCoresRatio}%"></div>
-            </div>
-            <small>${totalCores ? `${Math.round(coresRatio)}% satisfied` : "No demand"}</small>
-          </div>
+          <p class="queue-backlog-note muted-text">${backlog.detail}</p>
         </article>`;
     })
     .join("");
@@ -413,7 +486,7 @@ const renderClusterStats = (cluster) => {
   const pendingJobs = queues.reduce((sum, queue) => sum + toNumber(queue.jobs_pending), 0);
   const runningCores = queues.reduce((sum, queue) => sum + toNumber(queue.cores_running), 0);
   const pendingCores = queues.reduce((sum, queue) => sum + toNumber(queue.cores_pending), 0);
-  const totalCores = runningCores + pendingCores;
+  const capacity = computeClusterCapacity(cluster);
   if (elements.clusterRunningJobs) {
     elements.clusterRunningJobs.textContent = queues.length ? formatNumber(runningJobs) : "--";
   }
@@ -427,19 +500,95 @@ const renderClusterStats = (cluster) => {
     elements.clusterPendingCores.textContent = queues.length ? formatNumber(pendingCores) : "--";
   }
   if (elements.clusterCoreDonut) {
-    if (!queues.length || !totalCores) {
-      elements.clusterCoreDonut.innerHTML = '<div class="placeholder">No queue data</div>';
+    // Donut now anchors to true cluster capacity (sum of cores_available from
+    // node inventory). Falls back to running+pending only when node inventory
+    // is missing — the old behavior — so ssh-only collectors still display.
+    const denom = capacity.coresTotal > 0 ? capacity.coresTotal : runningCores + pendingCores;
+    const used = capacity.coresTotal > 0 ? capacity.coresUsed : runningCores;
+    const free = capacity.coresTotal > 0
+      ? Math.max(capacity.coresFree, capacity.coresTotal - capacity.coresUsed)
+      : Math.max(denom - used, 0);
+    if (!denom) {
+      elements.clusterCoreDonut.innerHTML = '<div class="placeholder">No capacity data</div>';
     } else {
-      const percent = clampPercent((runningCores / totalCores) * 100);
+      const percent = clampPercent((used / denom) * 100);
+      const subtitle = capacity.coresTotal > 0
+        ? `${formatNumber(used)} of ${formatNumber(denom)} cores in use · ${formatNumber(free)} free`
+        : `${formatNumber(used)} of ${formatNumber(denom)} cores running`;
       elements.clusterCoreDonut.innerHTML = `
-        <div class="donut" style="--donut-value:${percent};--donut-primary:var(--success);">
+        <div class="donut" style="--donut-value:${percent};--donut-primary:var(--accent);" title="Running cores ÷ total cluster capacity">
           <strong>${percent.toFixed(1)}%</strong>
-          <span>Satisfied</span>
+          <span>In use</span>
         </div>
-        <small>${formatNumber(runningCores)} / ${formatNumber(totalCores)} cores</small>
+        <small>${subtitle}</small>
       `;
     }
   }
+};
+
+/**
+ * Render the "Capacity at a glance" strip — three tiles answering the
+ * scheduler's question "where can I land a job right now?". Cores tile
+ * uses node inventory totals; nodes tile shows free vs total node count;
+ * GPUs tile only renders when accelerator nodes exist.
+ */
+const renderCapacityStrip = (cluster) => {
+  if (!elements.capacityStrip) return;
+  const capacity = computeClusterCapacity(cluster);
+  if (!capacity.coresTotal && !capacity.nodesTotal && !capacity.accelNodesTotal) {
+    elements.capacityStrip.innerHTML = '<div class="placeholder">No capacity inventory reported.</div>';
+    return;
+  }
+  const corePct = capacity.coresTotal
+    ? clampPercent((capacity.coresUsed / capacity.coresTotal) * 100)
+    : 0;
+  const nodesUsedEstimate = capacity.coresTotal
+    ? Math.round(capacity.nodesTotal * (capacity.coresUsed / capacity.coresTotal))
+    : 0;
+  const nodesFreeEstimate = Math.max(capacity.nodesTotal - nodesUsedEstimate, 0);
+  const accelPct = capacity.accelCoresTotal
+    ? clampPercent((capacity.accelCoresUsed / capacity.accelCoresTotal) * 100)
+    : 0;
+  const accelFreeCores = Math.max(capacity.accelCoresTotal - capacity.accelCoresUsed, 0);
+
+  const tiles = [];
+  tiles.push(`
+    <div class="capacity-tile">
+      <p class="eyebrow">Cores</p>
+      <strong>${formatNumber(capacity.coresFree)} free</strong>
+      <small>${formatNumber(capacity.coresUsed)} in use of ${formatNumber(capacity.coresTotal)} total</small>
+      <div class="progress-track"><div class="progress-value is-running" style="width:${corePct}%"></div></div>
+      <small class="muted-text">${corePct.toFixed(1)}% utilized</small>
+    </div>
+  `);
+  tiles.push(`
+    <div class="capacity-tile">
+      <p class="eyebrow">Nodes</p>
+      <strong>~${formatNumber(nodesFreeEstimate)} free</strong>
+      <small>${capacity.nodeClasses} node class${capacity.nodeClasses === 1 ? "" : "es"} · ${formatNumber(capacity.nodesTotal)} total</small>
+      <small class="muted-text">Free count estimated from core utilization. See node table for exact per-class breakdown.</small>
+    </div>
+  `);
+  if (capacity.accelNodesTotal > 0) {
+    tiles.push(`
+      <div class="capacity-tile">
+        <p class="eyebrow">GPU / accelerator</p>
+        <strong>${formatNumber(accelFreeCores)} cores free</strong>
+        <small>${formatNumber(capacity.accelNodesTotal)} accelerator nodes · ${formatNumber(capacity.accelCoresTotal)} cores total</small>
+        <div class="progress-track"><div class="progress-value is-running" style="width:${accelPct}%"></div></div>
+        <small class="muted-text">${accelPct.toFixed(1)}% utilized</small>
+      </div>
+    `);
+  } else {
+    tiles.push(`
+      <div class="capacity-tile is-muted">
+        <p class="eyebrow">GPU / accelerator</p>
+        <strong>—</strong>
+        <small>No accelerator nodes detected on this cluster.</small>
+      </div>
+    `);
+  }
+  elements.capacityStrip.innerHTML = tiles.join("");
 };
 
 const clearClusterStats = () => {
@@ -449,6 +598,9 @@ const clearClusterStats = () => {
   if (elements.clusterPendingCores) elements.clusterPendingCores.textContent = "--";
   if (elements.clusterCoreDonut) {
     elements.clusterCoreDonut.innerHTML = '<div class="placeholder">Select a cluster</div>';
+  }
+  if (elements.capacityStrip) {
+    elements.capacityStrip.innerHTML = '<div class="placeholder">Select a cluster</div>';
   }
 };
 
@@ -524,7 +676,9 @@ const renderClusterDetail = () => {
       elements.nodeMeta.textContent = `${nodes.length} node classes`;
     }
     renderClusterStats(cluster);
-    renderQueueGrid(queues);
+    renderCapacityStrip(cluster);
+    const capacity = computeClusterCapacity(cluster);
+    renderQueueGrid(queues, capacity.coresTotal);
     renderNodeTable(nodes);
   }
 };

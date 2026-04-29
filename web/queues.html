@@ -95,15 +95,15 @@
 
     <section class="panel fleet-overview-grid">
       <div class="panel-block">
-        <p class="eyebrow">Queue disposition <span class="eyebrow-help" title="Visual summary of queue activity: active (has running jobs), backlog (jobs pending), or idle (no activity)">ⓘ</span></p>
+        <p class="eyebrow">Backlog severity <span class="eyebrow-help" title="Each queue is bucketed by pending÷running cores. Heavy = pending is 2× or more of running (avoid scheduling here). Light = some pending but less. Open = no jobs waiting.">ⓘ</span></p>
         <div id="fleet-queue-tags" class="queue-chip-collection muted-text">Refresh to populate queue stats.</div>
       </div>
       <div class="panel-block">
-        <p class="eyebrow">Core utilization <span class="eyebrow-help" title="Percentage of total compute cores currently in use across all connected clusters">ⓘ</span></p>
+        <p class="eyebrow">Fleet core utilization <span class="eyebrow-help" title="Running cores ÷ total cluster capacity, summed across all connected clusters. Tells you how loaded the fleet is overall.">ⓘ</span></p>
         <div id="fleet-core-donut" class="donut-chart placeholder">Awaiting data…</div>
       </div>
       <div class="panel-block">
-        <p class="eyebrow">GPU availability <span class="eyebrow-help" title="Fleet GPU count, average utilization, and free memory across all GPU-equipped clusters">ⓘ</span></p>
+        <p class="eyebrow">GPU availability <span class="eyebrow-help" title="Free vs. used cores on accelerator nodes across all GPU-equipped clusters.">ⓘ</span></p>
         <div id="fleet-gpu-donut" class="donut-chart placeholder">Awaiting data…</div>
       </div>
     </section>
@@ -126,17 +126,20 @@
           <p>Pending jobs</p>
           <strong id="cluster-pending-jobs">--</strong>
         </div>
-        <div class="metric-card" title="Total CPU cores currently allocated to running jobs">
-          <p>Cores running</p>
+        <div class="metric-card" title="CPU cores currently allocated to running jobs">
+          <p>Cores in use</p>
           <strong id="cluster-running-cores">--</strong>
         </div>
-        <div class="metric-card" title="CPU cores requested by pending jobs">
-          <p>Cores pending</p>
+        <div class="metric-card" title="CPU cores requested by jobs still waiting in the queue">
+          <p>Cores waiting</p>
           <strong id="cluster-pending-cores">--</strong>
         </div>
-        <div class="donut-chart cluster-donut" id="cluster-core-donut" title="Visual representation of core utilization">
+        <div class="donut-chart cluster-donut" id="cluster-core-donut" title="Cores in use ÷ total cluster capacity from node inventory">
           <div class="placeholder">Select a cluster</div>
         </div>
+      </div>
+      <div class="capacity-strip" id="cluster-capacity-strip" aria-label="Capacity at a glance">
+        <div class="placeholder">Select a cluster</div>
       </div>
     </section>
 
@@ -168,7 +171,7 @@
 
     <section>
       <div class="panel-head">
-        <h3>Queue depth <span class="panel-help" title="Each card shows a scheduler queue with its running/pending job counts. Queues have different policies: batch (long jobs), debug (testing), gpu (accelerators).">ⓘ</span></h3>
+        <h3>Queue activity <span class="panel-help" title="One card per scheduler queue. The bar shows the queue's footprint as a fraction of total cluster cores (running + waiting). The badge tells you whether new jobs face a backlog.">ⓘ</span></h3>
         <p id="queue-depth-meta" class="muted-text"></p>
       </div>
       <div id="queue-grid" class="queue-grid">
