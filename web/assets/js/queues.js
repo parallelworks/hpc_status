@@ -236,6 +236,7 @@ const cacheElements = () => {
   elements.fleetGpuDonut = getElement("fleet-gpu-donut");
   elements.fleetQueueTags = getElement("fleet-queue-tags");
   elements.capacityStrip = getElement("cluster-capacity-strip");
+  elements.availabilityRanking = getElement("availability-ranking");
 };
 
 const bindEvents = () => {
@@ -252,6 +253,25 @@ const bindEvents = () => {
         b.setAttribute("aria-selected", b === btn ? "true" : "false");
       });
       renderClusterDetail();
+      renderAvailabilityRanking();
+    });
+  }
+  if (elements.availabilityRanking) {
+    elements.availabilityRanking.addEventListener("click", (event) => {
+      const row = event.target.closest("[data-cluster-index]");
+      if (!row) return;
+      const idx = Number(row.dataset.clusterIndex);
+      if (!Number.isFinite(idx)) return;
+      state.selectedIndex = idx;
+      renderClusterOptions();
+      renderClusterDetail();
+      renderAvailabilityRanking();
+      // Bring the cluster detail into view so the user can see what they
+      // just selected without scrolling manually.
+      const target = document.getElementById("queue-cluster-title");
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+      }
     });
   }
 };
@@ -290,6 +310,130 @@ const renderFleetGpuDonut = (summary) => {
   `;
 };
 
+/**
+ * Build a "most available" ranking across the fleet. Each entry combines
+ * core capacity (from node inventory) with backlog state (from queue cores)
+ * so the row can show both how full a cluster is now AND whether there's
+ * pending demand queued behind that.
+ *
+ * Sort by utilization% ascending — "most idle first" — which is what users
+ * want when picking a cluster for a new job. Ties broken by absolute free
+ * cores so a 50%-free 1M cluster outranks a 50%-free 1k cluster.
+ *
+ * Clusters with no node inventory (e.g. GPU-only servers) are returned in
+ * `unranked` so the renderer can list them separately rather than scoring
+ * them as "0% utilized" and shoving them to the top.
+ */
+const computeAvailabilityRanking = (clusters) => {
+  const ranked = [];
+  const unranked = [];
+  clusters.forEach((cluster, index) => {
+    const metadata = cluster?.cluster_metadata || {};
+    const name = metadata.name || metadata.uri || `Cluster ${index + 1}`;
+    const capacity = computeClusterCapacity(cluster);
+    const queues = parseQueues(cluster);
+    const pendingCores = queues.reduce((sum, q) => sum + toNumber(q.cores_pending), 0);
+    const runningCoresFromQueues = queues.reduce((sum, q) => sum + toNumber(q.cores_running), 0);
+
+    if (capacity.coresTotal <= 0) {
+      unranked.push({ index, name, reason: "No capacity inventory reported." });
+      return;
+    }
+
+    // Use queue-derived running cores when present (more accurate than node
+    // table aggregation for clusters where the scheduler reports per-queue),
+    // otherwise fall back to node inventory's cores_running.
+    const runningCores = runningCoresFromQueues || capacity.coresUsed;
+    const freeCores = Math.max(capacity.coresTotal - runningCores, 0);
+    const utilization = clampPercent((runningCores / capacity.coresTotal) * 100);
+    const pendingShare = clampPercent((pendingCores / capacity.coresTotal) * 100);
+    let backlog;
+    if (pendingCores <= 0) {
+      backlog = { tier: "open", label: "Open" };
+    } else if (runningCores === 0 || pendingCores / runningCores >= HEAVY_BACKLOG_RATIO) {
+      backlog = { tier: "heavy", label: "Heavy backlog" };
+    } else {
+      backlog = { tier: "light", label: "Light backlog" };
+    }
+
+    ranked.push({
+      index,
+      name,
+      coresTotal: capacity.coresTotal,
+      runningCores,
+      pendingCores,
+      freeCores,
+      utilization,
+      pendingShare,
+      backlog,
+      status: metadata.status || "",
+    });
+  });
+  ranked.sort((a, b) => {
+    if (a.utilization !== b.utilization) return a.utilization - b.utilization;
+    return b.freeCores - a.freeCores;
+  });
+  return { ranked, unranked };
+};
+
+const renderAvailabilityRanking = () => {
+  if (!elements.availabilityRanking) return;
+  const { ranked, unranked } = computeAvailabilityRanking(state.clusters);
+  if (!ranked.length && !unranked.length) {
+    elements.availabilityRanking.innerHTML = '<div class="placeholder">Awaiting capacity data…</div>';
+    return;
+  }
+  if (!ranked.length) {
+    elements.availabilityRanking.innerHTML = '<div class="placeholder">No clusters with node inventory yet — check back after the next collection.</div>';
+    return;
+  }
+
+  const rows = ranked
+    .map((entry, idx) => {
+      // Running width is honest (running ÷ capacity). Pending fills only
+      // the remaining free space — overflow ("180% pending vs capacity")
+      // is signalled by the Heavy backlog badge instead of distorting the
+      // bar geometry.
+      const runningWidth = clampPercent((entry.runningCores / entry.coresTotal) * 100);
+      const remaining = Math.max(0, 100 - runningWidth);
+      const pendingDesired = clampPercent((entry.pendingCores / entry.coresTotal) * 100);
+      const pendingWidth = Math.min(pendingDesired, remaining);
+      const pendingTitle = entry.pendingCores
+        ? `${formatNumber(entry.pendingCores)} cores waiting`
+        : "No pending demand";
+      const backlogChip = `<span class="backlog-badge is-${entry.backlog.tier}" title="${pendingTitle}">${entry.backlog.label}</span>`;
+      const isSelected = entry.index === state.selectedIndex;
+      return `
+        <button type="button"
+                class="availability-row${isSelected ? ' is-selected' : ''}"
+                data-cluster-index="${entry.index}"
+                aria-label="Select ${entry.name}">
+          <span class="availability-rank">${idx + 1}</span>
+          <span class="availability-name">${entry.name}</span>
+          <span class="availability-bar" title="${formatNumber(entry.runningCores)} running · ${formatNumber(entry.pendingCores)} waiting · ${formatNumber(entry.freeCores)} free">
+            <span class="progress-track progress-split availability-track">
+              <span class="progress-value is-running" style="width:${runningWidth}%"></span>
+              <span class="progress-value is-pending" style="width:${pendingWidth}%"></span>
+            </span>
+          </span>
+          <span class="availability-free"><strong>${formatNumber(entry.freeCores)}</strong><small>cores free</small></span>
+          <span class="availability-util">${entry.utilization.toFixed(0)}% used</span>
+          ${backlogChip}
+        </button>
+      `;
+    })
+    .join("");
+
+  const unrankedHtml = unranked.length
+    ? `<p class="availability-note muted-text">${unranked.length} cluster${unranked.length === 1 ? "" : "s"} not ranked (no node inventory): ${unranked.map((u) => u.name).join(", ")}</p>`
+    : "";
+
+  elements.availabilityRanking.innerHTML = `
+    <div class="availability-list" role="list">${rows}</div>
+    ${unrankedHtml}
+  `;
+};
+
 const renderFleetQueueTags = (snapshot) => {
   if (!elements.fleetQueueTags) return;
   const total = snapshot.heavy + snapshot.light + snapshot.open;
@@ -321,6 +465,7 @@ const renderSummary = () => {
   renderFleetCoreDonut(summary);
   renderFleetGpuDonut(summary);
   renderFleetQueueTags(aggregateQueueSnapshot(state.clusters));
+  renderAvailabilityRanking();
 };
 
 const renderClusterOptions = () => {

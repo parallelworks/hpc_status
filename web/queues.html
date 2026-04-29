@@ -109,6 +109,16 @@
     </section>
 
     <section class="panel">
+      <div class="panel-head">
+        <h3>Most available systems <span class="panel-help" title="Clusters ranked by current utilization (lowest first). The bar shows running cores, pending cores, and free cores as proportions of each cluster's total capacity. Click a row to jump to that cluster's details.">ⓘ</span></h3>
+        <p class="muted-text">Sorted by utilization — clusters with the most idle capacity appear first.</p>
+      </div>
+      <div id="availability-ranking" class="availability-ranking">
+        <div class="placeholder">Awaiting capacity data…</div>
+      </div>
+    </section>
+
+    <section class="panel">
       <div class="cluster-picker" id="queue-cluster-select" role="tablist" aria-label="Select cluster"></div>
       <div class="cluster-focus-header">
         <div>
