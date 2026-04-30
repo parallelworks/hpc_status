@@ -266,9 +266,10 @@ const bindEvents = () => {
       renderClusterOptions();
       renderClusterDetail();
       renderAvailabilityRanking();
-      // Bring the cluster detail into view so the user can see what they
-      // just selected without scrolling manually.
-      const target = document.getElementById("queue-cluster-title");
+      // Scroll to the cluster picker (not the cluster title below it) so
+      // the quick-select buttons stay visible at the top of the viewport
+      // — the user can jump to a different cluster without scrolling back.
+      const target = elements.clusterSelect;
       if (target && typeof target.scrollIntoView === "function") {
         target.scrollIntoView({ behavior: "smooth", block: "start" });
       }
@@ -474,8 +475,23 @@ const renderClusterOptions = () => {
     elements.clusterSelect.innerHTML = '<span class="muted-text">No clusters available</span>';
     return;
   }
-  elements.clusterSelect.innerHTML = state.clusters
-    .map((cluster, idx) => {
+  // Order picker buttons to match the availability ranking — most-idle
+  // clusters first, then any unranked (no node inventory) appended at the
+  // end. data-index keeps the click handler decoupled from display order.
+  const { ranked, unranked } = computeAvailabilityRanking(state.clusters);
+  const rankedIndices = ranked.map((entry) => entry.index);
+  const unrankedIndices = unranked.map((entry) => entry.index);
+  const seen = new Set([...rankedIndices, ...unrankedIndices]);
+  // Defensive fallback: if any cluster wasn't classified (shouldn't happen
+  // but guards against drift), append it so the picker stays complete.
+  const fallback = state.clusters
+    .map((_, idx) => idx)
+    .filter((idx) => !seen.has(idx));
+  const order = [...rankedIndices, ...unrankedIndices, ...fallback];
+
+  elements.clusterSelect.innerHTML = order
+    .map((idx) => {
+      const cluster = state.clusters[idx];
       const name =
         cluster?.cluster_metadata?.name || cluster?.cluster_metadata?.uri || `Cluster ${idx + 1}`;
       const selected = idx === state.selectedIndex;
@@ -1060,7 +1076,11 @@ const loadData = async ({ silent = true } = {}) => {
       );
       state.selectedIndex = idx >= 0 ? idx : 0;
     } else {
-      state.selectedIndex = 0;
+      // Initial load: default to the most-available cluster (top of the
+      // ranking) so the user lands on something useful instead of the
+      // first cluster in arbitrary collector order.
+      const { ranked } = computeAvailabilityRanking(state.clusters);
+      state.selectedIndex = ranked.length ? ranked[0].index : 0;
     }
     renderSummary();
     renderClusterOptions();
