@@ -325,8 +325,9 @@ def parse_args():
     parser.add_argument(
         "--default-theme",
         choices=("dark", "light"),
-        default="dark",
-        help="Initial theme for clients",
+        default=None,
+        help="Override initial theme for clients (otherwise follows the "
+             "config file's ui.default_theme).",
     )
 
     # Feature flags

@@ -20,7 +20,10 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 PORT="${PORT:-8080}"
 HOST="${HOST:-0.0.0.0}"
 URL_PREFIX="${URL_PREFIX:-}"
-DEFAULT_THEME="${DEFAULT_THEME:-dark}"
+# Default theme: leave empty so the config's ``ui.default_theme`` wins.
+# Set DEFAULT_THEME=dark|light in the environment only when you want to
+# override the config (e.g. for a one-off test launch).
+DEFAULT_THEME="${DEFAULT_THEME:-}"
 CONFIG_FILE="${CONFIG_FILE:-${HPC_STATUS_CONFIG:-}}"
 
 # Feature flags
@@ -82,7 +85,12 @@ cleanup_existing() {
 # Build server command
 build_cmd() {
     local cmd=("$VENV_DIR/bin/python" "-m" "src.server.main")
-    cmd+=("--host" "$HOST" "--port" "$PORT" "--default-theme" "$DEFAULT_THEME")
+    cmd+=("--host" "$HOST" "--port" "$PORT")
+    # Only forward --default-theme when explicitly set, otherwise the config
+    # file's ui.default_theme is the authoritative default.
+    if [[ -n "$DEFAULT_THEME" ]]; then
+        cmd+=("--default-theme" "$DEFAULT_THEME")
+    fi
 
     if [[ -n "$URL_PREFIX" ]]; then
         cmd+=("--url-prefix" "$URL_PREFIX")
