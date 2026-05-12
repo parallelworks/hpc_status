@@ -51,7 +51,7 @@ ui:
   title: "RDHPCS Status Monitor"
   eyebrow: "NOAA RDHPCS"
   home_page: "overview"
-  default_theme: "dark"
+  default_theme: "light"
   tabs:
     overview: true
     queues: true
