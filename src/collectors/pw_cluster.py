@@ -223,8 +223,18 @@ class PWClusterCollector(BaseCollector):
                 status = parts[1].strip().lower()
                 cluster_type = parts[2].strip().lower()
 
-                # Accept "on" or "active" status for existing clusters
-                if cluster_type == "existing" and status in ("on", "active"):
+                # Accept on-prem ("existing") and cloud-Slurm clusters (
+                # google-slurm / aws-slurm / azure-slurm / oci-slurm). NOAA
+                # RDHPCS makes both visible in the same `pw clusters ls`.
+                cloud_slurm_types = (
+                    "google-slurm",
+                    "aws-slurm",
+                    "azure-slurm",
+                    "oci-slurm",
+                )
+                is_existing = cluster_type == "existing"
+                is_cloud_slurm = cluster_type in cloud_slurm_types
+                if (is_existing or is_cloud_slurm) and status in ("on", "active"):
                     clusters.append(
                         {
                             "uri": uri,
@@ -509,7 +519,11 @@ class PWClusterCollector(BaseCollector):
     def _get_cluster_usage_via_sshare(
         self, cluster_uri: str, cluster_name: str
     ) -> Optional[Dict[str, Any]]:
-        """Fallback Slurm path: aggregate raw usage for the current user."""
+        """Fallback Slurm path: aggregate raw usage for the current user.
+
+        If the cluster also has ``sreport`` (most modern Slurm builds do),
+        enrich each row with FY-to-date core-hours.
+        """
         try:
             cmd = self._pw(
                 "ssh",
@@ -530,11 +544,20 @@ class PWClusterCollector(BaseCollector):
             sshare_part, _, who_part = stdout.partition("---WHOAMI---")
             user = who_part.strip() or None
             systems = sh.parse_sshare_usage(sshare_part, cluster_name, user)
+
+            caps = self._capability_cache.get(cluster_uri, (None, None))[0] or {}
+            source_tags = ["sshare"]
+            fy_info = ""
+            if caps.get("sreport") and systems:
+                self._enrich_with_sreport(systems, cluster_uri, caps=caps)
+                source_tags.append("sreport")
+                fy_info = f"FY since {sh.fiscal_year_start()}"
+
             return {
-                "header": f"Slurm raw usage for {cluster_name}",
-                "fiscal_year_info": "",
+                "header": f"Slurm usage for {cluster_name}",
+                "fiscal_year_info": fy_info,
                 "systems": systems,
-                "source": "sshare",
+                "source": "+".join(source_tags),
             }
         except Exception as e:
             _log(f"[pw_cluster] sshare usage error for {cluster_uri}: {e}")
