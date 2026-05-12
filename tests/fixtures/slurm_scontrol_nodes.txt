@@ -1,0 +1,6 @@
+NodeName=cn001 CoresPerSocket=64 CPUTot=128 Sockets=2 Boards=1 State=ALLOCATED ThreadsPerCore=1 RealMemory=256000 Partitions=batch
+NodeName=cn002 CoresPerSocket=64 CPUTot=128 Sockets=2 Boards=1 State=MIXED ThreadsPerCore=1 RealMemory=256000 Partitions=batch
+NodeName=cn003 CoresPerSocket=64 CPUTot=128 Sockets=2 Boards=1 State=IDLE ThreadsPerCore=1 RealMemory=256000 Partitions=batch
+NodeName=cn004 CoresPerSocket=64 CPUTot=128 Sockets=2 Boards=1 State=DRAIN ThreadsPerCore=1 RealMemory=256000 Partitions=batch
+NodeName=gpu001 CoresPerSocket=32 CPUTot=64 Sockets=2 Boards=1 State=IDLE ThreadsPerCore=1 RealMemory=512000 Partitions=gpu
+NodeName=gpu002 CoresPerSocket=32 CPUTot=64 Sockets=2 Boards=1 State=ALLOCATED ThreadsPerCore=1 RealMemory=512000 Partitions=gpu

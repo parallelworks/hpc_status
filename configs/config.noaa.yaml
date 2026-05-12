@@ -1,5 +1,21 @@
-# HPC Status Monitor - NOAA RDHPCS Deployment Configuration
-# Use with: python -m src.server.main --config configs/config.noaa.yaml
+# HPC Status Monitor — NOAA RDHPCS Deployment
+#
+# Launch with:
+#   CONFIG_FILE=configs/config.noaa.yaml ./scripts/run.sh
+#
+# Auth requirement:
+#   pw auth whoami  → must report your noaa.parallel.works user
+#
+# Collection notes (handled inside src/collectors/pw_cluster.py):
+#   The collector probes each cluster for available tools and picks the
+#   richest source it can. Per RDHPCS system:
+#     - Hera, Ursa            → saccount_params + raw Slurm
+#     - Gaea (C5)             → raw Slurm (sshare / sacctmgr / scontrol / squeue)
+#     - PPAN                  → df-only (analysis nodes, no scheduler)
+#     - Mercury               → df-only (data-mover / HPSS gateway)
+#
+# Capabilities are cached per cluster for 10 minutes, so toggling refresh
+# intervals here doesn't trigger re-probing on every cycle.
 
 deployment:
   name: "NOAA RDHPCS Status Monitor"
@@ -10,14 +26,26 @@ server:
   port: 8080
 
 collectors:
+  # Live cluster data via the PW CLI (pw ssh).
   pw_cluster:
     enabled: true
-    refresh_interval: 120
+    refresh_interval: 180  # 3 min — saccount_params is ~1–2s per cluster
+    # Pin the PW identity for every ``pw`` call. The value here is the IDENTITY
+    # KEY as stored in ``~/pw/.credentials`` (see ``identities.<key>``), NOT
+    # the longer ``user:<name>@<host>`` form that ``pw context list`` prints.
+    # For a NOAA-only deployment this is typically simply ``noaa``.
+    # Equivalent alternative: launch with ``PW_CONTEXT=noaa ./scripts/run.sh``.
+    pw_context: "noaa"
 
+  # Static fleet catalog + future hooks for scraping the RDHPCS docs site.
   noaa_docs:
     enabled: true
     url: "https://docs.rdhpcs.noaa.gov/systems/index.html"
-    refresh_interval: 3600  # Docs change infrequently
+    refresh_interval: 3600  # docs change infrequently
+
+  # HPCMP scraper does not apply to NOAA — keep disabled to avoid noise.
+  hpcmp:
+    enabled: false
 
 ui:
   title: "RDHPCS Status Monitor"
@@ -34,11 +62,46 @@ ui:
 
 rate_limiting:
   max_concurrent_ssh: 3
-  ssh_timeout: 30
+  ssh_timeout: 60  # capability probe + saccount_params can take a beat
   retry_backoff: [5, 15, 60]
   per_cluster:
-    min_interval: 60
+    min_interval: 90
     max_commands_per_poll: 5
   circuit_breaker:
     failure_threshold: 3
     pause_duration: 300
+
+# RDHPCS systems published at https://docs.rdhpcs.noaa.gov/systems/index.html.
+# This block is informational — the live data still comes from pw_cluster.
+# Keys mirror the PW cluster URI segments so the UI can cross-reference.
+noaa_systems:
+  hera:
+    name: "Hera"
+    location: "NESCC (Fairmont, WV)"
+    scheduler: "Slurm"
+    tools: ["saccount_params", "slurm"]
+    storage: ["/home", "/scratch1", "/scratch2", "/scratch3", "/scratch4"]
+  ursa:
+    name: "Ursa"
+    location: "NESCC (Fairmont, WV)"
+    scheduler: "Slurm"
+    tools: ["saccount_params", "slurm", "lfs"]
+    storage: ["/home", "/scratch3", "/scratch4", "/scratch5"]
+  gaea-c5:
+    name: "Gaea C5"
+    location: "ORNL (Oak Ridge, TN)"
+    scheduler: "Slurm"
+    tools: ["slurm"]
+    storage: ["/gpfs/f5", "/ncrc/home1", "/ncrc/home2"]
+  ppan:
+    name: "PPAN"
+    location: "GFDL (Princeton, NJ)"
+    scheduler: "none (analysis nodes)"
+    tools: []
+    storage: ["/home", "/work", "/work1", "/work3", "/work5", "/nbhome"]
+  mercury:
+    name: "Mercury"
+    location: "NESCC (Fairmont, WV)"
+    scheduler: "none (data-mover)"
+    tools: ["hpss"]
+    storage: ["/home"]

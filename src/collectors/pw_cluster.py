@@ -10,10 +10,14 @@ import json
 import re
 import subprocess
 import time
-from datetime import datetime
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Tuple
 
+from . import _slurm_helpers as sh
 from .base import BaseCollector, CollectorError
+
+# How long to trust a cached capability probe before re-probing.
+_CAPABILITY_TTL = timedelta(minutes=10)
 
 
 def _log(msg: str) -> None:
@@ -33,11 +37,33 @@ class PWClusterCollector(BaseCollector):
         max_retries: int = 3,
         retry_delay: int = 5,
         ssh_timeout: int = 60,
+        pw_context: Optional[str] = None,
     ):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.ssh_timeout = ssh_timeout
+        # Pin a specific PW context (e.g. "user:foo@noaa.parallel.works") for
+        # every ``pw`` call. Useful when the operator wants the dashboard to
+        # always talk to a specific platform regardless of the user's active
+        # context. ``None`` = use whatever context pw resolves on its own.
+        self.pw_context = pw_context
         self._known_clusters: set = set()
+        # cluster_uri -> (capabilities, timestamp)
+        self._capability_cache: Dict[str, Tuple[Dict[str, bool], datetime]] = {}
+        # Cached saccount_params output so we can derive both usage + storage
+        # from a single SSH call. (cluster_uri -> (parsed_tuple, timestamp))
+        self._saccount_cache: Dict[
+            str,
+            Tuple[Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Any]], datetime],
+        ] = {}
+
+    def _pw(self, *args: str) -> List[str]:
+        """Build a ``pw`` command, prepending ``--context`` if pinned."""
+        cmd: List[str] = ["pw"]
+        if self.pw_context:
+            cmd.extend(["--context", self.pw_context])
+        cmd.extend(args)
+        return cmd
 
     @property
     def name(self) -> str:
@@ -137,15 +163,14 @@ class PWClusterCollector(BaseCollector):
             CollectorError: If the pw CLI command fails.
         """
         try:
-            cmd = [
-                "pw",
+            cmd = self._pw(
                 "clusters",
                 "ls",
                 "--status=active",
                 "-o",
                 "table",
                 "--owned",
-            ]
+            )
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -213,13 +238,22 @@ class PWClusterCollector(BaseCollector):
         return clusters
 
     def _process_cluster(self, cluster: Dict[str, str]) -> Optional[Dict[str, Any]]:
-        """Process a single cluster and return its data."""
+        """Process a single cluster and return its data.
+
+        Dispatches collection to the right command flavour based on the
+        cluster's detected capabilities:
+          - HPCMP-style ``show_*`` scripts when present
+          - NOAA ``saccount_params`` for usage + storage when present
+          - Raw Slurm (``sshare`` / ``sacctmgr`` / ``scontrol`` / ``squeue``)
+            as a fallback for Slurm-only clusters
+          - ``df``-only path for analysis/data-mover nodes
+        """
         cluster_name = cluster["uri"].split("/")[-1]
+        caps = self._get_capabilities(cluster["uri"])
 
-        usage_data = self._get_cluster_usage(cluster["uri"])
-        queue_data = self._get_cluster_queues(cluster["uri"])
+        usage_data = self._get_cluster_usage(cluster["uri"], caps, cluster_name)
+        queue_data = self._get_cluster_queues(cluster["uri"], caps)
 
-        # For clusters without schedulers, try to get GPU and system info
         gpu_data = None
         system_info = None
         has_scheduler = bool(usage_data and usage_data.get("systems")) or bool(
@@ -227,12 +261,13 @@ class PWClusterCollector(BaseCollector):
         )
 
         if not has_scheduler:
-            # This is likely a standalone compute server - get GPU/system info
-            gpu_data = self._get_gpu_info(cluster["uri"])
+            # Only run nvidia-smi if the cluster reports it. Probing it on a
+            # data-mover or analysis node can hang for the full ssh timeout.
+            if caps.get("nvidia-smi"):
+                gpu_data = self._get_gpu_info(cluster["uri"])
             system_info = self._get_system_info(cluster["uri"])
 
-        # Always collect storage info for all clusters
-        storage_data = self._get_storage_info(cluster["uri"])
+        storage_data = self._get_storage_info(cluster["uri"], caps)
 
         return {
             "cluster_metadata": {
@@ -242,6 +277,7 @@ class PWClusterCollector(BaseCollector):
                 "type": cluster["type"],
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "has_scheduler": has_scheduler,
+                "capabilities": caps,
             },
             "usage_data": usage_data or {},
             "queue_data": queue_data or {},
@@ -250,10 +286,111 @@ class PWClusterCollector(BaseCollector):
             "storage_data": storage_data or {},
         }
 
-    def _get_cluster_usage(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
-        """Get usage information for a specific cluster using SSH."""
+    def _get_capabilities(self, cluster_uri: str) -> Dict[str, bool]:
+        """Detect available collection commands on a cluster (cached)."""
+        cached = self._capability_cache.get(cluster_uri)
+        if cached and datetime.utcnow() - cached[1] < _CAPABILITY_TTL:
+            return cached[0]
         try:
-            cmd = ["pw", "ssh", cluster_uri, "show_usage"]
+            cmd = self._pw("ssh", cluster_uri, sh.build_capability_probe())
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0:
+                _log(
+                    f"[pw_cluster] Capability probe failed for {cluster_uri} "
+                    f"(rc={result.returncode}): {result.stderr.strip()[:120]}"
+                )
+                caps = {c: False for c in sh.PROBE_COMMANDS}
+            else:
+                caps = sh.parse_capability_probe(result.stdout)
+            _log(
+                f"[pw_cluster] {cluster_uri.split('/')[-1]} caps: "
+                + ", ".join(f"{k}={'Y' if v else 'N'}" for k, v in caps.items() if v)
+            )
+        except subprocess.TimeoutExpired:
+            _log(f"[pw_cluster] Capability probe timed out for {cluster_uri}")
+            caps = {c: False for c in sh.PROBE_COMMANDS}
+        except Exception as e:
+            _log(f"[pw_cluster] Capability probe error for {cluster_uri}: {e}")
+            caps = {c: False for c in sh.PROBE_COMMANDS}
+        self._capability_cache[cluster_uri] = (caps, datetime.utcnow())
+        return caps
+
+    def _get_saccount_params(
+        self, cluster_uri: str, cluster_name: str
+    ) -> Optional[Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Any]]]:
+        """Fetch and parse ``saccount_params`` once per refresh cycle.
+
+        Cached briefly so the usage path and storage path share one SSH call.
+        """
+        cached = self._saccount_cache.get(cluster_uri)
+        if cached and datetime.utcnow() - cached[1] < timedelta(seconds=30):
+            return cached[0]
+        try:
+            cmd = self._pw("ssh", cluster_uri, "saccount_params")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0:
+                _log(
+                    f"[pw_cluster] saccount_params failed for {cluster_uri} "
+                    f"(rc={result.returncode})"
+                )
+                return None
+            parsed = sh.parse_saccount_params(result.stdout, cluster_name)
+            self._saccount_cache[cluster_uri] = (parsed, datetime.utcnow())
+            return parsed
+        except Exception as e:
+            _log(f"[pw_cluster] saccount_params error for {cluster_uri}: {e}")
+            return None
+
+    def _get_cluster_usage(
+        self,
+        cluster_uri: str,
+        caps: Optional[Dict[str, bool]] = None,
+        cluster_name: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get usage information for a cluster, dispatching by capability.
+
+        Order of preference:
+          1. ``show_usage`` (HPCMP-shaped)
+          2. ``saccount_params`` (NOAA Hera/Ursa)
+          3. ``sshare`` (raw Slurm, anywhere with the binary)
+        """
+        if caps is None:
+            caps = self._get_capabilities(cluster_uri)
+        if cluster_name is None:
+            cluster_name = cluster_uri.split("/")[-1]
+
+        if caps.get("show_usage"):
+            return self._get_cluster_usage_via_show(cluster_uri)
+        if caps.get("saccount_params"):
+            parsed = self._get_saccount_params(cluster_uri, cluster_name)
+            if parsed is not None:
+                systems, _storage, _home = parsed
+                return {
+                    "header": f"NOAA RDHPCS usage for {cluster_name}",
+                    "fiscal_year_info": "",
+                    "systems": systems,
+                    "source": "saccount_params",
+                }
+        if caps.get("sshare"):
+            return self._get_cluster_usage_via_sshare(cluster_uri, cluster_name)
+        return None
+
+    def _get_cluster_usage_via_show(
+        self, cluster_uri: str
+    ) -> Optional[Dict[str, Any]]:
+        """Original HPCMP ``show_usage`` path."""
+        try:
+            cmd = self._pw("ssh", cluster_uri, "show_usage")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -261,7 +398,9 @@ class PWClusterCollector(BaseCollector):
                 check=True,
                 timeout=self.ssh_timeout,
             )
-            return self._parse_usage_output(result.stdout)
+            data = self._parse_usage_output(result.stdout)
+            data["source"] = "show_usage"
+            return data
         except subprocess.CalledProcessError as e:
             _log(f"[pw_cluster] Error getting usage for {cluster_uri}: {e}")
             return None
@@ -272,10 +411,61 @@ class PWClusterCollector(BaseCollector):
             _log(f"[pw_cluster] Unexpected error for {cluster_uri}: {e}")
             return None
 
-    def _get_cluster_queues(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
-        """Get queue information for a specific cluster using SSH."""
+    def _get_cluster_usage_via_sshare(
+        self, cluster_uri: str, cluster_name: str
+    ) -> Optional[Dict[str, Any]]:
+        """Fallback Slurm path: aggregate raw usage for the current user."""
         try:
-            cmd = ["pw", "ssh", cluster_uri, "show_queues"]
+            cmd = self._pw(
+                "ssh",
+                cluster_uri,
+                # parsable2 emits unpadded '|'-separated rows we can parse cheaply
+                "sshare --parsable2 --noheader --format=Account,User,RawUsage -U "
+                "2>/dev/null; echo ---WHOAMI---; whoami",
+            )
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0:
+                return None
+            stdout = result.stdout or ""
+            sshare_part, _, who_part = stdout.partition("---WHOAMI---")
+            user = who_part.strip() or None
+            systems = sh.parse_sshare_usage(sshare_part, cluster_name, user)
+            return {
+                "header": f"Slurm raw usage for {cluster_name}",
+                "fiscal_year_info": "",
+                "systems": systems,
+                "source": "sshare",
+            }
+        except Exception as e:
+            _log(f"[pw_cluster] sshare usage error for {cluster_uri}: {e}")
+            return None
+
+    def _get_cluster_queues(
+        self,
+        cluster_uri: str,
+        caps: Optional[Dict[str, bool]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get queue information, dispatching by capability."""
+        if caps is None:
+            caps = self._get_capabilities(cluster_uri)
+
+        if caps.get("show_queues"):
+            return self._get_cluster_queues_via_show(cluster_uri)
+        if caps.get("scontrol") and caps.get("squeue") and caps.get("sacctmgr"):
+            return self._get_cluster_queues_via_slurm(cluster_uri)
+        return None
+
+    def _get_cluster_queues_via_show(
+        self, cluster_uri: str
+    ) -> Optional[Dict[str, Any]]:
+        """Original HPCMP ``show_queues`` path."""
+        try:
+            cmd = self._pw("ssh", cluster_uri, "show_queues")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -293,6 +483,79 @@ class PWClusterCollector(BaseCollector):
         except Exception as e:
             _log(f"[pw_cluster] Unexpected error for {cluster_uri}: {e}")
             return None
+
+    def _get_cluster_queues_via_slurm(
+        self, cluster_uri: str
+    ) -> Optional[Dict[str, Any]]:
+        """Build queue_data from raw Slurm commands (replacement for show_queues).
+
+        Combines ``sacctmgr show qos`` (limits), ``scontrol -o show nodes``
+        (node inventory and state), and ``squeue`` (running/pending jobs)
+        into one call so we make a single SSH round-trip.
+        """
+        try:
+            sep_qos = "---QOS---"
+            sep_nodes = "---NODES---"
+            sep_jobs = "---JOBS---"
+            cmd = self._pw(
+                "ssh",
+                cluster_uri,
+                f"echo {sep_qos}; "
+                "sacctmgr --parsable2 --noheader show qos "
+                "format=Name,Priority,State,MaxWall,MaxJobs,GrpJobs,MaxTRES "
+                "2>/dev/null; "
+                f"echo {sep_nodes}; "
+                "scontrol -o show nodes 2>/dev/null; "
+                f"echo {sep_jobs}; "
+                "squeue --all --array --noheader "
+                '--format="%i|%u|%a|%P|%q|%T|%D|%C|%j" 2>/dev/null',
+            )
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0:
+                _log(
+                    f"[pw_cluster] Slurm queues failed for {cluster_uri} "
+                    f"(rc={result.returncode}): {result.stderr.strip()[:120]}"
+                )
+                return None
+
+            stdout = result.stdout or ""
+            qos_part = self._slice(stdout, sep_qos, sep_nodes)
+            nodes_part = self._slice(stdout, sep_nodes, sep_jobs)
+            jobs_part = self._slice(stdout, sep_jobs, None)
+
+            # sacctmgr --parsable2 emits no header with --noheader, so synthesize one
+            qos_with_header = (
+                "Name|Priority|State|MaxWall|MaxJobs|GrpJobs|MaxTRES\n" + qos_part
+            )
+            qos_info = sh.parse_sacctmgr_qos(qos_with_header)
+            node_info = sh.parse_slurm_nodes(nodes_part)
+            squeue_rows = sh.parse_squeue_jobs(jobs_part)
+
+            queue_data = sh.build_slurm_queue_data(qos_info, node_info, squeue_rows)
+            queue_data["source"] = "slurm"
+            return queue_data
+        except Exception as e:
+            _log(f"[pw_cluster] Slurm queues error for {cluster_uri}: {e}")
+            return None
+
+    @staticmethod
+    def _slice(blob: str, start_marker: str, end_marker: Optional[str]) -> str:
+        """Extract content between two echo markers in a combined SSH blob."""
+        start = blob.find(start_marker)
+        if start == -1:
+            return ""
+        start += len(start_marker)
+        if end_marker is None:
+            return blob[start:].strip()
+        end = blob.find(end_marker, start)
+        if end == -1:
+            return blob[start:].strip()
+        return blob[start:end].strip()
 
     def _parse_usage_output(self, usage_output: str) -> Dict[str, Any]:
         """Parse the usage output from SSH command."""
@@ -453,12 +716,11 @@ class PWClusterCollector(BaseCollector):
     def _get_gpu_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
         """Get GPU information using nvidia-smi."""
         try:
-            cmd = [
-                "pw",
+            cmd = self._pw(
                 "ssh",
                 cluster_uri,
                 "nvidia-smi --query-gpu=index,name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu --format=csv,noheader,nounits 2>/dev/null",
-            ]
+            )
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -519,15 +781,14 @@ class PWClusterCollector(BaseCollector):
         """Get basic system information."""
         try:
             # Get CPU, memory, and load info in one command
-            cmd = [
-                "pw",
+            cmd = self._pw(
                 "ssh",
                 cluster_uri,
                 'echo "CPU:$(nproc 2>/dev/null || echo 0)"; '
                 "echo \"MEM:$(free -m 2>/dev/null | awk '/^Mem:/ {print $2,$3,$4}' || echo '0 0 0')\"; "
                 "echo \"LOAD:$(cat /proc/loadavg 2>/dev/null | awk '{print $1,$2,$3}' || echo '0 0 0')\"; "
                 'echo "HOST:$(hostname 2>/dev/null || echo unknown)"',
-            ]
+            )
             result = subprocess.run(
                 cmd,
                 capture_output=True,
@@ -581,21 +842,35 @@ class PWClusterCollector(BaseCollector):
                 info["hostname"] = line.split(":", 1)[1].strip()
         return info
 
-    def _get_storage_info(self, cluster_uri: str) -> Optional[Dict[str, Any]]:
-        """Get storage information for a cluster.
+    def _get_storage_info(
+        self,
+        cluster_uri: str,
+        caps: Optional[Dict[str, bool]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Get storage information, dispatching by capability.
 
-        Runs `df -h` on common filesystem paths to get storage usage.
+        Prefers ``saccount_params`` output (richer: per-project disk and inode
+        quotas) on NOAA Hera/Ursa, then falls back to ``df -h`` everywhere else.
         """
+        if caps is None:
+            caps = self._get_capabilities(cluster_uri)
+
+        if caps.get("saccount_params"):
+            cluster_name = cluster_uri.split("/")[-1]
+            parsed = self._get_saccount_params(cluster_uri, cluster_name)
+            if parsed is not None:
+                _systems, storage_dirs, _home = parsed
+                if storage_dirs:
+                    return storage_dirs
+
         try:
-            # Single command to get all filesystem info at once
-            storage_cmd = [
-                "pw",
+            storage_cmd = self._pw(
                 "ssh",
                 cluster_uri,
                 "echo 'HOME:'; df -h $HOME 2>/dev/null | tail -1; "
                 "echo 'WORK:'; df -h ${WORKDIR:-$HOME} 2>/dev/null | tail -1; "
                 "echo 'SCRATCH:'; df -h /scratch 2>/dev/null | tail -1 || df -h /tmp 2>/dev/null | tail -1",
-            ]
+            )
             result = subprocess.run(
                 storage_cmd,
                 capture_output=True,

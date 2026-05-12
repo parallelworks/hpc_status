@@ -6,7 +6,8 @@ Provides status information for NOAA Research and Development HPC Systems.
 from typing import Dict, Any, List
 from .base import BaseCollector, CollectorError
 
-# NOAA RDHPCS systems and their properties
+# NOAA RDHPCS systems and their properties.
+# Source: https://docs.rdhpcs.noaa.gov/systems/index.html
 NOAA_SYSTEMS = {
     "hera": {
         "name": "Hera",
@@ -14,6 +15,13 @@ NOAA_SYSTEMS = {
         "scheduler": "Slurm",
         "description": "Dell PowerEdge cluster for weather and climate research",
         "login_node": "hera.rdhpcs.noaa.gov",
+    },
+    "ursa": {
+        "name": "Ursa",
+        "location": "NESCC (Fairmont, WV)",
+        "scheduler": "Slurm",
+        "description": "Dell + AMD/NVIDIA cluster (H100, MI300X, Grace Hopper)",
+        "login_node": "ursa.rdhpcs.noaa.gov",
     },
     "jet": {
         "name": "Jet",
@@ -26,15 +34,8 @@ NOAA_SYSTEMS = {
         "name": "Gaea",
         "location": "ORNL (Oak Ridge, TN)",
         "scheduler": "Slurm",
-        "description": "Cray XC40 for GFDL climate modeling",
+        "description": "HPE Cray for GFDL climate modeling (C5/C6 partitions)",
         "login_node": "gaea.rdhpcs.noaa.gov",
-    },
-    "orion": {
-        "name": "Orion",
-        "location": "MSU (Starkville, MS)",
-        "scheduler": "Slurm",
-        "description": "Dell cluster for operational modeling",
-        "login_node": "orion.rdhpcs.noaa.gov",
     },
     "hercules": {
         "name": "Hercules",
@@ -46,9 +47,16 @@ NOAA_SYSTEMS = {
     "ppan": {
         "name": "PPAN",
         "location": "GFDL (Princeton, NJ)",
-        "scheduler": "Slurm",
-        "description": "Post-processing and analysis cluster",
+        "scheduler": "none (analysis nodes)",
+        "description": "Post-processing and analysis nodes, GFDL filesystems",
         "login_node": "ppan.rdhpcs.noaa.gov",
+    },
+    "mercury": {
+        "name": "Mercury",
+        "location": "NESCC (Fairmont, WV)",
+        "scheduler": "none (data-mover)",
+        "description": "Data-mover / HPSS archive gateway",
+        "login_node": "mercury.rdhpcs.noaa.gov",
     },
 }
 

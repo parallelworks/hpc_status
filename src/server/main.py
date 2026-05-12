@@ -75,7 +75,10 @@ def create_generate_payload_fn(config: Config, store: DataStore):
             from ..collectors.pw_cluster import PWClusterCollector
             import datetime as dt
 
-            collector = PWClusterCollector()
+            pw_cfg = config.get_collector_config("pw_cluster")
+            collector = PWClusterCollector(
+                pw_context=pw_cfg.extra.get("pw_context"),
+            )
 
             # Check if PW CLI is available
             if not collector.is_available():
@@ -203,6 +206,7 @@ def run_server(args) -> None:
             run_immediately=True,
             failure_threshold=config.rate_limiting.failure_threshold,
             pause_duration=config.rate_limiting.pause_duration,
+            pw_context=config.get_collector_config("pw_cluster").extra.get("pw_context"),
         )
         cluster_worker.start()
     else:

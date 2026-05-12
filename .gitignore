@@ -45,6 +45,12 @@ public/data/cluster_usage.json
 system_markdown/
 *.db
 
+# Raw cluster captures — may contain user / project / quota data.
+# Sanitised fixtures live in tests/fixtures/ and are committed explicitly.
+tests/fixtures/raw/
+tests/fixtures/captured/
+.hpc_status/
+
 # Logs
 *.log
 logs/
