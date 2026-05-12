@@ -29,7 +29,7 @@ collectors:
   # Live cluster data via the PW CLI (pw ssh).
   pw_cluster:
     enabled: true
-    refresh_interval: 180  # 3 min — saccount_params is ~1–2s per cluster
+    refresh_interval: 180 # 3 min — saccount_params is ~1–2s per cluster
     # Pin the PW identity for every ``pw`` call. The value here is the IDENTITY
     # KEY as stored in ``~/pw/.credentials`` (see ``identities.<key>``), NOT
     # the longer ``user:<name>@<host>`` form that ``pw context list`` prints.
@@ -41,14 +41,14 @@ collectors:
   noaa_docs:
     enabled: true
     url: "https://docs.rdhpcs.noaa.gov/systems/index.html"
-    refresh_interval: 3600  # docs change infrequently
+    refresh_interval: 3600 # docs change infrequently
 
   # HPCMP scraper does not apply to NOAA — keep disabled to avoid noise.
   hpcmp:
     enabled: false
 
 ui:
-  title: "RDHPCS Status Monitor"
+  title: "RDHPCS Fleet Status"
   eyebrow: "NOAA RDHPCS"
   home_page: "overview"
   default_theme: "light"
@@ -62,7 +62,7 @@ ui:
 
 rate_limiting:
   max_concurrent_ssh: 3
-  ssh_timeout: 60  # capability probe + saccount_params can take a beat
+  ssh_timeout: 60 # capability probe + saccount_params can take a beat
   retry_backoff: [5, 15, 60]
   per_cluster:
     min_interval: 90
