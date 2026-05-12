@@ -146,6 +146,28 @@ def create_generate_payload_fn(config: Config, store: DataStore):
             }
 
             _log(f"[pw_cluster] Collected {len(systems)} systems for fleet status")
+
+            # For NOAA deployments, scrape the RDHPCS user-guide pages once
+            # per fleet refresh and save the resulting markdown so that
+            # /api/system-markdown/<slug> can serve it when a card is clicked.
+            if config.platform.lower() == "noaa":
+                try:
+                    from ..collectors.noaa import NOAABriefingScraper
+                    scraper = NOAABriefingScraper(timeout=20)
+                    try:
+                        briefings = scraper.collect_all()
+                        for slug, content in briefings.items():
+                            store.save_markdown(slug, content)
+                        if briefings:
+                            _log(
+                                f"[noaa_docs] Saved briefings for "
+                                f"{len(briefings)} systems: {sorted(briefings)}"
+                            )
+                    finally:
+                        scraper.close()
+                except Exception as e:
+                    _log(f"[noaa_docs] Briefing scrape skipped: {e}")
+
             return data
 
         return generate_pwcluster_payload
