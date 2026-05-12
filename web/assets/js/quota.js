@@ -339,16 +339,13 @@ const buildSubprojectRows = (systems, { fairshareMode = false } = {}) => {
     const rows = limited
       .map((system) => {
         const fy = system.hours_used != null ? formatHours(system.hours_used) : "--";
-        const rank = system.fairshare_rank || "--";
-        const score =
-          typeof system.fairshare_score === "number"
-            ? system.fairshare_score.toFixed(3)
+        const maxJobs =
+          system.account_max_jobs != null && system.account_max_jobs !== ""
+            ? formatInteger(system.account_max_jobs)
             : "--";
-        const norm =
-          typeof system.norm_shares === "number"
-            ? (system.norm_shares * 100).toFixed(3) + "%"
-            : "--";
-        // QoS chips annotated with walltime / node cap from sacctmgr
+
+        // QoS chips annotated with walltime / node cap from sacctmgr.
+        // This is the "what can I actually run" answer most users want.
         const qosLimits = system.qos_limits || {};
         const qosList = Array.isArray(system.qoses) ? system.qoses : [];
         const qosChips = qosList.length
@@ -370,20 +367,22 @@ const buildSubprojectRows = (systems, { fairshareMode = false } = {}) => {
               .join("")
           : '<span class="muted-text">--</span>';
 
-        const accountJobs =
-          system.account_max_jobs != null && system.account_max_jobs !== ""
-            ? `<small class="muted-text"> · Max jobs: ${formatInteger(system.account_max_jobs)}</small>`
-            : "";
+        // Fairshare score → tooltip on the subproject code, not a column.
+        // Most users don't act on this; it's relevant only when triaging
+        // why a job is queued behind someone else.
+        let fsTooltip = "";
+        if (typeof system.fairshare_score === "number") {
+          const rank = system.fairshare_rank || "?";
+          const score = system.fairshare_score.toFixed(3);
+          fsTooltip = ` title="Fairshare score ${score}, rank ${rank} (lower rank = higher scheduling priority)"`;
+        }
 
         return `
           <tr>
             <td>${system.system || "--"}</td>
-            <td><code>${system.subproject || "--"}</code>${accountJobs}</td>
+            <td><code${fsTooltip}>${system.subproject || "--"}</code></td>
             <td title="Core-hours used since NOAA fiscal year start (Oct 1)">${fy}</td>
-            <td title="Fairshare rank (lower number = higher priority)" class="muted-text">
-              <strong>${rank}</strong>
-              <small> · score ${score} · share ${norm}</small>
-            </td>
+            <td title="Concurrent-job cap on this association (sacctmgr MaxJobs)">${maxJobs}</td>
             <td>${qosChips}</td>
           </tr>
         `;
@@ -649,15 +648,12 @@ const buildClusterCard = (cluster) => {
   let donutBlock;
   let metricsList;
   if (fairshareMode) {
-    // NOAA fairshare style — show FY usage and best fairshare rank instead
-    const bestRank = systems
-      .map((s) => s.fairshare_rank)
-      .filter((r) => r && r.includes("/"))
-      .map((r) => {
-        const [pos, total] = r.split("/").map((x) => Number(x));
-        return { pos, total, raw: r };
-      })
-      .sort((a, b) => a.pos - b.pos)[0];
+    // NOAA fairshare style — what users care about: FY usage, projects, and
+    // their concurrent-job ceiling (the highest cap across their projects).
+    const maxJobsAcrossProjects = systems
+      .map((s) => Number(s.account_max_jobs))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .reduce((a, b) => Math.max(a, b), 0);
     const fyDetail = fyStart ? `FY since ${fyStart}` : "Fiscal year usage";
     donutBlock = `
       <div class="donut-chart" aria-label="${metadata.name || "Cluster"} fiscal year usage">
@@ -672,7 +668,7 @@ const buildClusterCard = (cluster) => {
       <ul class="cluster-metrics">
         <li title="Total core-hours consumed this fiscal year"><span>FY Used</span><strong>${formatHours(totals.used)}</strong></li>
         <li title="Number of projects you have access to on this cluster"><span>Projects</span><strong>${systems.length}</strong></li>
-        <li title="Best fairshare rank across this cluster's projects (lower = higher priority)"><span>Top rank</span><strong>${bestRank ? bestRank.raw : "--"}</strong></li>
+        <li title="Highest concurrent-job cap across this cluster's projects (sacctmgr MaxJobs)"><span>Max jobs</span><strong>${maxJobsAcrossProjects ? formatInteger(maxJobsAcrossProjects) : "--"}</strong></li>
       </ul>
     `;
   } else {
@@ -701,10 +697,10 @@ const buildClusterCard = (cluster) => {
     ? `
       <tr>
         <th>System <span class="th-help" title="HPC system for this project">ⓘ</span></th>
-        <th>Subproject <span class="th-help" title="Project code (NOAA RDHPCS account name)">ⓘ</span></th>
+        <th>Subproject <span class="th-help" title="Project code (NOAA RDHPCS account name). Hover for fairshare rank/score.">ⓘ</span></th>
         <th>FY Used (hrs) <span class="th-help" title="Core-hours consumed since the start of the current NOAA fiscal year (Oct 1)">ⓘ</span></th>
-        <th>Fairshare <span class="th-help" title="Slurm fairshare score, rank (lower=higher priority), and normalised share of the cluster">ⓘ</span></th>
-        <th>QOSes <span class="th-help" title="Queue-of-service classes you can submit to with this project">ⓘ</span></th>
+        <th>Max jobs <span class="th-help" title="Concurrent-job cap on this association (sacctmgr MaxJobs). 0 = no submission privileges.">ⓘ</span></th>
+        <th>QoSes &amp; walltime <span class="th-help" title="Queue-of-service classes you can submit to, each annotated with its max walltime and (where set) max node count">ⓘ</span></th>
       </tr>
     `
     : `
