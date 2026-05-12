@@ -164,15 +164,16 @@
             <tr>
               <th>Node type <span class="th-help" title="Category of compute node (e.g., standard, GPU, bigmem)">ⓘ</span></th>
               <th>Nodes available <span class="th-help" title="Number of nodes ready to accept jobs">ⓘ</span></th>
-              <th>Cores per node <span class="th-help" title="CPU cores on each node of this type">ⓘ</span></th>
-              <th>Cores available <span class="th-help" title="Total cores that could be allocated (nodes × cores per node)">ⓘ</span></th>
+              <th>Cores per node <span class="th-help" title="CPU cores on each node of this type (per-partition average — heterogeneous partitions show the mean)">ⓘ</span></th>
+              <th>Cores available <span class="th-help" title="Total cores that could be allocated. For partitions with multiple node sizes this is the actual sum of CPUTot, which may not equal nodes × cores-per-node">ⓘ</span></th>
               <th>Cores running <span class="th-help" title="Cores currently executing jobs">ⓘ</span></th>
               <th>Cores free <span class="th-help" title="Cores available for new jobs">ⓘ</span></th>
+              <th>GPUs <span class="th-help" title="Total GPUs in this partition (from Slurm Gres). Type and per-node count appear in a tooltip on the value.">ⓘ</span></th>
             </tr>
           </thead>
           <tbody id="node-body">
             <tr>
-              <td colspan="6" class="placeholder">Loading node data…</td>
+              <td colspan="7" class="placeholder">Loading node data…</td>
             </tr>
           </tbody>
         </table>

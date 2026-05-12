@@ -423,17 +423,35 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
 
     Returns a dict mapping partition name to:
         {
-            "nodes_up": int,
-            "nodes_down": int,
-            "cores_up": int,
-            "cores_down": int,
-            "cores_per_node": int (modal cores-per-node),
+            "nodes_up":       int,
+            "nodes_down":     int,
+            "cores_up":       int,
+            "cores_down":     int,
+            "cores_per_node": int (per-partition average, not cluster modal),
+            "gpus_up":        int (parsed from Gres=gpu:<type>:N),
+            "gpus_down":      int,
+            "gpus_per_node":  int (per-partition average),
+            "gpu_types":      List[str] (e.g. ["h100", "gh200"])
         }
-    Plus a ``__all__`` aggregate row across the whole cluster.
+    Plus an ``overall`` aggregate row across the whole cluster.
+
+    Heterogeneous partitions (e.g. Ursa u1-gh has 72-core CPUTot vs the
+    cluster's 192) are common, so cores_per_node is computed per-partition
+    rather than picking the cluster-wide modal.
+
+    Nodes that scontrol reports without a ``Partitions=`` field (login,
+    management, drained-only nodes) are skipped — they're not user-
+    submittable and only confused the table with an "unknown" bucket.
     """
-    by_partition: Dict[str, Dict[str, int]] = {}
-    overall = {"nodes_up": 0, "nodes_down": 0, "cores_up": 0, "cores_down": 0}
-    cpn_counts: Dict[int, int] = {}
+    by_partition: Dict[str, Dict[str, Any]] = {}
+    overall = {
+        "nodes_up": 0,
+        "nodes_down": 0,
+        "cores_up": 0,
+        "cores_down": 0,
+        "gpus_up": 0,
+        "gpus_down": 0,
+    }
 
     for line in (scontrol_output or "").splitlines():
         line = line.strip()
@@ -441,7 +459,10 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
             continue
 
         fields = _parse_scontrol_oneline(line)
-        partitions = fields.get("Partitions") or "unknown"
+        partitions = fields.get("Partitions") or ""
+        if not partitions:
+            # Login / management / orphaned nodes — not part of any queue.
+            continue
         state = (fields.get("State") or "").upper()
 
         # CPUTot or Sockets * CoresPerSocket
@@ -458,6 +479,9 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
             except ValueError:
                 cores = 0
 
+        gres = fields.get("Gres", "") or ""
+        node_gpus, node_gpu_types = _parse_gres_gpus(gres)
+
         is_up = any(s in state for s in _NODE_UP_STATES)
 
         for part in partitions.split(","):
@@ -466,28 +490,70 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
                 continue
             row = by_partition.setdefault(
                 part,
-                {"nodes_up": 0, "nodes_down": 0, "cores_up": 0, "cores_down": 0},
+                {
+                    "nodes_up": 0,
+                    "nodes_down": 0,
+                    "cores_up": 0,
+                    "cores_down": 0,
+                    "gpus_up": 0,
+                    "gpus_down": 0,
+                    "gpu_types": set(),
+                },
             )
             if is_up:
                 row["nodes_up"] += 1
                 row["cores_up"] += cores
+                row["gpus_up"] += node_gpus
                 overall["nodes_up"] += 1
                 overall["cores_up"] += cores
+                overall["gpus_up"] += node_gpus
             else:
                 row["nodes_down"] += 1
                 row["cores_down"] += cores
+                row["gpus_down"] += node_gpus
                 overall["nodes_down"] += 1
                 overall["cores_down"] += cores
+                overall["gpus_down"] += node_gpus
+            row["gpu_types"].update(node_gpu_types)
 
-        if cores:
-            cpn_counts[cores] = cpn_counts.get(cores, 0) + 1
-
-    modal_cpn = max(cpn_counts, key=cpn_counts.get) if cpn_counts else 0
+    # Per-partition averages — these now reconcile to nodes × cpn = cores.
     for row in by_partition.values():
-        row["cores_per_node"] = modal_cpn
-    overall["cores_per_node"] = modal_cpn
+        n_up = row["nodes_up"]
+        row["cores_per_node"] = row["cores_up"] // n_up if n_up else 0
+        row["gpus_per_node"] = row["gpus_up"] // n_up if n_up else 0
+        row["gpu_types"] = sorted(row["gpu_types"])
+
+    overall["cores_per_node"] = (
+        overall["cores_up"] // overall["nodes_up"] if overall["nodes_up"] else 0
+    )
 
     return {"by_partition": by_partition, "overall": overall}
+
+
+_GRES_GPU_RE = re.compile(r"gpu:([^:,()]+)(?::(\d+))?")
+
+
+def _parse_gres_gpus(gres: str) -> Tuple[int, List[str]]:
+    """Parse a Slurm ``Gres`` string and return (total_gpus, [gpu_type, ...]).
+
+    Examples:
+        ``Gres=gpu:h100:4``       → (4, ["h100"])
+        ``Gres=gpu:mi300x:8``     → (8, ["mi300x"])
+        ``Gres=gpu:gh200:1``      → (1, ["gh200"])
+        ``Gres=(null)``           → (0, [])
+        ``Gres=gpu:h100:4,gpu:a100:8`` → (12, ["h100", "a100"])
+    """
+    if not gres or gres in ("(null)", "null", ""):
+        return 0, []
+    total = 0
+    types: List[str] = []
+    for m in _GRES_GPU_RE.finditer(gres):
+        gtype = m.group(1)
+        count = int(m.group(2)) if m.group(2) else 1
+        total += count
+        if gtype and gtype != "no_consume" and gtype not in types:
+            types.append(gtype)
+    return total, types
 
 
 def _tightest(qos_names: List[str], qos_info: Dict[str, Dict[str, Any]], field: str) -> str:
@@ -741,6 +807,7 @@ def build_slurm_queue_data(
 
     # Build node rows — one per partition (treated as a "node class")
     for part, info in by_part.items():
+        gpu_types = info.get("gpu_types") or []
         nodes.append(
             {
                 "node_type": part,
@@ -753,6 +820,9 @@ def build_slurm_queue_data(
                 "cores_free": str(
                     max(info.get("cores_up", 0) - per_part_running_cores.get(part, 0), 0)
                 ),
+                "gpus_per_node": str(info.get("gpus_per_node", 0)),
+                "gpus_available": str(info.get("gpus_up", 0)),
+                "gpu_types": ",".join(gpu_types) if gpu_types else "",
             }
         )
 

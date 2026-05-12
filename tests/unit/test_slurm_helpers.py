@@ -152,14 +152,79 @@ def test_parse_slurm_nodes_groups_by_partition_and_state():
     assert by_part["batch"]["nodes_up"] == 3
     assert by_part["batch"]["nodes_down"] == 1
     assert by_part["batch"]["cores_up"] == 3 * 128
+    # cores_per_node is now per-partition (cores_up / nodes_up), not modal.
+    assert by_part["batch"]["cores_per_node"] == 128
 
     # gpu: 2 up (IDLE, ALLOCATED), 0 down
     assert by_part["gpu"]["nodes_up"] == 2
     assert by_part["gpu"]["nodes_down"] == 0
     assert by_part["gpu"]["cores_up"] == 2 * 64
+    assert by_part["gpu"]["cores_per_node"] == 64
 
-    # Modal CPN is 128 (4 batch nodes vs 2 gpu nodes)
-    assert info["overall"]["cores_per_node"] == 128
+    # Overall CPN = total_cores / total_nodes
+    assert info["overall"]["cores_per_node"] == (3 * 128 + 2 * 64) // 5
+
+
+def test_parse_slurm_nodes_skips_nodes_without_partitions():
+    # Login / management / orphaned nodes have no Partitions= field on
+    # NOAA Gaea. They shouldn't appear as an "unknown" bucket.
+    blob = (
+        "NodeName=login01 Sockets=2 CoresPerSocket=64 CPUTot=128 "
+        "State=IDLE\n"
+        "NodeName=cn01 Sockets=2 CoresPerSocket=64 CPUTot=128 "
+        "State=IDLE Partitions=batch\n"
+    )
+    info = sh.parse_slurm_nodes(blob)
+    assert set(info["by_partition"].keys()) == {"batch"}
+    assert info["by_partition"]["batch"]["nodes_up"] == 1
+
+
+def test_parse_slurm_nodes_extracts_heterogeneous_cpn_and_gpus():
+    # Mirrors NOAA Ursa: u1-gh nodes have CPUTot=72 + Gres=gpu:gh200:1,
+    # u1-mi300x nodes have CPUTot=96 + Gres=gpu:mi300x:8. The previous
+    # implementation showed the cluster-wide modal which made the
+    # "nodes × cpn vs cores_available" math look broken.
+    blob = (
+        "NodeName=gh01 CPUTot=72 Gres=gpu:gh200:1 State=IDLE "
+        "Partitions=u1-gh\n"
+        "NodeName=gh02 CPUTot=72 Gres=gpu:gh200:1 State=MIXED "
+        "Partitions=u1-gh\n"
+        "NodeName=mi01 CPUTot=96 Gres=gpu:mi300x:8 State=ALLOCATED "
+        "Partitions=u1-mi300x\n"
+        "NodeName=cn01 CPUTot=192 Gres=(null) State=IDLE "
+        "Partitions=u1-compute\n"
+    )
+    info = sh.parse_slurm_nodes(blob)
+    gh = info["by_partition"]["u1-gh"]
+    mi = info["by_partition"]["u1-mi300x"]
+    cn = info["by_partition"]["u1-compute"]
+
+    # Per-partition CPN matches the actual hardware, not the cluster modal
+    assert gh["cores_per_node"] == 72
+    assert mi["cores_per_node"] == 96
+    assert cn["cores_per_node"] == 192
+
+    # GPU counts come from Gres
+    assert gh["gpus_per_node"] == 1
+    assert gh["gpus_up"] == 2
+    assert gh["gpu_types"] == ["gh200"]
+    assert mi["gpus_per_node"] == 8
+    assert mi["gpus_up"] == 8
+    assert mi["gpu_types"] == ["mi300x"]
+    assert cn["gpus_per_node"] == 0
+    assert cn["gpus_up"] == 0
+    assert cn["gpu_types"] == []
+
+
+def test_parse_gres_gpus_handles_common_forms():
+    assert sh._parse_gres_gpus("gpu:h100:4") == (4, ["h100"])
+    assert sh._parse_gres_gpus("gpu:gh200:1") == (1, ["gh200"])
+    assert sh._parse_gres_gpus("(null)") == (0, [])
+    assert sh._parse_gres_gpus("") == (0, [])
+    # Multiple GPU lines collapse: count sums, types dedup.
+    assert sh._parse_gres_gpus("gpu:h100:4,gpu:a100:8") == (12, ["h100", "a100"])
+    # No explicit count → 1 per entry (uncommon but valid).
+    assert sh._parse_gres_gpus("gpu:h100") == (1, ["h100"])
 
 
 def test_parse_squeue_jobs_extracts_fields():

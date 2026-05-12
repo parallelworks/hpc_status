@@ -209,7 +209,7 @@ const setQueueGridPlaceholder = (message) => {
 
 const setNodePlaceholder = (message) => {
   if (!elements.nodeBody) return;
-  elements.nodeBody.innerHTML = `<tr><td colspan="6" class="placeholder">${message}</td></tr>`;
+  elements.nodeBody.innerHTML = `<tr><td colspan="7" class="placeholder">${message}</td></tr>`;
 };
 
 const cacheElements = () => {
@@ -604,6 +604,21 @@ const renderNodeTable = (nodes) => {
   }
   const rows = filtered
     .map((node) => {
+      const gpusTotal = toNumber(node.gpus_available);
+      const gpusPerNode = toNumber(node.gpus_per_node);
+      const gpuTypes = (node.gpu_types || "").trim();
+      let gpuCell = '<span class="muted-text">—</span>';
+      if (gpusTotal > 0) {
+        const tip = [
+          gpuTypes ? `Type${gpuTypes.includes(",") ? "s" : ""}: ${gpuTypes}` : "",
+          gpusPerNode ? `${gpusPerNode}/node` : "",
+        ]
+          .filter(Boolean)
+          .join(" · ");
+        gpuCell = `<span title="${tip}">${formatNumber(gpusTotal)}${
+          gpusPerNode ? ` <small class="muted-text">(${gpusPerNode}/node)</small>` : ""
+        }</span>`;
+      }
       return `
         <tr>
           <td>${node.node_type || "--"}</td>
@@ -612,6 +627,7 @@ const renderNodeTable = (nodes) => {
           <td>${formatNumber(node.cores_available)}</td>
           <td>${formatNumber(node.cores_running)}</td>
           <td>${formatNumber(node.cores_free)}</td>
+          <td>${gpuCell}</td>
         </tr>`;
     })
     .join("");
