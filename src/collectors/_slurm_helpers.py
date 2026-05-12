@@ -553,6 +553,57 @@ def parse_squeue_jobs(squeue_output: str) -> List[Dict[str, str]]:
     return rows
 
 
+def parse_sacctmgr_assoc(assoc_output: str) -> Dict[str, Dict[str, Any]]:
+    """Parse ``sacctmgr --parsable2 show association user=$USER`` output.
+
+    Returns dict keyed by account name with fields:
+        {
+            "user": str,
+            "qos": List[str],
+            "fairshare": str,
+            "max_jobs": str (raw),
+            "grp_jobs": str (raw),
+        }
+
+    For NOAA RDHPCS the user-row carries the operationally relevant
+    MaxJobs/GrpJobs limits — the account row often shows ``parent``.
+    """
+    rows: Dict[str, Dict[str, Any]] = {}
+    lines = [ln for ln in (assoc_output or "").splitlines() if ln.strip()]
+    if not lines:
+        return rows
+    header = [h.strip() for h in lines[0].split("|")]
+
+    def idx(name: str) -> int:
+        return header.index(name) if name in header else -1
+
+    i_acct = idx("Account")
+    i_user = idx("User")
+    i_qos = idx("QOS")
+    i_share = idx("Share") if "Share" in header else idx("Fairshare")
+    i_max = idx("MaxJobs")
+    i_grp = idx("GrpJobs")
+
+    for line in lines[1:]:
+        cells = [c.strip() for c in line.split("|")]
+
+        def get(i: int) -> str:
+            return cells[i] if 0 <= i < len(cells) else ""
+
+        account = get(i_acct)
+        if not account:
+            continue
+        qos_raw = get(i_qos)
+        rows[account] = {
+            "user": get(i_user),
+            "qos": [q.strip() for q in qos_raw.split(",") if q.strip()] if qos_raw else [],
+            "fairshare": get(i_share),
+            "max_jobs": get(i_max),
+            "grp_jobs": get(i_grp),
+        }
+    return rows
+
+
 def parse_sacctmgr_qos(qos_output: str) -> Dict[str, Dict[str, Any]]:
     """Parse ``sacctmgr --parsable2 show qos`` output."""
     info: Dict[str, Dict[str, Any]] = {}

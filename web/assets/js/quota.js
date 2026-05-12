@@ -34,6 +34,22 @@ const formatHours = (value, { compact = false } = {}) => {
   return formatter.format(Math.round(numeric));
 };
 
+// Slurm walltime strings: "D-HH:MM:SS", "HH:MM:SS", "MM:SS", "UNLIMITED",
+// or an empty/dash value. Returns "7d", "16h", "30m", "∞", or "".
+const formatWalltime = (raw) => {
+  if (!raw || raw === "-" || raw === "0:00:00") return "";
+  if (/^unlimited$/i.test(raw) || /^infinite$/i.test(raw)) return "∞";
+  const m = String(raw).match(/^(?:(\d+)-)?(\d+):(\d+)(?::(\d+))?$/);
+  if (!m) return raw;
+  const days = Number(m[1] || 0);
+  const hours = Number(m[2] || 0);
+  const mins = Number(m[3] || 0);
+  if (days > 0) return `${days}d`;
+  if (hours > 0) return `${hours}h`;
+  if (mins > 0) return `${mins}m`;
+  return raw;
+};
+
 const parseSystems = (cluster) => cluster?.usage_data?.systems || [];
 const parseQueues = (cluster) => cluster?.queue_data?.queues || [];
 const parseGpus = (cluster) => cluster?.gpu_data?.gpus || [];
@@ -332,26 +348,43 @@ const buildSubprojectRows = (systems, { fairshareMode = false } = {}) => {
           typeof system.norm_shares === "number"
             ? (system.norm_shares * 100).toFixed(3) + "%"
             : "--";
-        const qosTags = Array.isArray(system.qoses) && system.qoses.length
-          ? system.qoses
-              .slice(0, 4)
-              .map((q) => `<span class="queue-chip is-idle"><small>${q}</small></span>`)
+        // QoS chips annotated with walltime / node cap from sacctmgr
+        const qosLimits = system.qos_limits || {};
+        const qosList = Array.isArray(system.qoses) ? system.qoses : [];
+        const qosChips = qosList.length
+          ? qosList
+              .map((q) => {
+                const lim = qosLimits[q] || {};
+                const wall = formatWalltime(lim.max_wall);
+                const tres = lim.max_tres || "";
+                const nodeMatch = tres.match(/node=(\d+)/);
+                const nodes = nodeMatch ? `${nodeMatch[1]}n` : "";
+                const annot = [wall, nodes].filter(Boolean).join(" · ");
+                const title = annot
+                  ? `${q}: max ${annot}`
+                  : `${q} (no published limits)`;
+                return `<span class="queue-chip is-idle" title="${title}">${q}${
+                  annot ? ` <small>${annot}</small>` : ""
+                }</span>`;
+              })
               .join("")
           : '<span class="muted-text">--</span>';
-        const extraQos =
-          Array.isArray(system.qoses) && system.qoses.length > 4
-            ? `<small class="muted-text"> +${system.qoses.length - 4}</small>`
+
+        const accountJobs =
+          system.account_max_jobs != null && system.account_max_jobs !== ""
+            ? `<small class="muted-text"> · Max jobs: ${formatInteger(system.account_max_jobs)}</small>`
             : "";
+
         return `
           <tr>
             <td>${system.system || "--"}</td>
-            <td><code>${system.subproject || "--"}</code></td>
+            <td><code>${system.subproject || "--"}</code>${accountJobs}</td>
             <td title="Core-hours used since NOAA fiscal year start (Oct 1)">${fy}</td>
             <td title="Fairshare rank (lower number = higher priority)" class="muted-text">
               <strong>${rank}</strong>
               <small> · score ${score} · share ${norm}</small>
             </td>
-            <td>${qosTags}${extraQos}</td>
+            <td>${qosChips}</td>
           </tr>
         `;
       })

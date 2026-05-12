@@ -386,11 +386,15 @@ class PWClusterCollector(BaseCollector):
             if parsed is not None:
                 systems, _storage, _home = parsed
                 # Enrich rows with sfairshare allocation/usage + sreport
-                # core-hour totals for the current NOAA fiscal year.
+                # core-hour totals for the current NOAA fiscal year +
+                # per-account/QoS operational limits (MaxWall, MaxJobs, etc).
                 self._enrich_with_sfairshare(
                     systems, cluster_uri, caps=caps
                 )
                 self._enrich_with_sreport(
+                    systems, cluster_uri, caps=caps
+                )
+                self._enrich_with_assoc_and_qos(
                     systems, cluster_uri, caps=caps
                 )
                 source_tags = ["saccount_params"]
@@ -398,6 +402,8 @@ class PWClusterCollector(BaseCollector):
                     source_tags.append("sfairshare")
                 if caps.get("sreport"):
                     source_tags.append("sreport")
+                if caps.get("sacctmgr"):
+                    source_tags.append("sacctmgr")
                 return {
                     "header": f"NOAA RDHPCS usage for {cluster_name}",
                     "fiscal_year_info": f"FY since {sh.fiscal_year_start()}",
@@ -445,6 +451,80 @@ class PWClusterCollector(BaseCollector):
                 row["raw_usage_hours"] = rec["raw_usage_hours"]
         except Exception as e:
             _log(f"[pw_cluster] sfairshare error for {cluster_uri}: {e}")
+
+    def _enrich_with_assoc_and_qos(
+        self,
+        systems: List[Dict[str, Any]],
+        cluster_uri: str,
+        caps: Dict[str, bool],
+    ) -> None:
+        """Attach per-account allocation limits to each project row.
+
+        For each project the user belongs to, populate:
+          - ``account_max_jobs``  concurrent-job cap on the association
+          - ``account_qoses``     QoSes the *association* grants
+          - ``qos_limits``        dict[qos_name] → {max_wall, max_jobs,
+                                                    max_tres, grp_jobs}
+
+        Uses ``sacctmgr show association user=$USER`` for the per-account
+        record and ``sacctmgr show qos`` for the QoS ceilings. Both are
+        rolled into a single SSH round-trip.
+        """
+        if not (caps.get("sacctmgr") and systems):
+            return
+        try:
+            sep = "---QOS---"
+            cmd = self._pw(
+                "ssh",
+                cluster_uri,
+                "sacctmgr --parsable2 show association user=$(whoami) "
+                "format=Account,User,QOS,Fairshare,MaxJobs,GrpJobs 2>/dev/null; "
+                f"echo {sep}; "
+                "sacctmgr --parsable2 show qos "
+                "format=Name,MaxWall,MaxJobs,GrpJobs,MaxTRES,Priority 2>/dev/null",
+            )
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0:
+                return
+            stdout = result.stdout or ""
+            assoc_part, _, qos_part = stdout.partition(sep)
+            assoc_rows = sh.parse_sacctmgr_assoc(assoc_part)
+            qos_info = sh.parse_sacctmgr_qos(qos_part.strip())
+
+            for row in systems:
+                acct = row.get("subproject")
+                if not acct:
+                    continue
+                # Per-account fields
+                if acct in assoc_rows:
+                    a = assoc_rows[acct]
+                    row["account_max_jobs"] = a.get("max_jobs") or a.get("grp_jobs") or None
+                    if a.get("qos"):
+                        row["account_qoses"] = a["qos"]
+                # Per-QoS limits — only for QoSes this project can actually use
+                project_qoses = row.get("qoses") or []
+                if project_qoses:
+                    limits: Dict[str, Dict[str, Any]] = {}
+                    for q in project_qoses:
+                        rec = qos_info.get(q)
+                        if not rec:
+                            continue
+                        limits[q] = {
+                            "max_wall": rec.get("MaxWall") or "",
+                            "max_jobs": rec.get("MaxJobs") or "",
+                            "grp_jobs": rec.get("GrpJobs") or "",
+                            "max_tres": rec.get("MaxTRES") or "",
+                            "priority": rec.get("Priority") or "",
+                        }
+                    if limits:
+                        row["qos_limits"] = limits
+        except Exception as e:
+            _log(f"[pw_cluster] sacctmgr assoc/qos error for {cluster_uri}: {e}")
 
     def _enrich_with_sreport(
         self,
