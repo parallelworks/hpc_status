@@ -33,6 +33,8 @@ PROBE_COMMANDS = (
     "show_queues",
     "show_storage",
     "saccount_params",
+    "sfairshare",
+    "sreport",
     "sshare",
     "sinfo",
     "squeue",
@@ -212,6 +214,115 @@ def _format_size_mb(mb: int) -> str:
     if mb >= 1024:
         return f"{mb / 1024:.1f}G"
     return f"{mb}M"
+
+
+# ---------------------------------------------------------------------------
+# sfairshare parser (NOAA Hera/Ursa) — adds allocation context to saccount_params
+# ---------------------------------------------------------------------------
+
+
+def parse_sfairshare_csv(output: str) -> Dict[str, Dict[str, Any]]:
+    """Parse ``sfairshare -C`` (CSV-with-header) output.
+
+    Returns a dict keyed by Project, e.g. ``{"my-proj": {"fairshare": 0.54, ...}}``.
+    Expected columns from sfairshare:
+        Project, FairShare, Rank, maxRank, NormShares, EffUsage, RawShares, RawUsage
+    """
+    rows: Dict[str, Dict[str, Any]] = {}
+    lines = [ln for ln in (output or "").splitlines() if ln.strip()]
+    if not lines:
+        return rows
+    header = [h.strip() for h in lines[0].split(",")]
+    # Map header → index for resilience to column order changes
+    idx = {name: header.index(name) for name in header}
+
+    def _get(cells: List[str], name: str) -> str:
+        i = idx.get(name, -1)
+        return cells[i].strip() if 0 <= i < len(cells) else ""
+
+    for line in lines[1:]:
+        cells = [c.strip() for c in line.split(",")]
+        project = _get(cells, "Project")
+        if not project:
+            continue
+        try:
+            fairshare = float(_get(cells, "FairShare") or 0)
+        except ValueError:
+            fairshare = 0.0
+        try:
+            norm_shares = float(_get(cells, "NormShares") or 0)
+        except ValueError:
+            norm_shares = 0.0
+        try:
+            eff_usage = float(_get(cells, "EffUsage") or 0)
+        except ValueError:
+            eff_usage = 0.0
+        try:
+            raw_shares = float(_get(cells, "RawShares") or 0)
+        except ValueError:
+            raw_shares = 0.0
+        try:
+            raw_usage = float(_get(cells, "RawUsage") or 0)
+        except ValueError:
+            raw_usage = 0.0
+        rank = _get(cells, "Rank")
+        max_rank = _get(cells, "maxRank")
+        rows[project] = {
+            "fairshare": fairshare,
+            "rank": rank,
+            "max_rank": max_rank,
+            "rank_str": f"{rank}/{max_rank}" if rank and max_rank else None,
+            "norm_shares": norm_shares,
+            "eff_usage": eff_usage,
+            "raw_shares": raw_shares,
+            "raw_usage_seconds": raw_usage,
+            "raw_usage_hours": int(raw_usage / 3600) if raw_usage else 0,
+        }
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# sreport parser — windowed core-hours per account
+# ---------------------------------------------------------------------------
+
+
+def parse_sreport_account_user(output: str) -> Dict[str, int]:
+    """Parse ``sreport cluster AccountUtilizationByUser -P --noheader`` output.
+
+    Format per line: ``cluster|account|user|fullname|used|energy``. The row
+    with an empty user is the account-level total. Returns a dict mapping
+    account → total core-hours used (within the sreport time window).
+    """
+    totals: Dict[str, int] = {}
+    for line in (output or "").splitlines():
+        if not line.strip():
+            continue
+        cells = line.split("|")
+        if len(cells) < 5:
+            continue
+        account = cells[1].strip()
+        user = cells[2].strip()
+        if user:
+            continue  # per-user breakdown, skip
+        try:
+            hours = int(float(cells[4]))
+        except ValueError:
+            hours = 0
+        if account:
+            totals[account] = hours
+    return totals
+
+
+def fiscal_year_start(today: Optional["datetime.date"] = None) -> str:
+    """Return the NOAA fiscal year start date (October 1) as YYYY-MM-DD.
+
+    NOAA FYxx runs Oct 1 (xx-1) → Sep 30 (xx).
+    """
+    import datetime as _dt
+
+    d = today or _dt.date.today()
+    year = d.year if d.month >= 10 else d.year - 1
+    return f"{year}-10-01"
 
 
 # ---------------------------------------------------------------------------

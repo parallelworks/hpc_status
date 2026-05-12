@@ -375,15 +375,110 @@ class PWClusterCollector(BaseCollector):
             parsed = self._get_saccount_params(cluster_uri, cluster_name)
             if parsed is not None:
                 systems, _storage, _home = parsed
+                # Enrich rows with sfairshare allocation/usage + sreport
+                # core-hour totals for the current NOAA fiscal year.
+                self._enrich_with_sfairshare(
+                    systems, cluster_uri, caps=caps
+                )
+                self._enrich_with_sreport(
+                    systems, cluster_uri, caps=caps
+                )
+                source_tags = ["saccount_params"]
+                if caps.get("sfairshare"):
+                    source_tags.append("sfairshare")
+                if caps.get("sreport"):
+                    source_tags.append("sreport")
                 return {
                     "header": f"NOAA RDHPCS usage for {cluster_name}",
-                    "fiscal_year_info": "",
+                    "fiscal_year_info": f"FY since {sh.fiscal_year_start()}",
                     "systems": systems,
-                    "source": "saccount_params",
+                    "source": "+".join(source_tags),
                 }
         if caps.get("sshare"):
             return self._get_cluster_usage_via_sshare(cluster_uri, cluster_name)
         return None
+
+    def _enrich_with_sfairshare(
+        self,
+        systems: List[Dict[str, Any]],
+        cluster_uri: str,
+        caps: Dict[str, bool],
+    ) -> None:
+        """Run ``sfairshare -C`` and fold the data into each project row.
+
+        Adds fairshare-flavoured fields (norm_shares, eff_usage, raw_shares,
+        raw_usage_hours) and updates fairshare_score/fairshare_rank with the
+        authoritative sfairshare value when present.
+        """
+        if not caps.get("sfairshare"):
+            return
+        try:
+            cmd = self._pw("ssh", cluster_uri, "sfairshare -C 2>/dev/null")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0:
+                return
+            fs_rows = sh.parse_sfairshare_csv(result.stdout)
+            for row in systems:
+                rec = fs_rows.get(row.get("subproject", ""))
+                if not rec:
+                    continue
+                row["fairshare_score"] = rec["fairshare"]
+                row["fairshare_rank"] = rec["rank_str"] or row.get("fairshare_rank")
+                row["norm_shares"] = rec["norm_shares"]
+                row["effective_usage"] = rec["eff_usage"]
+                row["raw_shares"] = rec["raw_shares"]
+                row["raw_usage_hours"] = rec["raw_usage_hours"]
+        except Exception as e:
+            _log(f"[pw_cluster] sfairshare error for {cluster_uri}: {e}")
+
+    def _enrich_with_sreport(
+        self,
+        systems: List[Dict[str, Any]],
+        cluster_uri: str,
+        caps: Dict[str, bool],
+    ) -> None:
+        """Run ``sreport cluster AccountUtilizationByUser`` for the user's projects.
+
+        Fills ``hours_used`` with the project-level core-hour total over the
+        current NOAA fiscal year window (FY starts Oct 1).
+        """
+        if not caps.get("sreport") or not systems:
+            return
+        accounts = ",".join(
+            sorted({r.get("subproject", "") for r in systems if r.get("subproject")})
+        )
+        if not accounts:
+            return
+        fy_start = sh.fiscal_year_start()
+        try:
+            cmd = self._pw(
+                "ssh",
+                cluster_uri,
+                f"sreport cluster AccountUtilizationByUser "
+                f"start={fy_start} account={accounts} "
+                "-t Hours -P --noheader 2>/dev/null",
+            )
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=self.ssh_timeout,
+            )
+            if result.returncode != 0:
+                return
+            account_hours = sh.parse_sreport_account_user(result.stdout)
+            for row in systems:
+                acct = row.get("subproject", "")
+                if acct in account_hours:
+                    row["hours_used"] = account_hours[acct]
+                    row["fiscal_year_start"] = fy_start
+        except Exception as e:
+            _log(f"[pw_cluster] sreport error for {cluster_uri}: {e}")
 
     def _get_cluster_usage_via_show(
         self, cluster_uri: str

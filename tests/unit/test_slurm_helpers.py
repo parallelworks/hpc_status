@@ -37,6 +37,8 @@ def test_capability_probe_round_trip():
             "show_queues=0",
             "show_storage=0",
             "saccount_params=1",
+            "sfairshare=1",
+            "sreport=1",
             "sshare=1",
             "sinfo=1",
             "squeue=1",
@@ -51,6 +53,8 @@ def test_capability_probe_round_trip():
     assert caps["show_usage"] is True
     assert caps["show_queues"] is False
     assert caps["saccount_params"] is True
+    assert caps["sfairshare"] is True
+    assert caps["sreport"] is True
     assert caps["lfs"] is False
     assert caps["nvidia-smi"] is False
 
@@ -211,6 +215,56 @@ def test_parse_sacctmgr_qos_keyed_by_name():
 # ---------------------------------------------------------------------------
 # df blob parser
 # ---------------------------------------------------------------------------
+
+
+def test_parse_sfairshare_csv_extracts_metrics():
+    output = _read("noaa_sfairshare.csv")
+    rows = sh.parse_sfairshare_csv(output)
+    assert set(rows.keys()) == {
+        "project-alpha",
+        "project-beta",
+        "project-gamma (W)",
+        "project-delta",
+    }
+    alpha = rows["project-alpha"]
+    assert alpha["fairshare"] == 0.541234
+    assert alpha["rank_str"] == "12/40"
+    assert alpha["norm_shares"] == 0.043210
+    assert alpha["eff_usage"] == 0.038456
+    assert alpha["raw_shares"] == 203674.0
+    # 4786415009 sec / 3600 ≈ 1329559 hours
+    assert alpha["raw_usage_hours"] == 1329559
+
+    # Windfall row shows up but with zeros
+    wf = rows["project-gamma (W)"]
+    assert wf["fairshare"] == 1.0
+    assert wf["raw_usage_hours"] == 0
+
+
+def test_parse_sfairshare_csv_handles_empty():
+    assert sh.parse_sfairshare_csv("") == {}
+
+
+def test_parse_sreport_account_user_returns_account_totals():
+    output = _read("noaa_sreport_account_user.txt")
+    totals = sh.parse_sreport_account_user(output)
+    # Only rows with empty user field count as account totals
+    assert totals == {
+        "project-alpha": 10500,
+        "project-beta": 7200,
+        "project-delta": 120000,
+    }
+
+
+def test_fiscal_year_start_rolls_over_in_october():
+    import datetime as dt
+
+    # Before Oct 1: FY starts in the prior year
+    assert sh.fiscal_year_start(dt.date(2026, 5, 12)) == "2025-10-01"
+    # On Oct 1: new FY begins
+    assert sh.fiscal_year_start(dt.date(2026, 10, 1)) == "2026-10-01"
+    # December: same FY as October
+    assert sh.fiscal_year_start(dt.date(2026, 12, 31)) == "2026-10-01"
 
 
 def test_parse_df_blob_groups_by_label():
