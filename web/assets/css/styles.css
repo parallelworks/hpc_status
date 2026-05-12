@@ -1354,6 +1354,44 @@ th[data-sortable][data-sort-dir="desc"]::after {
   cursor: help;
 }
 
+/* Fairshare-allocation cell (NOAA Quota page). Strong line = share; small
+   = usage with color-coded over/under indicator. */
+.fs-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  line-height: 1.25;
+}
+
+.fs-cell strong {
+  font-size: var(--text-sm);
+}
+
+.fs-cell small {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.fs-status {
+  font-weight: 500;
+}
+
+.fs-status.is-under {
+  color: rgb(52, 168, 92);
+}
+
+.fs-status.is-balanced {
+  color: var(--muted);
+}
+
+.fs-status.is-warn {
+  color: rgb(212, 149, 47);
+}
+
+.fs-status.is-over {
+  color: rgb(214, 69, 69);
+}
+
 /* Backlog severity chips (mutually exclusive: heavy / light / open). */
 .queue-chip.is-heavy {
   border-color: rgba(212, 78, 92, 0.4);

@@ -34,6 +34,18 @@ const formatHours = (value, { compact = false } = {}) => {
   return formatter.format(Math.round(numeric));
 };
 
+// Format a small NOAA-fairshare percentage compactly. Values are often
+// extremely small (<0.01% for ~70-project clusters), so we keep extra
+// precision below 1% and switch to single decimals above.
+const formatFsPct = (pct) => {
+  if (pct == null || !Number.isFinite(pct)) return "—";
+  if (pct === 0) return "0%";
+  if (pct < 0.01) return pct.toFixed(4) + "%";
+  if (pct < 1) return pct.toFixed(3) + "%";
+  if (pct < 10) return pct.toFixed(2) + "%";
+  return pct.toFixed(1) + "%";
+};
+
 // Slurm walltime strings: "D-HH:MM:SS", "HH:MM:SS", "MM:SS", "UNLIMITED",
 // or an empty/dash value. Returns "7d", "16h", "30m", "∞", or "".
 const formatWalltime = (raw) => {
@@ -365,13 +377,73 @@ const buildSubprojectRows = (systems, { fairshareMode = false } = {}) => {
         const maxJobs =
           system.account_max_jobs != null && system.account_max_jobs !== ""
             ? formatInteger(system.account_max_jobs)
-            : "--";
+            : null;
 
-        // QoS chips annotated with walltime / node cap from sacctmgr.
-        // This is the "what can I actually run" answer most users want.
-        // Sort longest-walltime-first so the most useful runtime options
-        // surface above the special-purpose QoSes; cap to 4 visible chips
-        // with the remainder collapsed behind a tooltipped "+N more".
+        // ----- Allocation cell ------------------------------------------
+        // NOAA RDHPCS hands out allocations as a fairshare ratio: NormShares
+        // is the project's slice of the cluster, EffUsage is the decay-
+        // adjusted share consumed. EffUsage / NormShares > 1 means the
+        // project has burned more than its allocation and the scheduler is
+        // deprioritizing it (fairshare drops).
+        // See https://docs.rdhpcs.noaa.gov/slurm/overview.html#priority-and-fairshare
+        const sharePct =
+          typeof system.norm_shares === "number"
+            ? system.norm_shares * 100
+            : null;
+        const usagePct =
+          typeof system.effective_usage === "number"
+            ? system.effective_usage * 100
+            : null;
+
+        let allocationCell;
+        if (sharePct === null && usagePct === null) {
+          allocationCell = '<span class="muted-text">--</span>';
+        } else {
+          const shareLabel =
+            sharePct !== null ? `${formatFsPct(sharePct)} share` : "no share";
+          let usageRatio = null;
+          if (sharePct && sharePct > 0 && usagePct !== null) {
+            usageRatio = usagePct / sharePct;
+          }
+          let statusTag = "is-balanced";
+          let statusText = "";
+          if (usageRatio !== null) {
+            if (usageRatio >= 1.5) {
+              statusTag = "is-over";
+              statusText = `${usageRatio.toFixed(1)}× over share`;
+            } else if (usageRatio >= 1.0) {
+              statusTag = "is-warn";
+              statusText = "at share";
+            } else if (usageRatio > 0) {
+              statusTag = "is-under";
+              statusText = `${(usageRatio * 100).toFixed(0)}% of share used`;
+            }
+          } else if (usagePct === 0) {
+            statusText = "no usage yet";
+          }
+          const usageLabel =
+            usagePct !== null ? `${formatFsPct(usagePct)} used` : "";
+          // Fairshare score (priority signal) in tooltip — not displayed.
+          let title = `NormShares ${
+            sharePct !== null ? sharePct.toFixed(4) + "%" : "—"
+          }, EffUsage ${
+            usagePct !== null ? usagePct.toFixed(4) + "%" : "—"
+          }`;
+          if (typeof system.fairshare_score === "number") {
+            title += ` · fairshare score ${system.fairshare_score.toFixed(3)}`;
+          }
+          if (system.fairshare_rank) {
+            title += `, rank ${system.fairshare_rank}`;
+          }
+          allocationCell = `
+            <div class="fs-cell" title="${title}">
+              <strong>${shareLabel}</strong>
+              <small>${usageLabel}${statusText ? " · " : ""}<span class="fs-status ${statusTag}">${statusText}</span></small>
+            </div>
+          `;
+        }
+
+        // ----- QoS chips (compact, sorted by walltime desc) -------------
         const qosLimits = system.qos_limits || {};
         const qosList = Array.isArray(system.qoses) ? system.qoses : [];
 
@@ -424,22 +496,21 @@ const buildSubprojectRows = (systems, { fairshareMode = false } = {}) => {
           ? `<div class="qos-chip-row">${visibleHtml}${hiddenHtml}</div>`
           : '<span class="muted-text">--</span>';
 
-        // Fairshare score → tooltip on the subproject code, not a column.
-        // Most users don't act on this; it's relevant only when triaging
-        // why a job is queued behind someone else.
-        let fsTooltip = "";
-        if (typeof system.fairshare_score === "number") {
-          const rank = system.fairshare_rank || "?";
-          const score = system.fairshare_score.toFixed(3);
-          fsTooltip = ` title="Fairshare score ${score}, rank ${rank} (lower rank = higher scheduling priority)"`;
-        }
+        // Max-jobs chip lives under the subproject code so we keep the row
+        // narrow but still surface the operational ceiling.
+        const maxJobsChip = maxJobs
+          ? `<small class="muted-text">Max jobs: ${maxJobs}</small>`
+          : "";
 
         return `
           <tr>
             <td>${system.system || "--"}</td>
-            <td><code${fsTooltip}>${system.subproject || "--"}</code></td>
+            <td>
+              <code>${system.subproject || "--"}</code>
+              ${maxJobsChip ? `<br>${maxJobsChip}` : ""}
+            </td>
+            <td>${allocationCell}</td>
             <td title="Core-hours used since NOAA fiscal year start (Oct 1)">${fy}</td>
-            <td title="Concurrent-job cap on this association (sacctmgr MaxJobs)">${maxJobs}</td>
             <td>${qosChips}</td>
           </tr>
         `;
@@ -754,9 +825,9 @@ const buildClusterCard = (cluster) => {
     ? `
       <tr>
         <th>System <span class="th-help" title="HPC system for this project">ⓘ</span></th>
-        <th>Subproject <span class="th-help" title="Project code (NOAA RDHPCS account name). Hover for fairshare rank/score.">ⓘ</span></th>
-        <th>FY Used (hrs) <span class="th-help" title="Core-hours consumed since the start of the current NOAA fiscal year (Oct 1)">ⓘ</span></th>
-        <th>Max jobs <span class="th-help" title="Concurrent-job cap on this association (sacctmgr MaxJobs). 0 = no submission privileges.">ⓘ</span></th>
+        <th>Subproject <span class="th-help" title="Project code (NOAA RDHPCS account name). Max jobs is the concurrent-job cap from sacctmgr.">ⓘ</span></th>
+        <th>Allocation <span class="th-help" title="NOAA expresses allocations as a Slurm fairshare ratio. Share = NormShares (your slice of the cluster). Used = EffUsage (decay-adjusted consumption). When used > share, the scheduler deprioritises new jobs from this project. See https://docs.rdhpcs.noaa.gov/slurm/overview.html#priority-and-fairshare">ⓘ</span></th>
+        <th>FY Used (hrs) <span class="th-help" title="Absolute core-hours consumed since the start of the current NOAA fiscal year (Oct 1), per sreport. The fairshare ratio above is decay-adjusted and normalised across the cluster, so this number won't match a simple multiplication.">ⓘ</span></th>
         <th>QoSes &amp; walltime <span class="th-help" title="Queue-of-service classes you can submit to, each annotated with its max walltime and (where set) max node count">ⓘ</span></th>
       </tr>
     `
