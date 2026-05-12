@@ -92,13 +92,17 @@ build_cmd() {
         cmd+=("--config" "$CONFIG_FILE")
     fi
 
-    if [[ "${ENABLE_CLUSTER_PAGES,,}" =~ ^(0|false|no|off)$ ]]; then
+    local enable_cluster_pages_lc
+    enable_cluster_pages_lc=$(printf '%s' "$ENABLE_CLUSTER_PAGES" | tr '[:upper:]' '[:lower:]')
+    if [[ "$enable_cluster_pages_lc" =~ ^(0|false|no|off)$ ]]; then
         cmd+=("--disable-cluster-pages")
     else
         cmd+=("--enable-cluster-pages")
     fi
 
-    if [[ "${ENABLE_CLUSTER_MONITOR,,}" =~ ^(0|false|no|off)$ ]]; then
+    local enable_cluster_monitor_lc
+    enable_cluster_monitor_lc=$(printf '%s' "$ENABLE_CLUSTER_MONITOR" | tr '[:upper:]' '[:lower:]')
+    if [[ "$enable_cluster_monitor_lc" =~ ^(0|false|no|off)$ ]]; then
         cmd+=("--disable-cluster-monitor")
     else
         cmd+=("--enable-cluster-monitor")
