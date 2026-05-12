@@ -86,6 +86,7 @@ const computeSummary = () => {
     gpuMemoryMib: 0,
     projects: 0,
     fairshareOnly: true,
+    maxConcurrentJobs: 0,
   };
   state.clusters.forEach((cluster) => {
     parseSystems(cluster).forEach((system) => {
@@ -95,6 +96,10 @@ const computeSummary = () => {
       totals.projects += 1;
       if (Number(system.hours_allocated) > 0) {
         totals.fairshareOnly = false;
+      }
+      const jobs = Number(system.account_max_jobs);
+      if (Number.isFinite(jobs) && jobs > totals.maxConcurrentJobs) {
+        totals.maxConcurrentJobs = jobs;
       }
     });
     const gpuSummary = cluster?.gpu_data?.summary;
@@ -252,24 +257,42 @@ const renderSummary = () => {
   // the meaningless "Remaining" tile.
   const allocationsCard = elements.totalAllocations?.parentElement;
   const allocationsLabel = allocationsCard?.querySelector("p");
+  const allocationsTip = allocationsCard?.querySelector(".card-tooltip");
   const remainingCard = elements.totalRemaining?.parentElement;
   const remainingLabel = remainingCard?.querySelector("p");
-  const usedLabel = elements.totalUsed?.parentElement?.querySelector("p");
+  const remainingTip = remainingCard?.querySelector(".card-tooltip");
+  const usedCard = elements.totalUsed?.parentElement;
+  const usedLabel = usedCard?.querySelector("p");
+  const usedTip = usedCard?.querySelector(".card-tooltip");
 
   if (summary.fairshareOnly && summary.projects > 0) {
     if (allocationsLabel) allocationsLabel.textContent = "Projects tracked";
+    if (allocationsTip) {
+      allocationsTip.title = "Project accounts you have access to across the fleet.";
+    }
     if (elements.totalAllocations) {
       elements.totalAllocations.textContent = formatInteger(summary.projects);
     }
     if (usedLabel) usedLabel.textContent = "FY core-hours used";
+    if (usedTip) {
+      usedTip.title =
+        "Core-hours consumed since the start of the current NOAA fiscal year (Oct 1).";
+    }
     if (elements.totalUsed) {
       elements.totalUsed.textContent = summary.used
         ? `${formatHours(summary.used, { compact: true })} hrs`
         : "0 hrs";
     }
-    if (remainingLabel) remainingLabel.textContent = "Fairshare model";
+    if (remainingLabel) remainingLabel.textContent = "Max concurrent jobs";
+    if (remainingTip) {
+      remainingTip.title =
+        "Highest per-association MaxJobs cap across your projects (sacctmgr show association). " +
+        "This is the hardest limit the scheduler enforces on you.";
+    }
     if (elements.totalRemaining) {
-      elements.totalRemaining.textContent = "No hour cap";
+      elements.totalRemaining.textContent = summary.maxConcurrentJobs
+        ? formatInteger(summary.maxConcurrentJobs)
+        : "--";
     }
   } else {
     if (allocationsLabel) allocationsLabel.textContent = "Total allocations";
