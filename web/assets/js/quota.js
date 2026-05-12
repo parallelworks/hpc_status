@@ -346,25 +346,59 @@ const buildSubprojectRows = (systems, { fairshareMode = false } = {}) => {
 
         // QoS chips annotated with walltime / node cap from sacctmgr.
         // This is the "what can I actually run" answer most users want.
+        // Sort longest-walltime-first so the most useful runtime options
+        // surface above the special-purpose QoSes; cap to 4 visible chips
+        // with the remainder collapsed behind a tooltipped "+N more".
         const qosLimits = system.qos_limits || {};
         const qosList = Array.isArray(system.qoses) ? system.qoses : [];
+
+        const walltimeSeconds = (raw) => {
+          if (!raw || /^unlimited$/i.test(raw)) return Infinity;
+          const m = String(raw).match(/^(?:(\d+)-)?(\d+):(\d+)(?::(\d+))?$/);
+          if (!m) return 0;
+          const d = Number(m[1] || 0);
+          const h = Number(m[2] || 0);
+          const min = Number(m[3] || 0);
+          const sec = Number(m[4] || 0);
+          return ((d * 24 + h) * 60 + min) * 60 + sec;
+        };
+
+        const enrichedQos = qosList.map((q) => {
+          const lim = qosLimits[q] || {};
+          const wall = formatWalltime(lim.max_wall);
+          const tres = lim.max_tres || "";
+          const nodeMatch = tres.match(/node=(\d+)/);
+          const nodes = nodeMatch ? `${nodeMatch[1]}n` : "";
+          const annot = [wall, nodes].filter(Boolean).join(" · ");
+          return {
+            name: q,
+            annot,
+            wall_seconds: walltimeSeconds(lim.max_wall),
+            label: annot ? `${q} (${annot})` : q,
+          };
+        });
+        enrichedQos.sort((a, b) => b.wall_seconds - a.wall_seconds);
+
+        const QOS_VISIBLE = 4;
+        const visible = enrichedQos.slice(0, QOS_VISIBLE);
+        const hidden = enrichedQos.slice(QOS_VISIBLE);
+        const visibleHtml = visible
+          .map((q) => {
+            const title = q.annot
+              ? `${q.name}: max ${q.annot}`
+              : `${q.name} (no published limits)`;
+            return `<span class="queue-chip is-idle qos-chip" title="${title}">${q.name}${
+              q.annot ? `<small>·${q.annot}</small>` : ""
+            }</span>`;
+          })
+          .join(" ");
+        const hiddenHtml = hidden.length
+          ? `<span class="qos-more muted-text" title="${hidden
+              .map((q) => q.label)
+              .join(", ")}">+${hidden.length} more</span>`
+          : "";
         const qosChips = qosList.length
-          ? qosList
-              .map((q) => {
-                const lim = qosLimits[q] || {};
-                const wall = formatWalltime(lim.max_wall);
-                const tres = lim.max_tres || "";
-                const nodeMatch = tres.match(/node=(\d+)/);
-                const nodes = nodeMatch ? `${nodeMatch[1]}n` : "";
-                const annot = [wall, nodes].filter(Boolean).join(" · ");
-                const title = annot
-                  ? `${q}: max ${annot}`
-                  : `${q} (no published limits)`;
-                return `<span class="queue-chip is-idle" title="${title}">${q}${
-                  annot ? ` <small>${annot}</small>` : ""
-                }</span>`;
-              })
-              .join("")
+          ? `<div class="qos-chip-row">${visibleHtml}${hiddenHtml}</div>`
           : '<span class="muted-text">--</span>';
 
         // Fairshare score → tooltip on the subproject code, not a column.

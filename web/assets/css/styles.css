@@ -1321,6 +1321,39 @@ th[data-sortable][data-sort-dir="desc"]::after {
   background: var(--panel-alt);
 }
 
+/* Compact single-line QoS chip used in the Quota subprojects table — the
+   default queue-chip stacks name and annotation onto two lines, which
+   makes 9 chips tall enough to triple the row height. */
+.qos-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+  line-height: 1.4;
+}
+
+.qos-chip {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.45rem !important;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.qos-chip small {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.qos-more {
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* Backlog severity chips (mutually exclusive: heavy / light / open). */
 .queue-chip.is-heavy {
   border-color: rgba(212, 78, 92, 0.4);
