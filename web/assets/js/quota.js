@@ -423,22 +423,31 @@ const buildSubprojectRows = (systems, { fairshareMode = false } = {}) => {
           }
           const usageLabel =
             usagePct !== null ? `${formatFsPct(usagePct)} used` : "";
-          // Fairshare score (priority signal) in tooltip — not displayed.
-          let title = `NormShares ${
+
+          // Fairshare priority signal: rank tells you scheduling position
+          // (lower = higher priority); score is the [0,1] decayed ratio
+          // Slurm hands to the priority plugin.
+          const fsParts = [];
+          if (system.fairshare_rank) {
+            fsParts.push(`rank ${system.fairshare_rank}`);
+          }
+          if (typeof system.fairshare_score === "number") {
+            fsParts.push(`FS ${system.fairshare_score.toFixed(3)}`);
+          }
+          const fsLine = fsParts.length
+            ? `<small class="fs-priority muted-text" title="Slurm fairshare: rank is this project's scheduling position among all projects on the cluster (lower = higher priority). FS is the decay-adjusted ratio Slurm uses to rank jobs.">${fsParts.join(" · ")}</small>`
+            : "";
+
+          const title = `NormShares ${
             sharePct !== null ? sharePct.toFixed(4) + "%" : "—"
           }, EffUsage ${
             usagePct !== null ? usagePct.toFixed(4) + "%" : "—"
           }`;
-          if (typeof system.fairshare_score === "number") {
-            title += ` · fairshare score ${system.fairshare_score.toFixed(3)}`;
-          }
-          if (system.fairshare_rank) {
-            title += `, rank ${system.fairshare_rank}`;
-          }
           allocationCell = `
             <div class="fs-cell" title="${title}">
               <strong>${shareLabel}</strong>
               <small>${usageLabel}${statusText ? " · " : ""}<span class="fs-status ${statusTag}">${statusText}</span></small>
+              ${fsLine}
             </div>
           `;
         }

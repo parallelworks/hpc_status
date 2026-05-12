@@ -1392,6 +1392,13 @@ th[data-sortable][data-sort-dir="desc"]::after {
   color: rgb(214, 69, 69);
 }
 
+.fs-priority {
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+  cursor: help;
+}
+
 /* Backlog severity chips (mutually exclusive: heavy / light / open). */
 .queue-chip.is-heavy {
   border-color: rgba(212, 78, 92, 0.4);
