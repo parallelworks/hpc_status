@@ -615,6 +615,7 @@ class PWClusterCollector(BaseCollector):
             sep_qos = "---QOS---"
             sep_nodes = "---NODES---"
             sep_jobs = "---JOBS---"
+            sep_parts = "---PARTS---"
             cmd = self._pw(
                 "ssh",
                 cluster_uri,
@@ -624,6 +625,8 @@ class PWClusterCollector(BaseCollector):
                 "2>/dev/null; "
                 f"echo {sep_nodes}; "
                 "scontrol -o show nodes 2>/dev/null; "
+                f"echo {sep_parts}; "
+                "scontrol -o show partition 2>/dev/null; "
                 f"echo {sep_jobs}; "
                 "squeue --all --array --noheader "
                 '--format="%i|%u|%a|%P|%q|%T|%D|%C|%j" 2>/dev/null',
@@ -643,7 +646,8 @@ class PWClusterCollector(BaseCollector):
 
             stdout = result.stdout or ""
             qos_part = self._slice(stdout, sep_qos, sep_nodes)
-            nodes_part = self._slice(stdout, sep_nodes, sep_jobs)
+            nodes_part = self._slice(stdout, sep_nodes, sep_parts)
+            parts_part = self._slice(stdout, sep_parts, sep_jobs)
             jobs_part = self._slice(stdout, sep_jobs, None)
 
             # sacctmgr --parsable2 emits no header with --noheader, so synthesize one
@@ -652,9 +656,12 @@ class PWClusterCollector(BaseCollector):
             )
             qos_info = sh.parse_sacctmgr_qos(qos_with_header)
             node_info = sh.parse_slurm_nodes(nodes_part)
+            partition_info = sh.parse_scontrol_partitions(parts_part)
             squeue_rows = sh.parse_squeue_jobs(jobs_part)
 
-            queue_data = sh.build_slurm_queue_data(qos_info, node_info, squeue_rows)
+            queue_data = sh.build_slurm_queue_data(
+                qos_info, node_info, squeue_rows, partition_info=partition_info
+            )
             queue_data["source"] = "slurm"
             return queue_data
         except Exception as e:

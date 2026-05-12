@@ -380,6 +380,44 @@ def parse_sshare_usage(
 _NODE_UP_STATES = ("ALLOC", "MIXED", "IDLE", "COMPLETING", "RESERVED", "PERFCTRS")
 
 
+def parse_scontrol_partitions(output: str) -> Dict[str, Dict[str, Any]]:
+    """Parse ``scontrol -o show partition`` output.
+
+    Returns dict keyed by partition name with fields:
+        {
+            "max_time": str (HH:MM:SS or "UNLIMITED"),
+            "default_time": str,
+            "max_nodes": str,
+            "allow_qos": List[str],  # ['ALL'] expanded later by caller
+            "state": str,
+        }
+    """
+    info: Dict[str, Dict[str, Any]] = {}
+    for line in (output or "").splitlines():
+        line = line.strip()
+        if not line.startswith("PartitionName="):
+            continue
+        fields = _parse_scontrol_oneline(line)
+        name = fields.get("PartitionName", "").strip("*")
+        if not name:
+            continue
+        allow_qos_raw = fields.get("AllowQos", "") or ""
+        allow_qos = (
+            [q.strip() for q in allow_qos_raw.split(",") if q.strip()]
+            if allow_qos_raw and allow_qos_raw.upper() != "ALL"
+            else ["ALL"]
+        )
+        info[name] = {
+            "max_time": fields.get("MaxTime", "-"),
+            "default_time": fields.get("DefaultTime", "-"),
+            "max_nodes": fields.get("MaxNodes", "-"),
+            "min_nodes": fields.get("MinNodes", "-"),
+            "allow_qos": allow_qos,
+            "state": fields.get("State", "-"),
+        }
+    return info
+
+
 def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
     """Parse ``scontrol -o show nodes`` output.
 
@@ -452,6 +490,29 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
     return {"by_partition": by_partition, "overall": overall}
 
 
+def _tightest(qos_names: List[str], qos_info: Dict[str, Dict[str, Any]], field: str) -> str:
+    """Return the smallest non-empty integer value across ``qos_names`` for ``field``.
+
+    Used to surface the user-facing job/core ceiling on a partition: when
+    multiple QoSes are allowed, the operational limit is the smallest one a
+    user would hit, not the most generous.
+    """
+    best: Optional[int] = None
+    for q in qos_names:
+        raw = (qos_info.get(q) or {}).get(field) or ""
+        if not raw or raw in ("-",):
+            continue
+        try:
+            val = int(raw)
+        except ValueError:
+            continue
+        if val <= 0:
+            continue
+        if best is None or val < best:
+            best = val
+    return str(best) if best is not None else "-"
+
+
 def _parse_scontrol_oneline(line: str) -> Dict[str, str]:
     """Parse a single ``scontrol -o`` line into a key/value dict.
 
@@ -517,7 +578,7 @@ def build_slurm_queue_data(
     qos_info: Dict[str, Dict[str, Any]],
     node_info: Dict[str, Any],
     squeue_rows: List[Dict[str, str]],
-    partition_to_qos: Optional[Dict[str, List[str]]] = None,
+    partition_info: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Combine sacctmgr/scontrol/squeue results into queue_data schema.
 
@@ -526,11 +587,16 @@ def build_slurm_queue_data(
     Slurm *partitions* as the primary queue dimension because users submit
     to a partition (with an optional QOS), and the node inventory is naturally
     sliced by partition.
+
+    ``partition_info`` (from ``parse_scontrol_partitions``) is the
+    authoritative source for partition MaxTime and AllowQos. When given,
+    its values override anything derived from sacctmgr QoS records.
     """
     queues: List[Dict[str, Any]] = []
     nodes: List[Dict[str, Any]] = []
 
     by_part = node_info.get("by_partition", {})
+    partition_info = partition_info or {}
 
     # Aggregate squeue rows by partition
     per_part_running_jobs: Dict[str, int] = {}
@@ -550,42 +616,75 @@ def build_slurm_queue_data(
             per_part_pending_jobs[part] = per_part_pending_jobs.get(part, 0) + 1
             per_part_pending_cores[part] = per_part_pending_cores.get(part, 0) + cores
 
-    # Build queue rows — one per partition; QOS metadata folded in if mapped
-    partitions = sorted(set(list(by_part.keys()) + list(per_part_running_jobs.keys())
-                            + list(per_part_pending_jobs.keys())))
+    partitions = sorted(set(
+        list(by_part.keys())
+        + list(per_part_running_jobs.keys())
+        + list(per_part_pending_jobs.keys())
+        + list(partition_info.keys())
+    ))
+
     for part in partitions:
-        # Pick a representative QOS to source MaxWall/MaxJobs/etc.
-        qos_names = (partition_to_qos or {}).get(part, [])
-        max_wall = "-"
-        max_jobs = "-"
+        pinfo = partition_info.get(part, {})
+        allow_qos = pinfo.get("allow_qos") or []
+        # Resolve the partition's effective QoSes. ``ALL`` means every QoS
+        # in qos_info is reachable, so use them all to find the most
+        # permissive ceilings.
+        if allow_qos == ["ALL"]:
+            effective_qoses = list(qos_info.keys())
+        else:
+            effective_qoses = [q for q in allow_qos if q in qos_info]
+
+        # Walltime comes from the partition itself (authoritative); fall
+        # back to the most permissive QoS MaxWall if the partition didn't
+        # publish one.
+        max_wall = pinfo.get("max_time") or "-"
+        if max_wall in ("UNLIMITED", "infinite"):
+            max_wall = "Unlimited"
+        if max_wall == "-":
+            for q in effective_qoses:
+                qm = (qos_info.get(q) or {}).get("MaxWall")
+                if qm:
+                    max_wall = qm
+                    break
+
+        # Job/core caps come from sacctmgr. Pick the tightest non-empty
+        # value across the allowed QoSes so the displayed limit is one a
+        # user would actually hit.
+        max_jobs = _tightest(effective_qoses, qos_info, "MaxJobs")
+        grp_jobs = _tightest(effective_qoses, qos_info, "GrpJobs")
         max_cores = "-"
-        for qname in qos_names:
-            rec = qos_info.get(qname)
-            if not rec:
-                continue
-            if rec.get("MaxWall") and max_wall == "-":
-                max_wall = rec["MaxWall"]
-            if rec.get("MaxJobs") and max_jobs == "-":
-                max_jobs = rec["MaxJobs"]
-            tres = rec.get("MaxTRES") or ""
+        for q in effective_qoses:
+            tres = (qos_info.get(q) or {}).get("MaxTRES") or ""
             m = re.search(r"node=(\d+)", tres)
-            if m and max_cores == "-":
-                # Translate node count to cores using the partition's CPN
+            if m:
                 cpn = by_part.get(part, {}).get("cores_per_node", 0)
                 max_cores = str(int(m.group(1)) * cpn) if cpn else m.group(1)
+                break
+
+        # Friendly QoS list — at most 4, then "+N more"
+        qos_display = (
+            "ALL"
+            if allow_qos == ["ALL"]
+            else (
+                ",".join(allow_qos[:4])
+                + (f",+{len(allow_qos) - 4}" if len(allow_qos) > 4 else "")
+            )
+        )
 
         queues.append(
             {
                 "queue_name": part,
                 "max_walltime": max_wall,
-                "max_jobs": max_jobs,
+                "max_jobs": max_jobs or grp_jobs or "-",
                 "max_cores": max_cores,
-                "max_cores_per_job": "-",
+                "max_cores_per_job": max_cores,
                 "jobs_running": str(per_part_running_jobs.get(part, 0)),
                 "jobs_pending": str(per_part_pending_jobs.get(part, 0)),
                 "cores_running": str(per_part_running_cores.get(part, 0)),
                 "cores_pending": str(per_part_pending_cores.get(part, 0)),
                 "queue_type": "Exe",
+                "allow_qos": qos_display,
+                "state": pinfo.get("state", "-"),
             }
         )
 

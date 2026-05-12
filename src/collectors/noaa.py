@@ -488,7 +488,7 @@ class NOAABriefingScraper:
         rows: List[List[str]] = []
         for tr in table.find_all("tr"):
             cells = [
-                self._inline_to_md(c, source_url)
+                self._sanitize_cell(self._inline_to_md(c, source_url))
                 for c in tr.find_all(["th", "td"])
             ]
             if cells:
@@ -503,3 +503,20 @@ class NOAABriefingScraper:
         sep = "| " + " | ".join(["---"] * ncols) + " |"
         body = "\n".join("| " + " | ".join(r) + " |" for r in rows[1:])
         return f"{header}\n{sep}" + (f"\n{body}" if body else "")
+
+    @staticmethod
+    def _sanitize_cell(text: str) -> str:
+        """Make a cell safe for a single-line markdown table row.
+
+        Markdown tables require every cell to live on one line, and a
+        literal ``|`` would close the cell early. Multi-line descriptions
+        from the RDHPCS docs (with hard wraps and ``<br>``) need to
+        collapse to spaces and any pipe character needs escaping.
+        """
+        if not text:
+            return ""
+        # Collapse all whitespace runs (including newlines) into single spaces
+        flat = re.sub(r"\s+", " ", text).strip()
+        # Escape the pipe so it doesn't close the cell
+        flat = flat.replace("|", "\\|")
+        return flat

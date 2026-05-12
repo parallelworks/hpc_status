@@ -179,7 +179,7 @@ def test_build_slurm_queue_data_aggregates_running_and_pending():
 
     node_info = sh.parse_slurm_nodes(nodes_blob)
     squeue_rows = sh.parse_squeue_jobs(squeue_blob)
-    qd = sh.build_slurm_queue_data({}, node_info, squeue_rows)
+    qd = sh.build_slurm_queue_data({}, node_info, squeue_rows, partition_info=None)
 
     queues = {q["queue_name"]: q for q in qd["queues"]}
     # batch: 2 running (256+128=384 cores), 1 pending (512 cores)
