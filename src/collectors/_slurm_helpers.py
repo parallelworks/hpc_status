@@ -609,6 +609,36 @@ def _parse_scontrol_oneline(line: str) -> Dict[str, str]:
     return out
 
 
+def parse_sinfo_cpu_state(output: str) -> Dict[str, int]:
+    """Parse ``sinfo -h --noheader -o "%C"`` output.
+
+    Each line is one node-state group printed as ``"A/I/O/T"``:
+        A = allocated CPUs
+        I = idle CPUs
+        O = "other" (drain/down/maint)
+        T = total CPUs
+
+    ``sinfo`` aggregates from the controller's view of the cluster, so it
+    sees nodes that ``scontrol show nodes`` on a login may not (Gaea
+    Cray, NOAA cloud bursts where compute nodes power-cycle, etc).
+
+    Returns the sums across all groups:
+        {"alloc": int, "idle": int, "other": int, "total": int}
+    """
+    out = {"alloc": 0, "idle": 0, "other": 0, "total": 0}
+    for line in (output or "").splitlines():
+        line = line.strip()
+        m = re.match(r"^(\d+)/(\d+)/(\d+)/(\d+)$", line)
+        if not m:
+            continue
+        a, i, o, t = (int(x) for x in m.groups())
+        out["alloc"] += a
+        out["idle"] += i
+        out["other"] += o
+        out["total"] += t
+    return out
+
+
 def parse_squeue_jobs(squeue_output: str) -> List[Dict[str, str]]:
     """Parse ``squeue --noheader --format=...`` (pipe-delimited)."""
     rows: List[Dict[str, str]] = []
@@ -711,6 +741,7 @@ def build_slurm_queue_data(
     node_info: Dict[str, Any],
     squeue_rows: List[Dict[str, str]],
     partition_info: Optional[Dict[str, Dict[str, Any]]] = None,
+    sinfo_totals: Optional[Dict[str, int]] = None,
 ) -> Dict[str, Any]:
     """Combine sacctmgr/scontrol/squeue results into queue_data schema.
 
@@ -841,24 +872,38 @@ def build_slurm_queue_data(
             }
         )
 
-    # Cluster-wide unique totals (each physical node counted once even when
-    # it belongs to multiple partitions). The Queues page uses these for
-    # the fleet utilization donut so the math reconciles.
+    # Cluster-wide unique totals. Each physical node counts once even when
+    # it sits in multiple partitions, so summing partition rows doesn't
+    # inflate the denominator. On Cray-style clusters (Gaea) the login's
+    # ``scontrol show nodes`` is a partial view — we prefer ``sinfo``'s
+    # cluster-wide CPU summary whenever it reports a larger total.
     overall = node_info.get("overall", {})
-    total_unique_cores = int(overall.get("cores_up", 0) or 0)
+    scontrol_cores = int(overall.get("cores_up", 0) or 0)
     total_unique_nodes = int(overall.get("nodes_up", 0) or 0)
     total_unique_gpus = int(overall.get("gpus_up", 0) or 0)
-    # Running cores aren't double-counted per partition (a job sits in exactly
-    # one partition), so summing per_part_running_cores is safe.
-    total_running_cores = sum(per_part_running_cores.values())
+
+    # Running cores aren't double-counted per partition (each job sits in
+    # exactly one partition), so summing per_part_running_cores is safe.
+    squeue_running_cores = sum(per_part_running_cores.values())
+
+    sinfo_total = int((sinfo_totals or {}).get("total", 0) or 0)
+    sinfo_alloc = int((sinfo_totals or {}).get("alloc", 0) or 0)
+    cores_total = max(scontrol_cores, sinfo_total)
+    # Prefer sinfo's allocated count when it's available — it's the
+    # controller's authoritative view. Otherwise fall back to squeue.
+    cores_running = sinfo_alloc if sinfo_total else squeue_running_cores
+    # Defensive clamp: a transient snapshot mismatch should never make the
+    # utilization meter read >100%.
+    if cores_total:
+        cores_running = min(cores_running, cores_total)
 
     return {
         "queues": queues,
         "nodes": nodes,
         "cluster_totals": {
-            "cores_total": total_unique_cores,
-            "cores_running": total_running_cores,
-            "cores_free": max(total_unique_cores - total_running_cores, 0),
+            "cores_total": cores_total,
+            "cores_running": cores_running,
+            "cores_free": max(cores_total - cores_running, 0),
             "nodes_total": total_unique_nodes,
             "gpus_total": total_unique_gpus,
         },

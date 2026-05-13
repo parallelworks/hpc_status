@@ -235,6 +235,44 @@ def test_parse_slurm_nodes_dedups_overlapping_partitions_for_overall():
     assert info["overall"]["cores_up"] == 120
 
 
+def test_parse_sinfo_cpu_state_sums_rows():
+    blob = "12/40/0/52\n100/200/8/308\n"  # two node-state groups
+    out = sh.parse_sinfo_cpu_state(blob)
+    assert out == {"alloc": 112, "idle": 240, "other": 8, "total": 360}
+
+
+def test_parse_sinfo_cpu_state_handles_garbage():
+    # blank / non-conforming lines are ignored
+    assert sh.parse_sinfo_cpu_state("") == {"alloc": 0, "idle": 0, "other": 0, "total": 0}
+    assert sh.parse_sinfo_cpu_state("not a tuple\n0/0/0/0\n") == {
+        "alloc": 0,
+        "idle": 0,
+        "other": 0,
+        "total": 0,
+    }
+
+
+def test_build_slurm_queue_data_uses_sinfo_when_larger_than_scontrol():
+    # Gaea-style: scontrol show nodes from the login only exposes 2 dtn
+    # nodes, but sinfo's controller view reports the real 1521-node batch
+    # cluster. cluster_totals should prefer the bigger number, and
+    # running cores must never exceed it.
+    nodes_blob = "NodeName=dtn01 CPUTot=32 State=IDLE Partitions=dtn\n"
+    squeue_blob = "1|me|p|batch|q|RUNNING|10|320|j\n"
+    node_info = sh.parse_slurm_nodes(nodes_blob)
+    squeue_rows = sh.parse_squeue_jobs(squeue_blob)
+    sinfo = sh.parse_sinfo_cpu_state("574000/100/200/48000\n")
+    qd = sh.build_slurm_queue_data(
+        {}, node_info, squeue_rows, partition_info=None, sinfo_totals=sinfo
+    )
+    ct = qd["cluster_totals"]
+    # sinfo says 48,000 cores total → that wins over scontrol's 32
+    assert ct["cores_total"] == 48000
+    # sinfo's allocated count (574000) gets clamped down to total
+    assert ct["cores_running"] == 48000
+    assert ct["cores_free"] == 0
+
+
 def test_build_slurm_queue_data_emits_unique_cluster_totals():
     nodes_blob = (
         "NodeName=cn01 CPUTot=40 State=MIXED Partitions=hera,novel\n"
