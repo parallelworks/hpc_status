@@ -1,11 +1,26 @@
 # NOAA RDHPCS — Marketplace Descriptions
 
 Short marketing copy for each cluster currently surfaced by the RDHPCS Status
-Monitor. Pick the tagline + summary for cards or workflow listings, and use
-"Best for" for filter chips or eligibility notes.
+Monitor. Three lengths to pick from per cluster:
+
+1. **One-liner** — a single sentence for a chip / row / dropdown tooltip.
+2. **Tagline** — a hero strapline for a card or banner.
+3. **Summary + best-for** — the body text + use-case bullets for a detail
+   panel or workflow listing page.
 
 Each entry mirrors the `noaa_systems:` block in
 [configs/config.noaa.yaml](../configs/config.noaa.yaml).
+
+## Quick-reference one-liners
+
+| System | One-liner |
+|---|---|
+| **Hera** | 53,120-core Intel SkyLake CPU cluster for NWP and climate research. |
+| **Ursa** | 110k AMD Genoa cores + 148 H100 / GH200 / MI300X GPUs for AI + HPC. |
+| **Gaea (C5)** | Joint NOAA/DOE HPE Cray system at ORNL for high-resolution GFDL climate. |
+| **PPAN** | GFDL interactive analysis hosts with bigmem nodes up to 4.3 TB RAM. |
+| **Mercury** | Data-transfer gateway with direct hsi/htar access to HPSS archive. |
+| **NOAA Cloud (v3)** | On-demand cloud HPC (AWS / GCP / Azure) via Parallel Works. |
 
 ---
 

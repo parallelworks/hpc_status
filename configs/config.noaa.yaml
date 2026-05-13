@@ -81,6 +81,7 @@ noaa_systems:
     scheduler: "Slurm"
     tools: ["saccount_params", "slurm"]
     storage: ["/home", "/scratch1", "/scratch2", "/scratch3", "/scratch4"]
+    oneliner: "53,120-core Intel SkyLake CPU cluster for NWP and climate research."
     tagline: "NOAA's flagship CPU workhorse for weather and climate research."
     summary: >-
       A 3.27-petaFLOPS Intel SkyLake cluster operated at the NOAA
@@ -97,6 +98,7 @@ noaa_systems:
     scheduler: "Slurm"
     tools: ["saccount_params", "slurm", "lfs"]
     storage: ["/home", "/scratch3", "/scratch4", "/scratch5"]
+    oneliner: "110k AMD Genoa cores + 148 H100 / GH200 / MI300X GPUs for AI + HPC."
     tagline: "AMD Genoa + NVIDIA / AMD GPU supercluster for next-gen AI + HPC."
     summary: >-
       Mixed CPU + GPU system built on AMD Genoa 9654 (192 cores @
@@ -114,6 +116,7 @@ noaa_systems:
     scheduler: "Slurm"
     tools: ["slurm"]
     storage: ["/gpfs/f5", "/ncrc/home1", "/ncrc/home2"]
+    oneliner: "Joint NOAA/DOE HPE Cray system at ORNL for high-resolution GFDL climate."
     tagline: "HPE Cray climate-modeling capability system at ORNL."
     summary: >-
       Joint NOAA / DOE HPE Cray supercomputer operated by the
@@ -131,6 +134,7 @@ noaa_systems:
     scheduler: "none (analysis nodes)"
     tools: []
     storage: ["/home", "/work", "/work1", "/work3", "/work5", "/nbhome"]
+    oneliner: "GFDL interactive analysis hosts with bigmem nodes up to 4.3 TB RAM."
     tagline: "GFDL's interactive post-processing and analysis cluster."
     summary: >-
       130+ Dell analysis nodes spanning Intel Sandy Bridge through
@@ -149,6 +153,7 @@ noaa_systems:
     scheduler: "none (data-mover)"
     tools: ["hpss"]
     storage: ["/home"]
+    oneliner: "Data-transfer gateway with direct hsi/htar access to HPSS archive."
     tagline: "Cross-RDHPCS data transfer hub and HPSS archive gateway."
     summary: >-
       Dedicated data-mover system shared across the RDHPCS fleet for
@@ -165,6 +170,7 @@ noaa_systems:
     scheduler: "Slurm (cloud-managed)"
     tools: ["slurm"]
     storage: ["/home", "Lustre (on-demand)", "object bucket"]
+    oneliner: "On-demand cloud HPC (AWS / GCP / Azure) via Parallel Works."
     tagline: "On-demand HPC bursts to AWS, GCP, and Azure via Parallel Works."
     summary: >-
       User-provisioned cloud HPC clusters managed by the RDHPCS Cloud
