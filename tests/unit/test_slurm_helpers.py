@@ -216,6 +216,42 @@ def test_parse_slurm_nodes_extracts_heterogeneous_cpn_and_gpus():
     assert cn["gpu_types"] == []
 
 
+def test_parse_slurm_nodes_dedups_overlapping_partitions_for_overall():
+    # NOAA Hera: every compute node sits in both ``hera`` and ``novel``
+    # partitions, so summing partition rows double-counts. The cluster-wide
+    # ``overall`` figure has to count each node exactly once.
+    blob = (
+        "NodeName=cn01 CPUTot=40 State=MIXED Partitions=hera,novel\n"
+        "NodeName=cn02 CPUTot=40 State=ALLOCATED Partitions=hera,novel\n"
+        "NodeName=cn03 CPUTot=40 State=IDLE Partitions=hera,novel\n"
+    )
+    info = sh.parse_slurm_nodes(blob)
+    # Per-partition view sees each node from both partitions
+    assert info["by_partition"]["hera"]["nodes_up"] == 3
+    assert info["by_partition"]["novel"]["nodes_up"] == 3
+    assert info["by_partition"]["hera"]["cores_up"] == 120
+    # Overall counts each physical node ONCE
+    assert info["overall"]["nodes_up"] == 3
+    assert info["overall"]["cores_up"] == 120
+
+
+def test_build_slurm_queue_data_emits_unique_cluster_totals():
+    nodes_blob = (
+        "NodeName=cn01 CPUTot=40 State=MIXED Partitions=hera,novel\n"
+        "NodeName=cn02 CPUTot=40 State=ALLOCATED Partitions=hera,novel\n"
+    )
+    squeue_blob = "1|me|p|hera|q|RUNNING|1|40|j\n2|me|p|hera|q|RUNNING|1|40|j\n"
+    node_info = sh.parse_slurm_nodes(nodes_blob)
+    squeue_rows = sh.parse_squeue_jobs(squeue_blob)
+    qd = sh.build_slurm_queue_data({}, node_info, squeue_rows, partition_info=None)
+
+    # Summing partition rows would give 160 cores (each node × 2 partitions).
+    # cluster_totals.cores_total must be the real 80 (2 nodes × 40).
+    assert qd["cluster_totals"]["cores_total"] == 80
+    assert qd["cluster_totals"]["cores_running"] == 80
+    assert qd["cluster_totals"]["nodes_total"] == 2
+
+
 def test_parse_gres_gpus_handles_common_forms():
     assert sh._parse_gres_gpus("gpu:h100:4") == (4, ["h100"])
     assert sh._parse_gres_gpus("gpu:gh200:1") == (1, ["gh200"])

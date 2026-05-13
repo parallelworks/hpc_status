@@ -67,13 +67,27 @@ const computeFleetSummary = (clusters) => {
       totals.queues += 1;
       totals.runningJobs += toNumber(queue.jobs_running);
       totals.pendingJobs += toNumber(queue.jobs_pending);
-      totals.runningCores += toNumber(queue.cores_running);
       totals.pendingCores += toNumber(queue.cores_pending);
     });
+    // Authoritative cluster-wide capacity from the collector — each physical
+    // node counted once even when it sits in overlapping partitions. Falls
+    // back to summing partition rows when the field is absent (older
+    // HPCMP show_queues path or clusters without cluster_totals yet).
+    const totals_for_cluster = cluster?.queue_data?.cluster_totals;
+    if (totals_for_cluster) {
+      totals.availableCores += toNumber(totals_for_cluster.cores_total);
+      totals.runningCores += toNumber(totals_for_cluster.cores_running);
+    } else {
+      parseQueues(cluster).forEach((queue) => {
+        totals.runningCores += toNumber(queue.cores_running);
+      });
+      parseNodes(cluster).forEach((node) => {
+        totals.availableCores += toNumber(node.cores_available);
+      });
+    }
     let clusterHasAccel = false;
     parseNodes(cluster).forEach((node) => {
       const coresAvail = toNumber(node.cores_available);
-      totals.availableCores += coresAvail;
       if (isGpuNodeType(node.node_type)) {
         clusterHasAccel = true;
         totals.accelNodes += toNumber(node.nodes_available);
@@ -85,9 +99,11 @@ const computeFleetSummary = (clusters) => {
     if (clusterHasAccel) totals.accelClusters += 1;
   });
 
-  const utilization = totals.availableCores
+  // Clamp utilization to 100% in case very stale data sneaks in.
+  const rawUtil = totals.availableCores
     ? (totals.runningCores / totals.availableCores) * 100
     : 0;
+  const utilization = Math.min(rawUtil, 100);
 
   return { ...totals, utilization };
 };
@@ -124,6 +140,7 @@ const aggregateQueueSnapshot = (clusters) => {
  */
 const computeClusterCapacity = (cluster) => {
   const nodes = sanitizeNodes(parseNodes(cluster));
+  const clusterTotals = cluster?.queue_data?.cluster_totals;
   const totals = {
     coresTotal: 0,
     coresUsed: 0,
@@ -134,15 +151,25 @@ const computeClusterCapacity = (cluster) => {
     accelCoresUsed: 0,
     nodeClasses: nodes.length,
   };
+  // Prefer cluster_totals when present — these already de-duplicate
+  // nodes across overlapping partitions.
+  if (clusterTotals) {
+    totals.coresTotal = toNumber(clusterTotals.cores_total);
+    totals.coresUsed = toNumber(clusterTotals.cores_running);
+    totals.coresFree = toNumber(clusterTotals.cores_free);
+    totals.nodesTotal = toNumber(clusterTotals.nodes_total);
+  }
   nodes.forEach((node) => {
     const total = toNumber(node.cores_available);
     const used = toNumber(node.cores_running);
     const free = toNumber(node.cores_free);
     const nodeCount = toNumber(node.nodes_available);
-    totals.coresTotal += total;
-    totals.coresUsed += used;
-    totals.coresFree += free || Math.max(total - used, 0);
-    totals.nodesTotal += nodeCount;
+    if (!clusterTotals) {
+      totals.coresTotal += total;
+      totals.coresUsed += used;
+      totals.coresFree += free || Math.max(total - used, 0);
+      totals.nodesTotal += nodeCount;
+    }
     if (isGpuNodeType(node.node_type)) {
       totals.accelNodesTotal += nodeCount;
       totals.accelCoresTotal += total;

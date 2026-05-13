@@ -116,7 +116,7 @@ def create_generate_payload_fn(config: Config, store: DataStore):
                     "dsrc": cluster.get("type", "pw"),
                     "login": cluster["uri"],
                     "scheduler": "slurm",  # Default assumption
-                    "raw_alt": f"PW cluster: {cluster['uri']}",
+                    "raw_alt": cluster["uri"],
                     "source_url": None,
                     "observed_at": now_iso,
                 })

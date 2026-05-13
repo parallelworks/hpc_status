@@ -452,6 +452,10 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
         "gpus_up": 0,
         "gpus_down": 0,
     }
+    # Track each node exactly once for the "true unique capacity" figures.
+    # A node belonging to N partitions would otherwise be counted N times
+    # if you sum partition rows — bad for fleet utilization math.
+    seen_nodes: set = set()
 
     for line in (scontrol_output or "").splitlines():
         line = line.strip()
@@ -463,6 +467,7 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
         if not partitions:
             # Login / management / orphaned nodes — not part of any queue.
             continue
+        node_name = fields.get("NodeName", "")
         state = (fields.get("State") or "").upper()
 
         # CPUTot or Sockets * CoresPerSocket
@@ -484,6 +489,9 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
 
         is_up = any(s in state for s in _NODE_UP_STATES)
 
+        # Per-partition rows (intentionally double-count nodes shared across
+        # partitions, because each partition view is showing what's reachable
+        # *via that partition*).
         for part in partitions.split(","):
             part = part.strip("*")
             if not part:
@@ -504,17 +512,24 @@ def parse_slurm_nodes(scontrol_output: str) -> Dict[str, Any]:
                 row["nodes_up"] += 1
                 row["cores_up"] += cores
                 row["gpus_up"] += node_gpus
-                overall["nodes_up"] += 1
-                overall["cores_up"] += cores
-                overall["gpus_up"] += node_gpus
             else:
                 row["nodes_down"] += 1
                 row["cores_down"] += cores
                 row["gpus_down"] += node_gpus
+            row["gpu_types"].update(node_gpu_types)
+
+        # Cluster-wide aggregates count each physical node ONCE so the fleet
+        # utilization donut isn't inflated when partitions overlap.
+        if node_name and node_name not in seen_nodes:
+            seen_nodes.add(node_name)
+            if is_up:
+                overall["nodes_up"] += 1
+                overall["cores_up"] += cores
+                overall["gpus_up"] += node_gpus
+            else:
                 overall["nodes_down"] += 1
                 overall["cores_down"] += cores
                 overall["gpus_down"] += node_gpus
-            row["gpu_types"].update(node_gpu_types)
 
     # Per-partition averages — these now reconcile to nodes × cpn = cores.
     for row in by_partition.values():
@@ -826,7 +841,28 @@ def build_slurm_queue_data(
             }
         )
 
-    return {"queues": queues, "nodes": nodes}
+    # Cluster-wide unique totals (each physical node counted once even when
+    # it belongs to multiple partitions). The Queues page uses these for
+    # the fleet utilization donut so the math reconciles.
+    overall = node_info.get("overall", {})
+    total_unique_cores = int(overall.get("cores_up", 0) or 0)
+    total_unique_nodes = int(overall.get("nodes_up", 0) or 0)
+    total_unique_gpus = int(overall.get("gpus_up", 0) or 0)
+    # Running cores aren't double-counted per partition (a job sits in exactly
+    # one partition), so summing per_part_running_cores is safe.
+    total_running_cores = sum(per_part_running_cores.values())
+
+    return {
+        "queues": queues,
+        "nodes": nodes,
+        "cluster_totals": {
+            "cores_total": total_unique_cores,
+            "cores_running": total_running_cores,
+            "cores_free": max(total_unique_cores - total_running_cores, 0),
+            "nodes_total": total_unique_nodes,
+            "gpus_total": total_unique_gpus,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
