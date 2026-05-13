@@ -50,6 +50,9 @@ class PWClusterCollector(BaseCollector):
         self._known_clusters: set = set()
         # cluster_uri -> (capabilities, timestamp)
         self._capability_cache: Dict[str, Tuple[Dict[str, bool], datetime]] = {}
+        # cluster_uri -> (hostname, timestamp); the active login node the SSH
+        # session lands on. Surfaced as the Fleet status "Login node" column.
+        self._hostname_cache: Dict[str, Tuple[str, datetime]] = {}
         # Cached saccount_params output so we can derive both usage + storage
         # from a single SSH call. (cluster_uri -> (parsed_tuple, timestamp))
         self._saccount_cache: Dict[
@@ -64,6 +67,38 @@ class PWClusterCollector(BaseCollector):
             cmd.extend(["--context", self.pw_context])
         cmd.extend(args)
         return cmd
+
+    def get_login_hostname(self, cluster_uri: str) -> Optional[str]:
+        """Return the actual hostname the SSH session lands on, cached.
+
+        The PW URI (``pw://user/clustername``) is not a real DNS name — it
+        resolves to whichever login / front-end node the PW agent routes
+        to. Surfacing that hostname (``hfe02``, ``gaea54``, etc.) makes the
+        Fleet table's "Login node" column actually useful.
+
+        Cached for the same 10-minute TTL as capability probes since the
+        active login is stable across refreshes.
+        """
+        cached = self._hostname_cache.get(cluster_uri)
+        if cached and datetime.utcnow() - cached[1] < _CAPABILITY_TTL:
+            return cached[0]
+        try:
+            cmd = self._pw("ssh", cluster_uri, "hostname")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode != 0:
+                return None
+            host = (result.stdout or "").strip().splitlines()[0] if result.stdout else None
+            if host:
+                self._hostname_cache[cluster_uri] = (host, datetime.utcnow())
+            return host
+        except Exception as e:
+            _log(f"[pw_cluster] hostname lookup failed for {cluster_uri}: {e}")
+            return None
 
     @property
     def name(self) -> str:

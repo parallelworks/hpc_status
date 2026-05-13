@@ -110,11 +110,15 @@ def create_generate_payload_fn(config: Config, store: DataStore):
 
             for cluster in clusters:
                 cluster_name = cluster["uri"].split("/")[-1]
+                # Resolve the cluster's actual login hostname (e.g. ``hfe02``,
+                # ``gaea54``) so the Fleet table shows where the SSH session
+                # is actually landing. Falls back to the URI if PW is flaky.
+                login = collector.get_login_hostname(cluster["uri"]) or cluster["uri"]
                 systems.append({
                     "system": cluster_name,
                     "status": "UP" if cluster["status"] in ("on", "active") else "DOWN",
                     "dsrc": cluster.get("type", "pw"),
-                    "login": cluster["uri"],
+                    "login": login,
                     "scheduler": "slurm",  # Default assumption
                     "raw_alt": cluster["uri"],
                     "source_url": None,
