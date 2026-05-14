@@ -240,6 +240,42 @@ NOAA_BRIEFING_SOURCES: Dict[str, Dict[str, Any]] = {
 }
 
 
+# Substring aliases — when a connected PW cluster's slug doesn't exactly match
+# one of the NOAA_BRIEFING_SOURCES keys (a customer renamed it, or PW exposes
+# a different short name), recognise the underlying system by a substring of
+# the slug. Each value is the canonical key in NOAA_BRIEFING_SOURCES.
+#
+# Order matters: more specific stems first so they win when one stem is a
+# substring of another (e.g. "gaeac5" before "gaea" would matter if a "gaea"
+# alias ever clashed; today the stems are distinct).
+NOAA_SYSTEM_ALIASES: Dict[str, str] = {
+    "hera": "noaaheracluster",
+    "ursa": "noaaursacluster",
+    "gaea": "noaagaeac5cluster",
+    "ppan": "noaappancluster",
+    "mercury": "noaamercurysystem",
+    "cloud": "gclusternoaav3",
+}
+
+
+def resolve_briefing_slug(slug: str) -> Optional[str]:
+    """Return the canonical NOAA briefing key for ``slug``.
+
+    Exact match wins; otherwise the slug is checked for any of the stems in
+    :data:`NOAA_SYSTEM_ALIASES`. Returns ``None`` when no known system can
+    be identified, so callers can decide whether to keep looking elsewhere
+    (e.g. the HPCMP filesystem fallback).
+    """
+    if not slug:
+        return None
+    if slug in NOAA_BRIEFING_SOURCES:
+        return slug
+    for stem, canonical in NOAA_SYSTEM_ALIASES.items():
+        if stem in slug:
+            return canonical
+    return None
+
+
 class NOAABriefingScraper:
     """Fetch and convert RDHPCS user-guide pages to per-cluster markdown.
 
