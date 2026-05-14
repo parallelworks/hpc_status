@@ -43,7 +43,26 @@ const sanitizeNodes = (nodes) =>
 /** Node types that indicate GPU/accelerator hardware */
 const GPU_NODE_PATTERN = /^(gpu|mla|ai[\/. ]?ml|viz)/i;
 
-const isGpuNodeType = (nodeType) => GPU_NODE_PATTERN.test(String(nodeType || "").trim());
+// HPCMP rows label their node class as "GPU"/"MLA"/"Viz", so a name match
+// is sufficient. NOAA's Slurm pipeline uses the partition name as node_type
+// (e.g. "u1-gh"), so we also need to honour explicit GPU counts when the
+// collector exposes them.
+const isGpuNode = (node) => {
+  if (!node) return false;
+  if (toNumber(node.gpus_per_node) > 0) return true;
+  if (toNumber(node.gpus_available) > 0) return true;
+  if (String(node.gpu_types || "").trim()) return true;
+  return GPU_NODE_PATTERN.test(String(node.node_type || "").trim());
+};
+
+const parseGpuTypesFromRow = (node) =>
+  String(node?.gpu_types || "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+
+const formatGpuTypeList = (typesSet) =>
+  typesSet && typesSet.size ? [...typesSet].sort().join(", ") : "";
 
 const computeFleetSummary = (clusters) => {
   const totals = {
@@ -60,6 +79,8 @@ const computeFleetSummary = (clusters) => {
     accelCoresRunning: 0,
     accelCoresFree: 0,
     accelClusters: 0,
+    accelGpusTotal: 0,
+    accelGpuTypes: new Set(),
   };
 
   clusters.forEach((cluster) => {
@@ -86,17 +107,28 @@ const computeFleetSummary = (clusters) => {
       });
     }
     let clusterHasAccel = false;
+    let clusterGpusFromNodes = 0;
     parseNodes(cluster).forEach((node) => {
       const coresAvail = toNumber(node.cores_available);
-      if (isGpuNodeType(node.node_type)) {
+      if (isGpuNode(node)) {
         clusterHasAccel = true;
         totals.accelNodes += toNumber(node.nodes_available);
         totals.accelCoresAvail += coresAvail;
         totals.accelCoresRunning += toNumber(node.cores_running);
         totals.accelCoresFree += toNumber(node.cores_free);
+        clusterGpusFromNodes += toNumber(node.gpus_available);
+        parseGpuTypesFromRow(node).forEach((t) => totals.accelGpuTypes.add(t));
       }
     });
-    if (clusterHasAccel) totals.accelClusters += 1;
+    if (clusterHasAccel) {
+      totals.accelClusters += 1;
+      // Prefer cluster_totals.gpus_total when present (deduped across
+      // overlapping partitions). Sum per-partition rows otherwise — that
+      // overcounts on overlap, but it's the only signal we have for
+      // legacy/HPCMP-shaped payloads.
+      const gpusFromTotals = toNumber(totals_for_cluster?.gpus_total);
+      totals.accelGpusTotal += gpusFromTotals > 0 ? gpusFromTotals : clusterGpusFromNodes;
+    }
   });
 
   // Clamp utilization to 100% in case very stale data sneaks in.
@@ -149,6 +181,8 @@ const computeClusterCapacity = (cluster) => {
     accelNodesTotal: 0,
     accelCoresTotal: 0,
     accelCoresUsed: 0,
+    accelGpusTotal: 0,
+    accelGpuTypes: new Set(),
     nodeClasses: nodes.length,
   };
   // Prefer cluster_totals when present — these already de-duplicate
@@ -170,12 +204,19 @@ const computeClusterCapacity = (cluster) => {
       totals.coresFree += free || Math.max(total - used, 0);
       totals.nodesTotal += nodeCount;
     }
-    if (isGpuNodeType(node.node_type)) {
+    if (isGpuNode(node)) {
       totals.accelNodesTotal += nodeCount;
       totals.accelCoresTotal += total;
       totals.accelCoresUsed += used;
+      totals.accelGpusTotal += toNumber(node.gpus_available);
+      parseGpuTypesFromRow(node).forEach((t) => totals.accelGpuTypes.add(t));
     }
   });
+  // Prefer the cluster-wide deduped GPU count when the collector ships one.
+  const gpusFromTotals = toNumber(clusterTotals?.gpus_total);
+  if (gpusFromTotals > 0) {
+    totals.accelGpusTotal = gpusFromTotals;
+  }
   return totals;
 };
 
@@ -329,12 +370,19 @@ const renderFleetGpuDonut = (summary) => {
   const utilPercent = summary.accelCoresAvail
     ? clampPercent((summary.accelCoresRunning / summary.accelCoresAvail) * 100)
     : 0;
+  // GPU count is only present from collectors that parse Slurm Gres (NOAA).
+  // HPCMP rows expose nodes/cores only — fall back to the original wording.
+  const gpus = toNumber(summary.accelGpusTotal);
+  const types = formatGpuTypeList(summary.accelGpuTypes);
+  const subtitle = gpus > 0
+    ? `${formatNumber(gpus)} GPUs${types ? ` (${types})` : ""} &middot; ${formatNumber(summary.accelNodes)} nodes`
+    : `${formatNumber(summary.accelNodes)} nodes &middot; ${formatNumber(summary.accelCoresFree)} of ${formatNumber(summary.accelCoresAvail)} cores free`;
   elements.fleetGpuDonut.innerHTML = `
-    <div class="donut" style="--donut-value:${utilPercent};--donut-primary:var(--info);">
+    <div class="donut" style="--donut-value:${utilPercent};--donut-primary:var(--info);" title="Estimated from CPU load on accelerator nodes">
       <strong>${utilPercent.toFixed(0)}%</strong>
       <span>In use</span>
     </div>
-    <small>${formatNumber(summary.accelNodes)} nodes &middot; ${formatNumber(summary.accelCoresFree)} of ${formatNumber(summary.accelCoresAvail)} cores free</small>
+    <small>${subtitle}</small>
   `;
 };
 
@@ -774,13 +822,24 @@ const renderCapacityStrip = (cluster) => {
     </div>
   `);
   if (capacity.accelNodesTotal > 0) {
+    const gpus = toNumber(capacity.accelGpusTotal);
+    const types = formatGpuTypeList(capacity.accelGpuTypes);
+    const primary = gpus > 0
+      ? `${formatNumber(gpus)} GPUs`
+      : `${formatNumber(accelFreeCores)} cores free`;
+    const subtitle = gpus > 0
+      ? `${types ? `${types} · ` : ""}${formatNumber(capacity.accelNodesTotal)} nodes · ${formatNumber(capacity.accelCoresTotal)} CPU cores`
+      : `${formatNumber(capacity.accelNodesTotal)} accelerator nodes · ${formatNumber(capacity.accelCoresTotal)} cores total`;
+    const muted = gpus > 0
+      ? `${accelPct.toFixed(1)}% node load (CPU proxy)`
+      : `${accelPct.toFixed(1)}% utilized`;
     tiles.push(`
       <div class="capacity-tile">
         <p class="eyebrow">GPU / accelerator</p>
-        <strong>${formatNumber(accelFreeCores)} cores free</strong>
-        <small>${formatNumber(capacity.accelNodesTotal)} accelerator nodes · ${formatNumber(capacity.accelCoresTotal)} cores total</small>
+        <strong>${primary}</strong>
+        <small>${subtitle}</small>
         <div class="progress-track"><div class="progress-value is-running" style="width:${accelPct}%"></div></div>
-        <small class="muted-text">${accelPct.toFixed(1)}% utilized</small>
+        <small class="muted-text">${muted}</small>
       </div>
     `);
   } else {
