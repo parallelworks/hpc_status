@@ -273,35 +273,51 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid system identifier.")
             return
 
-        # Try data store first, then fall back to file system
-        if self.data_store:
-            content = self.data_store.load_markdown(normalized)
-            if content:
-                self._send_json({"slug": normalized, "content": content})
-                return
+        # Try the requested slug first. If nothing is stored under it, fall
+        # back to NOAA's alias map — a cluster slug containing a known RDHPCS
+        # system name (hera/ursa/gaea/ppan/mercury/cloud) resolves to that
+        # system's canonical briefing, so renamed PW clusters still light up
+        # the detail panel.
+        candidates = [normalized]
+        try:
+            from ..collectors.noaa import resolve_briefing_slug
+            aliased = resolve_briefing_slug(normalized)
+            if aliased and aliased not in candidates:
+                candidates.append(aliased)
+        except Exception:
+            pass
 
-        # Fall back to legacy location
+        if self.data_store:
+            for candidate in candidates:
+                content = self.data_store.load_markdown(candidate)
+                if content:
+                    self._send_json({"slug": normalized, "content": content})
+                    return
+
+        # Fall back to legacy on-disk markdown (HPCMP fish-name directory).
         markdown_dir = Path(__file__).parent.parent.parent / "system_markdown"
         if not markdown_dir.exists():
             self.send_error(HTTPStatus.NOT_FOUND, "Markdown directory not available.")
             return
-        target = (markdown_dir / f"{normalized}.md").resolve()
-        try:
-            target.relative_to(markdown_dir.resolve())
-        except ValueError:
-            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid markdown path.")
+        for candidate in candidates:
+            target = (markdown_dir / f"{candidate}.md").resolve()
+            try:
+                target.relative_to(markdown_dir.resolve())
+            except ValueError:
+                continue
+            if not target.exists():
+                continue
+            try:
+                content = target.read_text(encoding="utf-8")
+            except Exception as exc:
+                self.send_error(
+                    HTTPStatus.INTERNAL_SERVER_ERROR,
+                    f"Unable to read markdown: {exc}",
+                )
+                return
+            self._send_json({"slug": normalized, "content": content})
             return
-        if not target.exists():
-            self.send_error(HTTPStatus.NOT_FOUND, "Markdown not found.")
-            return
-        try:
-            content = target.read_text(encoding="utf-8")
-        except Exception as exc:
-            self.send_error(
-                HTTPStatus.INTERNAL_SERVER_ERROR, f"Unable to read markdown: {exc}"
-            )
-            return
-        self._send_json({"slug": normalized, "content": content})
+        self.send_error(HTTPStatus.NOT_FOUND, "Markdown not found.")
 
     def _handle_collectors_status(self):
         """Return status of all collectors."""

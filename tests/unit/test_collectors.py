@@ -4,6 +4,11 @@ import pytest
 from unittest.mock import patch, MagicMock
 from src.collectors.hpcmp import HPCMPCollector
 from src.collectors.pw_cluster import PWClusterCollector
+from src.collectors.noaa import (
+    NOAA_BRIEFING_SOURCES,
+    NOAA_SYSTEM_ALIASES,
+    resolve_briefing_slug,
+)
 
 
 class TestHPCMPCollector:
@@ -133,3 +138,30 @@ class TestPWClusterCollector:
         mock_run.side_effect = Exception("pw not found")
         collector = PWClusterCollector()
         assert collector.is_available() is False
+
+
+class TestResolveBriefingSlug:
+    def test_exact_match_wins(self):
+        for canonical in NOAA_BRIEFING_SOURCES.keys():
+            assert resolve_briefing_slug(canonical) == canonical
+
+    def test_substring_alias_resolves(self):
+        # Renamed / short PW cluster names should still find their briefing.
+        assert resolve_briefing_slug("ursa") == "noaaursacluster"
+        assert resolve_briefing_slug("hera") == "noaaheracluster"
+        assert resolve_briefing_slug("gaeac5prod") == "noaagaeac5cluster"
+        assert resolve_briefing_slug("ppanlogin") == "noaappancluster"
+        assert resolve_briefing_slug("mercurydm") == "noaamercurysystem"
+        assert resolve_briefing_slug("noaacloudv3") == "gclusternoaav3"
+
+    def test_unknown_slug_returns_none(self):
+        assert resolve_briefing_slug("randomcluster") is None
+        assert resolve_briefing_slug("") is None
+        assert resolve_briefing_slug(None) is None
+
+    def test_alias_table_covers_every_briefing_source(self):
+        # Every canonical briefing key should be reachable via at least one
+        # alias stem, otherwise a renamed cluster could silently lose its
+        # briefing.
+        canonical_values = set(NOAA_SYSTEM_ALIASES.values())
+        assert canonical_values == set(NOAA_BRIEFING_SOURCES.keys())
