@@ -1,5 +1,21 @@
-# HPC Status Monitor - NOAA RDHPCS Deployment Configuration
-# Use with: python -m src.server.main --config configs/config.noaa.yaml
+# HPC Status Monitor — NOAA RDHPCS Deployment
+#
+# Launch with:
+#   CONFIG_FILE=configs/config.noaa.yaml ./scripts/run.sh
+#
+# Auth requirement:
+#   pw auth whoami  → must report your noaa.parallel.works user
+#
+# Collection notes (handled inside src/collectors/pw_cluster.py):
+#   The collector probes each cluster for available tools and picks the
+#   richest source it can. Per RDHPCS system:
+#     - Hera, Ursa            → saccount_params + raw Slurm
+#     - Gaea (C5)             → raw Slurm (sshare / sacctmgr / scontrol / squeue)
+#     - PPAN                  → df-only (analysis nodes, no scheduler)
+#     - Mercury               → df-only (data-mover / HPSS gateway)
+#
+# Capabilities are cached per cluster for 10 minutes, so toggling refresh
+# intervals here doesn't trigger re-probing on every cycle.
 
 deployment:
   name: "NOAA RDHPCS Status Monitor"
@@ -10,20 +26,32 @@ server:
   port: 8080
 
 collectors:
+  # Live cluster data via the PW CLI (pw ssh).
   pw_cluster:
     enabled: true
-    refresh_interval: 120
+    refresh_interval: 180 # 3 min — saccount_params is ~1–2s per cluster
+    # Pin the PW identity for every ``pw`` call. The value here is the IDENTITY
+    # KEY as stored in ``~/pw/.credentials`` (see ``identities.<key>``), NOT
+    # the longer ``user:<name>@<host>`` form that ``pw context list`` prints.
+    # For a NOAA-only deployment this is typically simply ``noaa``.
+    # Equivalent alternative: launch with ``PW_CONTEXT=noaa ./scripts/run.sh``.
+    pw_context: "noaa"
 
+  # Static fleet catalog + future hooks for scraping the RDHPCS docs site.
   noaa_docs:
     enabled: true
     url: "https://docs.rdhpcs.noaa.gov/systems/index.html"
-    refresh_interval: 3600  # Docs change infrequently
+    refresh_interval: 3600 # docs change infrequently
+
+  # HPCMP scraper does not apply to NOAA — keep disabled to avoid noise.
+  hpcmp:
+    enabled: false
 
 ui:
-  title: "RDHPCS Status Monitor"
+  title: "RDHPCS Fleet Status"
   eyebrow: "NOAA RDHPCS"
   home_page: "overview"
-  default_theme: "dark"
+  default_theme: "light"
   tabs:
     overview: true
     queues: true
@@ -34,11 +62,122 @@ ui:
 
 rate_limiting:
   max_concurrent_ssh: 3
-  ssh_timeout: 30
+  ssh_timeout: 60 # capability probe + saccount_params can take a beat
   retry_backoff: [5, 15, 60]
   per_cluster:
-    min_interval: 60
+    min_interval: 90
     max_commands_per_poll: 5
   circuit_breaker:
     failure_threshold: 3
     pause_duration: 300
+
+# RDHPCS systems published at https://docs.rdhpcs.noaa.gov/systems/index.html.
+# This block is informational — the live data still comes from pw_cluster.
+# Keys mirror the PW cluster URI segments so the UI can cross-reference.
+noaa_systems:
+  hera:
+    name: "Hera"
+    location: "NESCC (Fairmont, WV)"
+    scheduler: "Slurm"
+    tools: ["saccount_params", "slurm"]
+    storage: ["/home", "/scratch1", "/scratch2", "/scratch3", "/scratch4"]
+    oneliner: "53,120-core Intel SkyLake CPU cluster for NWP and climate research."
+    tagline: "NOAA's flagship CPU workhorse for weather and climate research."
+    summary: >-
+      A 3.27-petaFLOPS Intel SkyLake cluster operated at the NOAA
+      Environmental Security Computing Center. 1,328 compute nodes
+      (40 cores / 96 GB-per-core) plus 268 BigMem nodes with 384 GB
+      RAM each, backed by 18.5 PB of scratch storage. Slurm-scheduled.
+    best_for:
+      - "Operational and research NWP / climate ensembles"
+      - "Long-running CPU jobs (up to 8 h on the default partition)"
+      - "Bigmem post-processing on the dedicated 384 GB partition"
+  ursa:
+    name: "Ursa"
+    location: "NESCC (Fairmont, WV)"
+    scheduler: "Slurm"
+    tools: ["saccount_params", "slurm", "lfs"]
+    storage: ["/home", "/scratch3", "/scratch4", "/scratch5"]
+    oneliner: "110k AMD Genoa cores + 148 H100 / GH200 / MI300X GPUs for AI + HPC."
+    tagline: "AMD Genoa + NVIDIA / AMD GPU supercluster for next-gen AI + HPC."
+    summary: >-
+      Mixed CPU + GPU system built on AMD Genoa 9654 (192 cores @
+      2.4 GHz). 576 compute nodes (4.25 PFlops CPU) alongside 58
+      H100 nodes, 8 Grace-Hopper GH200 nodes, and 3 MI300X nodes
+      (3.48 PFlops GPU). Over 100 PB of NDR-200 InfiniBand-attached
+      Lustre, shared with Hera.
+    best_for:
+      - "Foundation-model training and AI/ML pipelines (H100 / MI300X)"
+      - "GPU-accelerated weather and ocean models (GH200)"
+      - "Large-core CPU jobs that exceed Hera's 40-core nodes"
+  gaea-c5:
+    name: "Gaea C5"
+    location: "ORNL (Oak Ridge, TN)"
+    scheduler: "Slurm"
+    tools: ["slurm"]
+    storage: ["/gpfs/f5", "/ncrc/home1", "/ncrc/home2"]
+    oneliner: "Joint NOAA/DOE HPE Cray system at ORNL for high-resolution GFDL climate."
+    tagline: "HPE Cray climate-modeling capability system at ORNL."
+    summary: >-
+      Joint NOAA / DOE HPE Cray supercomputer operated by the
+      National Center for Computational Sciences for high-resolution
+      GFDL climate modeling. Slurm-scheduled access to thousands of
+      compute nodes, GPFS scratch on /gpfs/f5, and dedicated DTNs
+      for off-system transfers.
+    best_for:
+      - "GFDL coupled-model simulations at scale"
+      - "Long-running capability jobs (default 12 h, up to 16 h)"
+      - "Workflows that need to stage data between F5 and F6 filesystems"
+  ppan:
+    name: "PPAN"
+    location: "GFDL (Princeton, NJ)"
+    scheduler: "none (analysis nodes)"
+    tools: []
+    storage: ["/home", "/work", "/work1", "/work3", "/work5", "/nbhome"]
+    oneliner: "GFDL interactive analysis hosts with bigmem nodes up to 4.3 TB RAM."
+    tagline: "GFDL's interactive post-processing and analysis cluster."
+    summary: >-
+      130+ Dell analysis nodes spanning Intel Sandy Bridge through
+      Ice Lake (AVX2 / AVX-512) at the Geophysical Fluid Dynamics
+      Laboratory in Princeton. Per-node memory ranges from 48 GB
+      up to 4.3 TB on the icelake bigmem hosts. Direct access to
+      multiple petabytes of /work* filesystems plus ~200 PB of
+      archive storage.
+    best_for:
+      - "Interactive analysis of GFDL model output"
+      - "Memory-hungry diagnostics (NAG / large-array workloads)"
+      - "Pre-staging data for Gaea jobs without burning core-hours"
+  mercury:
+    name: "Mercury"
+    location: "NESCC (Fairmont, WV)"
+    scheduler: "none (data-mover)"
+    tools: ["hpss"]
+    storage: ["/home"]
+    oneliner: "Data-transfer gateway with direct hsi/htar access to HPSS archive."
+    tagline: "Cross-RDHPCS data transfer hub and HPSS archive gateway."
+    summary: >-
+      Dedicated data-mover system shared across the RDHPCS fleet for
+      secure transfer of NOAA R&D datasets to/from external
+      collaborators. Direct hsi / htar access to the HPSS archive.
+      No scheduler — interactive use only.
+    best_for:
+      - "Pushing or pulling data with non-NOAA collaborators"
+      - "HPSS archive operations (hsi / htar)"
+      - "Routing transfers off of the busy compute systems"
+  cloud:
+    name: "NOAA Cloud (v3)"
+    location: "Parallel Works (AWS / GCP / Azure)"
+    scheduler: "Slurm (cloud-managed)"
+    tools: ["slurm"]
+    storage: ["/home", "Lustre (on-demand)", "object bucket"]
+    oneliner: "On-demand cloud HPC (AWS / GCP / Azure) via Parallel Works."
+    tagline: "On-demand HPC bursts to AWS, GCP, and Azure via Parallel Works."
+    summary: >-
+      User-provisioned cloud HPC clusters managed by the RDHPCS Cloud
+      Platform on Parallel Works. Pick instance types, attach Lustre
+      and object storage, and run the same Slurm workflows you use
+      on-prem — pay only while the cluster is up.
+    best_for:
+      - "Elastic capacity beyond on-prem allocations"
+      - "Right-sized GPU clusters that don't exist on-prem"
+      - "Quick reproducibility runs against a fresh image"

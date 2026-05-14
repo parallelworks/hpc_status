@@ -1,0 +1,5 @@
+100|user-a|project-alpha|batch|batch|RUNNING|2|256|jobA
+101|user-b|project-alpha|batch|batch|RUNNING|1|128|jobB
+102|user-c|project-beta|batch|batch|PENDING|4|512|jobC
+200|user-a|project-alpha|gpu|gpu|RUNNING|1|64|gpuTrain
+201|user-d|project-alpha|gpu|gpu|PENDING|2|128|gpuEval

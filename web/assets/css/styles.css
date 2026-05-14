@@ -1321,6 +1321,84 @@ th[data-sortable][data-sort-dir="desc"]::after {
   background: var(--panel-alt);
 }
 
+/* Compact single-line QoS chip used in the Quota subprojects table — the
+   default queue-chip stacks name and annotation onto two lines, which
+   makes 9 chips tall enough to triple the row height. */
+.qos-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+  line-height: 1.4;
+}
+
+.qos-chip {
+  display: inline-flex !important;
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.2rem;
+  padding: 0.1rem 0.45rem !important;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  line-height: 1.4;
+}
+
+.qos-chip small {
+  font-size: 0.7rem;
+  opacity: 0.75;
+}
+
+.qos-more {
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* Fairshare-allocation cell (NOAA Quota page). Strong line = share; small
+   = usage with color-coded over/under indicator. */
+.fs-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  line-height: 1.25;
+}
+
+.fs-cell strong {
+  font-size: var(--text-sm);
+}
+
+.fs-cell small {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.fs-status {
+  font-weight: 500;
+}
+
+.fs-status.is-under {
+  color: rgb(52, 168, 92);
+}
+
+.fs-status.is-balanced {
+  color: var(--muted);
+}
+
+.fs-status.is-warn {
+  color: rgb(212, 149, 47);
+}
+
+.fs-status.is-over {
+  color: rgb(214, 69, 69);
+}
+
+.fs-priority {
+  font-size: 0.7rem;
+  letter-spacing: 0.02em;
+  opacity: 0.75;
+  cursor: help;
+}
+
 /* Backlog severity chips (mutually exclusive: heavy / light / open). */
 .queue-chip.is-heavy {
   border-color: rgba(212, 78, 92, 0.4);

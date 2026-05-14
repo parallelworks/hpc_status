@@ -1,0 +1,3 @@
+project-alpha|user-a|36000
+project-beta|user-a|7200
+project-gamma|user-a|0

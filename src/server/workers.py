@@ -160,6 +160,7 @@ class ClusterMonitorWorker(threading.Thread):
         run_immediately: bool = True,
         failure_threshold: int = 3,
         pause_duration: int = 300,
+        pw_context: Optional[str] = None,
     ):
         super().__init__(name="cluster-monitor-worker")
         self.store = store
@@ -168,6 +169,7 @@ class ClusterMonitorWorker(threading.Thread):
         self._stop_event = threading.Event()
         self._run_immediately = run_immediately
         self._collector = None
+        self.pw_context = pw_context
         # Circuit breaker state
         self._consecutive_failures = 0
         self._failure_threshold = failure_threshold
@@ -185,7 +187,7 @@ class ClusterMonitorWorker(threading.Thread):
              f"failure_threshold={self._failure_threshold}, "
              f"pause_duration={self._pause_duration}s)")
 
-        self._collector = PWClusterCollector()
+        self._collector = PWClusterCollector(pw_context=self.pw_context)
 
         if not self._collector.is_available():
             _log("[cluster-monitor] WARNING: pw CLI not available, will retry each cycle")

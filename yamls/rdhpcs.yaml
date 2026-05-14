@@ -1,0 +1,129 @@
+# yaml-language-server: $schema=https://activate.parallel.works/workflow.schema.json
+---
+#
+# NOAA RDHPCS Status Monitor — ACTIVATE Workflow
+#
+# Launches the dashboard on the Parallel Works platform pre-configured for
+# NOAA RDHPCS (Hera, Ursa, Gaea, PPAN, Mercury, Cloud). Twin of yamls/hsp.yaml
+# which defaults to the HPCMP deployment.
+#
+# Differences from hsp.yaml:
+#   - Platform dropdown defaults to ``noaa`` (still selectable in case an
+#     operator wants to flip it to ``hpcmp`` or ``generic`` for testing).
+#   - Default theme is ``dark`` to match the RDHPCS branding.
+#   - Session name defaults to ``rdhpcs_status``.
+#   - PW_CONTEXT is set to ``noaa`` so ``pw ssh`` always uses the NOAA
+#     identity regardless of what context the workspace user last selected.
+
+permissions:
+  - "*"
+
+sessions:
+  session:
+    useTLS: false
+    redirect: true
+    useCustomDomain: false
+    prompt-for-name:
+      default: rdhpcs_status
+
+on:
+  execute:
+    inputs:
+      platform:
+        type: dropdown
+        label: Platform
+        default: noaa
+        hidden: true
+        tooltip: Select the deployment platform configuration
+        options:
+          - label: Generic
+            value: generic
+          - label: HPCMP
+            value: hpcmp
+          - label: NOAA
+            value: noaa
+      settings:
+        type: group
+        label: Settings
+        collapsed: true
+        items:
+          port:
+            type: number
+            label: Server Port
+            default: 8080
+            tooltip: HTTP port for the dashboard server
+          theme:
+            type: dropdown
+            label: UI Theme
+            default: light
+            tooltip: Default color theme for the dashboard
+            options:
+              - label: Dark
+                value: dark
+              - label: Light
+                value: light
+          enable_cluster_pages:
+            type: boolean
+            label: Enable Cluster Pages
+            default: true
+            tooltip: Enable queue and quota monitoring pages
+          enable_cluster_monitor:
+            type: boolean
+            label: Enable Cluster Monitor
+            default: true
+            tooltip: Enable background cluster data collection
+          cluster_monitor_interval:
+            type: number
+            label: Refresh Interval
+            default: 180
+            tooltip: Data refresh interval in seconds (180 recommended for NOAA — saccount_params + sreport take a few seconds per cluster)
+
+jobs:
+  run_status_tracker:
+    steps:
+      - name: Run NOAA RDHPCS Status Monitor
+        env:
+          PORT: ${{ inputs.settings.port }}
+          HOST: "0.0.0.0"
+          DEFAULT_THEME: ${{ inputs.settings.theme }}
+          ENABLE_CLUSTER_PAGES: ${{ inputs.settings.enable_cluster_pages && '1' || '0' }}
+          ENABLE_CLUSTER_MONITOR: ${{ inputs.settings.enable_cluster_monitor && '1' || '0' }}
+          CLUSTER_MONITOR_INTERVAL: ${{ inputs.settings.cluster_monitor_interval }}
+          CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
+          # Pin the PW identity so the collector always queries NOAA clusters
+          # even when the workspace's interactive context is something else.
+          # config.noaa.yaml also sets this, but exporting here keeps the
+          # bootstrap (``pw clusters ls``) on NOAA before the config loads.
+          PW_CONTEXT: noaa
+        run: |
+          set -e
+          echo "Starting NOAA RDHPCS Status Monitor..."
+          echo "Platform: ${{ inputs.platform }}"
+          echo "Port: ${PORT}"
+          echo "Theme: ${DEFAULT_THEME}"
+          echo "Config: ${CONFIG_FILE}"
+          echo "PW_CONTEXT: ${PW_CONTEXT}"
+
+          # Run the dashboard
+          ./scripts/run.sh
+
+  create_session:
+    steps:
+      - name: Wait for Server To Start
+        early-cancel: any-job-failed
+        env:
+          host: localhost
+          port: ${{ inputs.settings.port }}
+        retry:
+          interval: 3s
+          max-retries: 1000
+          timeout: 5s
+        run: curl --fail --silent "http://${host}:${port}" >/dev/null 2>&1
+
+      - name: Update Session
+        uses: parallelworks/update-session
+        with:
+          remotePort: ${{ inputs.settings.port }}
+          name: ${{ sessions.session }}
+          status: "running"
+          target: "user-workspace"

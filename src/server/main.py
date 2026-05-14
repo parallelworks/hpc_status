@@ -75,7 +75,10 @@ def create_generate_payload_fn(config: Config, store: DataStore):
             from ..collectors.pw_cluster import PWClusterCollector
             import datetime as dt
 
-            collector = PWClusterCollector()
+            pw_cfg = config.get_collector_config("pw_cluster")
+            collector = PWClusterCollector(
+                pw_context=pw_cfg.extra.get("pw_context"),
+            )
 
             # Check if PW CLI is available
             if not collector.is_available():
@@ -107,13 +110,17 @@ def create_generate_payload_fn(config: Config, store: DataStore):
 
             for cluster in clusters:
                 cluster_name = cluster["uri"].split("/")[-1]
+                # Resolve the cluster's actual login hostname (e.g. ``hfe02``,
+                # ``gaea54``) so the Fleet table shows where the SSH session
+                # is actually landing. Falls back to the URI if PW is flaky.
+                login = collector.get_login_hostname(cluster["uri"]) or cluster["uri"]
                 systems.append({
                     "system": cluster_name,
                     "status": "UP" if cluster["status"] in ("on", "active") else "DOWN",
                     "dsrc": cluster.get("type", "pw"),
-                    "login": cluster["uri"],
+                    "login": login,
                     "scheduler": "slurm",  # Default assumption
-                    "raw_alt": f"PW cluster: {cluster['uri']}",
+                    "raw_alt": cluster["uri"],
                     "source_url": None,
                     "observed_at": now_iso,
                 })
@@ -143,6 +150,28 @@ def create_generate_payload_fn(config: Config, store: DataStore):
             }
 
             _log(f"[pw_cluster] Collected {len(systems)} systems for fleet status")
+
+            # For NOAA deployments, scrape the RDHPCS user-guide pages once
+            # per fleet refresh and save the resulting markdown so that
+            # /api/system-markdown/<slug> can serve it when a card is clicked.
+            if config.platform.lower() == "noaa":
+                try:
+                    from ..collectors.noaa import NOAABriefingScraper
+                    scraper = NOAABriefingScraper(timeout=20)
+                    try:
+                        briefings = scraper.collect_all()
+                        for slug, content in briefings.items():
+                            store.save_markdown(slug, content)
+                        if briefings:
+                            _log(
+                                f"[noaa_docs] Saved briefings for "
+                                f"{len(briefings)} systems: {sorted(briefings)}"
+                            )
+                    finally:
+                        scraper.close()
+                except Exception as e:
+                    _log(f"[noaa_docs] Briefing scrape skipped: {e}")
+
             return data
 
         return generate_pwcluster_payload
@@ -203,6 +232,7 @@ def run_server(args) -> None:
             run_immediately=True,
             failure_threshold=config.rate_limiting.failure_threshold,
             pause_duration=config.rate_limiting.pause_duration,
+            pw_context=config.get_collector_config("pw_cluster").extra.get("pw_context"),
         )
         cluster_worker.start()
     else:
@@ -299,8 +329,9 @@ def parse_args():
     parser.add_argument(
         "--default-theme",
         choices=("dark", "light"),
-        default="dark",
-        help="Initial theme for clients",
+        default=None,
+        help="Override initial theme for clients (otherwise follows the "
+             "config file's ui.default_theme).",
     )
 
     # Feature flags

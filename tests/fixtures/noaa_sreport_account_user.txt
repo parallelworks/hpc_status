@@ -1,0 +1,6 @@
+hera|project-alpha|||10500|2000
+hera|project-alpha|user-a||5000|800
+hera|project-alpha|user-b||5500|1200
+hera|project-beta|||7200|0
+hera|project-beta|user-a||7200|0
+hera|project-delta|||120000|5000

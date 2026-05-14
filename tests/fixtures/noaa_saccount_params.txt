@@ -1,0 +1,16 @@
+Account Params -- Information regarding project associations for first.last
+	Home Quota (/home/first.last) Used: 4096 MB Quota: 5120 MB
+
+	Project: project-alpha
+		FairShare=0.125 (10/40)
+		Partition Access: ALL
+		Available QOSes: batch,debug,long,urgent,windfall
+
+		Directory: /scratch3/SYSADMIN/project-alpha DiskInUse=12000 GB, Quota=400000 GB, Files=1234567, FileQuota=320000000
+		Directory: /scratch4/SYSADMIN/project-alpha DiskInUse=80000 GB, Quota=400000 GB, Files=7654321, FileQuota=320000000
+
+	Project: project-beta
+		Directory: /scratch3/SYSADMIN/project-beta DiskInUse=64 GB, Quota=1000 GB, Files=200, FileQuota=2000000
+
+Note: for an explanation of the meaning of these values and general scheduling information see:
+    https://rdhpcs-common-docs.rdhpcs.noaa.gov/wiki/index.php/SLURM_Fair-share

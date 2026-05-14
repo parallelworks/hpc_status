@@ -34,6 +34,34 @@ const formatHours = (value, { compact = false } = {}) => {
   return formatter.format(Math.round(numeric));
 };
 
+// Format a small NOAA-fairshare percentage compactly. Values are often
+// extremely small (<0.01% for ~70-project clusters), so we keep extra
+// precision below 1% and switch to single decimals above.
+const formatFsPct = (pct) => {
+  if (pct == null || !Number.isFinite(pct)) return "—";
+  if (pct === 0) return "0%";
+  if (pct < 0.01) return pct.toFixed(4) + "%";
+  if (pct < 1) return pct.toFixed(3) + "%";
+  if (pct < 10) return pct.toFixed(2) + "%";
+  return pct.toFixed(1) + "%";
+};
+
+// Slurm walltime strings: "D-HH:MM:SS", "HH:MM:SS", "MM:SS", "UNLIMITED",
+// or an empty/dash value. Returns "7d", "16h", "30m", "∞", or "".
+const formatWalltime = (raw) => {
+  if (!raw || raw === "-" || raw === "0:00:00") return "";
+  if (/^unlimited$/i.test(raw) || /^infinite$/i.test(raw)) return "∞";
+  const m = String(raw).match(/^(?:(\d+)-)?(\d+):(\d+)(?::(\d+))?$/);
+  if (!m) return raw;
+  const days = Number(m[1] || 0);
+  const hours = Number(m[2] || 0);
+  const mins = Number(m[3] || 0);
+  if (days > 0) return `${days}d`;
+  if (hours > 0) return `${hours}h`;
+  if (mins > 0) return `${mins}m`;
+  return raw;
+};
+
 const parseSystems = (cluster) => cluster?.usage_data?.systems || [];
 const parseQueues = (cluster) => cluster?.queue_data?.queues || [];
 const parseGpus = (cluster) => cluster?.gpu_data?.gpus || [];
@@ -41,15 +69,51 @@ const getSystemInfo = (cluster) => cluster?.system_info || {};
 const hasScheduler = (cluster) => cluster?.cluster_metadata?.has_scheduler !== false &&
   (parseSystems(cluster).length > 0 || parseQueues(cluster).length > 0);
 
+// NOAA RDHPCS-style accounting: no hour caps; usage tracked by fairshare.
+// A row counts as fairshare-only when there's no allocation but we have
+// either an FY usage figure or fairshare metadata to show.
+const isFairshareRow = (system) =>
+  (!Number(system?.hours_allocated)) && (
+    Number(system?.hours_used) > 0 ||
+    system?.fairshare_score !== undefined && system?.fairshare_score !== null ||
+    system?.fairshare_rank ||
+    (Array.isArray(system?.qoses) && system.qoses.length > 0)
+  );
+
+const clusterIsFairshare = (cluster) =>
+  parseSystems(cluster).some(isFairshareRow) &&
+  !parseSystems(cluster).some((s) => Number(s?.hours_allocated) > 0);
+
+const fiscalYearStart = (cluster) =>
+  cluster?.usage_data?.systems?.[0]?.fiscal_year_start ||
+  (cluster?.usage_data?.fiscal_year_info || "").replace(/^FY since\s+/, "") ||
+  "";
+
 const computeSummary = () => {
-  const totals = { allocations: 0, used: 0, remaining: 0, gpuCount: 0, gpuMemoryMib: 0 };
+  const totals = {
+    allocations: 0,
+    used: 0,
+    remaining: 0,
+    gpuCount: 0,
+    gpuMemoryMib: 0,
+    projects: 0,
+    fairshareOnly: true,
+    maxConcurrentJobs: 0,
+  };
   state.clusters.forEach((cluster) => {
     parseSystems(cluster).forEach((system) => {
       totals.allocations += Number(system.hours_allocated) || 0;
       totals.used += Number(system.hours_used) || 0;
       totals.remaining += Number(system.hours_remaining) || 0;
+      totals.projects += 1;
+      if (Number(system.hours_allocated) > 0) {
+        totals.fairshareOnly = false;
+      }
+      const jobs = Number(system.account_max_jobs);
+      if (Number.isFinite(jobs) && jobs > totals.maxConcurrentJobs) {
+        totals.maxConcurrentJobs = jobs;
+      }
     });
-    // Also count GPUs
     const gpuSummary = cluster?.gpu_data?.summary;
     if (gpuSummary) {
       totals.gpuCount += gpuSummary.gpu_count || 0;
@@ -154,8 +218,19 @@ const aggregateQueueSnapshot = () => {
 
 const renderFleetUsageDonut = (summary) => {
   if (!elements.fleetUsageDonut) return;
-  if (!summary.allocations) {
+  if (!summary.allocations && !summary.used) {
     elements.fleetUsageDonut.innerHTML = '<div class="placeholder">No usage data yet.</div>';
+    return;
+  }
+  if (summary.fairshareOnly) {
+    // NOAA fairshare model — show FY core-hours used across the fleet
+    elements.fleetUsageDonut.innerHTML = `
+      <div class="donut" style="--donut-value:100">
+        <strong>${formatHours(summary.used, { compact: true })}</strong>
+        <span>FY hrs</span>
+      </div>
+      <small>${summary.projects} project${summary.projects === 1 ? "" : "s"} across the fleet</small>
+    `;
     return;
   }
   const percentRemaining = clampPercent((summary.remaining / summary.allocations) * 100);
@@ -188,20 +263,68 @@ const renderSummary = () => {
   if (elements.clusterCount) {
     elements.clusterCount.textContent = formatInteger(state.clusters.length);
   }
-  if (elements.totalAllocations) {
-    elements.totalAllocations.textContent = summary.allocations
-      ? `${formatHours(summary.allocations, { compact: true })} hrs`
-      : "--";
-  }
-  if (elements.totalUsed) {
-    elements.totalUsed.textContent = summary.used
-      ? `${formatHours(summary.used, { compact: true })} hrs`
-      : "--";
-  }
-  if (elements.totalRemaining) {
-    elements.totalRemaining.textContent = summary.remaining
-      ? `${formatHours(summary.remaining, { compact: true })} hrs`
-      : "--";
+
+  // In NOAA fairshare mode, there's no concept of an hour cap. Repurpose the
+  // top cards: "Projects tracked" instead of "Total allocations", and hide
+  // the meaningless "Remaining" tile.
+  const allocationsCard = elements.totalAllocations?.parentElement;
+  const allocationsLabel = allocationsCard?.querySelector("p");
+  const allocationsTip = allocationsCard?.querySelector(".card-tooltip");
+  const remainingCard = elements.totalRemaining?.parentElement;
+  const remainingLabel = remainingCard?.querySelector("p");
+  const remainingTip = remainingCard?.querySelector(".card-tooltip");
+  const usedCard = elements.totalUsed?.parentElement;
+  const usedLabel = usedCard?.querySelector("p");
+  const usedTip = usedCard?.querySelector(".card-tooltip");
+
+  if (summary.fairshareOnly && summary.projects > 0) {
+    if (allocationsLabel) allocationsLabel.textContent = "Projects tracked";
+    if (allocationsTip) {
+      allocationsTip.title = "Project accounts you have access to across the fleet.";
+    }
+    if (elements.totalAllocations) {
+      elements.totalAllocations.textContent = formatInteger(summary.projects);
+    }
+    if (usedLabel) usedLabel.textContent = "FY core-hours used";
+    if (usedTip) {
+      usedTip.title =
+        "Core-hours consumed since the start of the current NOAA fiscal year (Oct 1).";
+    }
+    if (elements.totalUsed) {
+      elements.totalUsed.textContent = summary.used
+        ? `${formatHours(summary.used, { compact: true })} hrs`
+        : "0 hrs";
+    }
+    if (remainingLabel) remainingLabel.textContent = "Max concurrent jobs";
+    if (remainingTip) {
+      remainingTip.title =
+        "Highest per-association MaxJobs cap across your projects (sacctmgr show association). " +
+        "This is the hardest limit the scheduler enforces on you.";
+    }
+    if (elements.totalRemaining) {
+      elements.totalRemaining.textContent = summary.maxConcurrentJobs
+        ? formatInteger(summary.maxConcurrentJobs)
+        : "--";
+    }
+  } else {
+    if (allocationsLabel) allocationsLabel.textContent = "Total allocations";
+    if (elements.totalAllocations) {
+      elements.totalAllocations.textContent = summary.allocations
+        ? `${formatHours(summary.allocations, { compact: true })} hrs`
+        : "--";
+    }
+    if (usedLabel) usedLabel.textContent = "Hours used";
+    if (elements.totalUsed) {
+      elements.totalUsed.textContent = summary.used
+        ? `${formatHours(summary.used, { compact: true })} hrs`
+        : "--";
+    }
+    if (remainingLabel) remainingLabel.textContent = "Hours remaining";
+    if (elements.totalRemaining) {
+      elements.totalRemaining.textContent = summary.remaining
+        ? `${formatHours(summary.remaining, { compact: true })} hrs`
+        : "--";
+    }
   }
   renderFleetUsageDonut(summary);
   renderFleetQueueSnapshot();
@@ -238,10 +361,176 @@ const buildQueueChips = (queues) => {
   }).join("");
 };
 
-const buildSubprojectRows = (systems) => {
+const buildSubprojectRows = (systems, { fairshareMode = false } = {}) => {
   if (!systems.length) {
     return '<tr><td colspan="4" class="placeholder">No subprojects reported.</td></tr>';
   }
+  if (fairshareMode) {
+    const sorted = [...systems].sort(
+      (a, b) => (Number(b.hours_used) || 0) - (Number(a.hours_used) || 0),
+    );
+    const limited = sorted.slice(0, 5);
+    const remainder = sorted.length - limited.length;
+    const rows = limited
+      .map((system) => {
+        const fy = system.hours_used != null ? formatHours(system.hours_used) : "--";
+        const maxJobs =
+          system.account_max_jobs != null && system.account_max_jobs !== ""
+            ? formatInteger(system.account_max_jobs)
+            : null;
+
+        // ----- Allocation cell ------------------------------------------
+        // NOAA RDHPCS hands out allocations as a fairshare ratio: NormShares
+        // is the project's slice of the cluster, EffUsage is the decay-
+        // adjusted share consumed. EffUsage / NormShares > 1 means the
+        // project has burned more than its allocation and the scheduler is
+        // deprioritizing it (fairshare drops).
+        // See https://docs.rdhpcs.noaa.gov/slurm/overview.html#priority-and-fairshare
+        const sharePct =
+          typeof system.norm_shares === "number"
+            ? system.norm_shares * 100
+            : null;
+        const usagePct =
+          typeof system.effective_usage === "number"
+            ? system.effective_usage * 100
+            : null;
+
+        let allocationCell;
+        if (sharePct === null && usagePct === null) {
+          allocationCell = '<span class="muted-text">--</span>';
+        } else {
+          const shareLabel =
+            sharePct !== null ? `${formatFsPct(sharePct)} share` : "no share";
+          let usageRatio = null;
+          if (sharePct && sharePct > 0 && usagePct !== null) {
+            usageRatio = usagePct / sharePct;
+          }
+          let statusTag = "is-balanced";
+          let statusText = "";
+          if (usageRatio !== null) {
+            if (usageRatio >= 1.5) {
+              statusTag = "is-over";
+              statusText = `${usageRatio.toFixed(1)}× over share`;
+            } else if (usageRatio >= 1.0) {
+              statusTag = "is-warn";
+              statusText = "at share";
+            } else if (usageRatio > 0) {
+              statusTag = "is-under";
+              statusText = `${(usageRatio * 100).toFixed(0)}% of share used`;
+            }
+          } else if (usagePct === 0) {
+            statusText = "no usage yet";
+          }
+          const usageLabel =
+            usagePct !== null ? `${formatFsPct(usagePct)} used` : "";
+
+          // Fairshare priority signal: rank tells you scheduling position
+          // (lower = higher priority); score is the [0,1] decayed ratio
+          // Slurm hands to the priority plugin.
+          const fsParts = [];
+          if (system.fairshare_rank) {
+            fsParts.push(`rank ${system.fairshare_rank}`);
+          }
+          if (typeof system.fairshare_score === "number") {
+            fsParts.push(`FS ${system.fairshare_score.toFixed(3)}`);
+          }
+          const fsLine = fsParts.length
+            ? `<small class="fs-priority muted-text" title="Slurm fairshare: rank is this project's scheduling position among all projects on the cluster (lower = higher priority). FS is the decay-adjusted ratio Slurm uses to rank jobs.">${fsParts.join(" · ")}</small>`
+            : "";
+
+          const title = `NormShares ${
+            sharePct !== null ? sharePct.toFixed(4) + "%" : "—"
+          }, EffUsage ${
+            usagePct !== null ? usagePct.toFixed(4) + "%" : "—"
+          }`;
+          allocationCell = `
+            <div class="fs-cell" title="${title}">
+              <strong>${shareLabel}</strong>
+              <small>${usageLabel}${statusText ? " · " : ""}<span class="fs-status ${statusTag}">${statusText}</span></small>
+              ${fsLine}
+            </div>
+          `;
+        }
+
+        // ----- QoS chips (compact, sorted by walltime desc) -------------
+        const qosLimits = system.qos_limits || {};
+        const qosList = Array.isArray(system.qoses) ? system.qoses : [];
+
+        const walltimeSeconds = (raw) => {
+          if (!raw || /^unlimited$/i.test(raw)) return Infinity;
+          const m = String(raw).match(/^(?:(\d+)-)?(\d+):(\d+)(?::(\d+))?$/);
+          if (!m) return 0;
+          const d = Number(m[1] || 0);
+          const h = Number(m[2] || 0);
+          const min = Number(m[3] || 0);
+          const sec = Number(m[4] || 0);
+          return ((d * 24 + h) * 60 + min) * 60 + sec;
+        };
+
+        const enrichedQos = qosList.map((q) => {
+          const lim = qosLimits[q] || {};
+          const wall = formatWalltime(lim.max_wall);
+          const tres = lim.max_tres || "";
+          const nodeMatch = tres.match(/node=(\d+)/);
+          const nodes = nodeMatch ? `${nodeMatch[1]}n` : "";
+          const annot = [wall, nodes].filter(Boolean).join(" · ");
+          return {
+            name: q,
+            annot,
+            wall_seconds: walltimeSeconds(lim.max_wall),
+            label: annot ? `${q} (${annot})` : q,
+          };
+        });
+        enrichedQos.sort((a, b) => b.wall_seconds - a.wall_seconds);
+
+        const QOS_VISIBLE = 4;
+        const visible = enrichedQos.slice(0, QOS_VISIBLE);
+        const hidden = enrichedQos.slice(QOS_VISIBLE);
+        const visibleHtml = visible
+          .map((q) => {
+            const title = q.annot
+              ? `${q.name}: max ${q.annot}`
+              : `${q.name} (no published limits)`;
+            return `<span class="queue-chip is-idle qos-chip" title="${title}">${q.name}${
+              q.annot ? `<small>·${q.annot}</small>` : ""
+            }</span>`;
+          })
+          .join(" ");
+        const hiddenHtml = hidden.length
+          ? `<span class="qos-more muted-text" title="${hidden
+              .map((q) => q.label)
+              .join(", ")}">+${hidden.length} more</span>`
+          : "";
+        const qosChips = qosList.length
+          ? `<div class="qos-chip-row">${visibleHtml}${hiddenHtml}</div>`
+          : '<span class="muted-text">--</span>';
+
+        // Max-jobs chip lives under the subproject code so we keep the row
+        // narrow but still surface the operational ceiling.
+        const maxJobsChip = maxJobs
+          ? `<small class="muted-text">Max jobs: ${maxJobs}</small>`
+          : "";
+
+        return `
+          <tr>
+            <td>${system.system || "--"}</td>
+            <td>
+              <code>${system.subproject || "--"}</code>
+              ${maxJobsChip ? `<br>${maxJobsChip}` : ""}
+            </td>
+            <td>${allocationCell}</td>
+            <td title="Core-hours used since NOAA fiscal year start (Oct 1)">${fy}</td>
+            <td>${qosChips}</td>
+          </tr>
+        `;
+      })
+      .join("");
+    if (remainder > 0) {
+      return `${rows}<tr><td colspan="5" class="placeholder">+${remainder} additional subprojects</td></tr>`;
+    }
+    return rows;
+  }
+  // Legacy HPCMP-style layout (allocated/availability)
   const sorted = [...systems].sort((a, b) => (Number(b.hours_allocated) || 0) - (Number(a.hours_allocated) || 0));
   const limited = sorted.slice(0, 5);
   const remainder = sorted.length - limited.length;
@@ -482,6 +771,8 @@ const buildClusterCard = (cluster) => {
   const systems = parseSystems(cluster);
   const queues = parseQueues(cluster);
   const totals = clusterTotals(cluster);
+  const fairshareMode = clusterIsFairshare(cluster);
+  const fyStart = fiscalYearStart(cluster);
   const percentRemaining = totals.allocations
     ? clampPercent((totals.remaining / totals.allocations) * 100)
     : 0;
@@ -490,9 +781,74 @@ const buildClusterCard = (cluster) => {
   if (metadata.type) metaParts.push(metadata.type);
   if (metadata.uri) metaParts.push(metadata.uri);
   if (metadata.timestamp) metaParts.push(new Date(metadata.timestamp).toLocaleString());
-  const donutDetail = totals.allocations
-    ? `${formatHours(totals.remaining, { compact: true })} of ${formatHours(totals.allocations, { compact: true })} hrs`
-    : "No allocation data";
+
+  let donutBlock;
+  let metricsList;
+  if (fairshareMode) {
+    // NOAA fairshare style — what users care about: FY usage, projects, and
+    // their concurrent-job ceiling (the highest cap across their projects).
+    const maxJobsAcrossProjects = systems
+      .map((s) => Number(s.account_max_jobs))
+      .filter((n) => Number.isFinite(n) && n > 0)
+      .reduce((a, b) => Math.max(a, b), 0);
+    const fyDetail = fyStart ? `FY since ${fyStart}` : "Fiscal year usage";
+    donutBlock = `
+      <div class="donut-chart" aria-label="${metadata.name || "Cluster"} fiscal year usage">
+        <div class="donut" style="--donut-value:100">
+          <strong>${formatHours(totals.used, { compact: true })}</strong>
+          <span>FY hrs</span>
+        </div>
+        <small>${fyDetail}</small>
+      </div>
+    `;
+    metricsList = `
+      <ul class="cluster-metrics">
+        <li title="Total core-hours consumed this fiscal year"><span>FY Used</span><strong>${formatHours(totals.used)}</strong></li>
+        <li title="Number of projects you have access to on this cluster"><span>Projects</span><strong>${systems.length}</strong></li>
+        <li title="Highest concurrent-job cap across this cluster's projects (sacctmgr MaxJobs)"><span>Max jobs</span><strong>${maxJobsAcrossProjects ? formatInteger(maxJobsAcrossProjects) : "--"}</strong></li>
+      </ul>
+    `;
+  } else {
+    const donutDetail = totals.allocations
+      ? `${formatHours(totals.remaining, { compact: true })} of ${formatHours(totals.allocations, { compact: true })} hrs`
+      : "No allocation data";
+    donutBlock = `
+      <div class="donut-chart" aria-label="${metadata.name || metadata.uri || "Cluster"} hours remaining">
+        <div class="donut" style="--donut-value:${percentRemaining}">
+          <strong>${Math.round(percentRemaining)}%</strong>
+          <span>Remaining</span>
+        </div>
+        <small>${donutDetail}</small>
+      </div>
+    `;
+    metricsList = `
+      <ul class="cluster-metrics">
+        <li title="Total core-hours granted to this cluster"><span>Allocated</span><strong>${formatHours(totals.allocations)}</strong></li>
+        <li title="Core-hours already consumed"><span>Used</span><strong>${formatHours(totals.used)}</strong></li>
+        <li title="Core-hours still available"><span>Remaining</span><strong>${formatHours(totals.remaining)}</strong></li>
+      </ul>
+    `;
+  }
+
+  const tableHeader = fairshareMode
+    ? `
+      <tr>
+        <th>System <span class="th-help" title="HPC system for this project">ⓘ</span></th>
+        <th>Subproject <span class="th-help" title="Project code (NOAA RDHPCS account name). Max jobs is the concurrent-job cap from sacctmgr.">ⓘ</span></th>
+        <th>Allocation <span class="th-help" title="NOAA expresses allocations as a Slurm fairshare ratio. Share = NormShares (your slice of the cluster). Used = EffUsage (decay-adjusted consumption). When used > share, the scheduler deprioritises new jobs from this project. See https://docs.rdhpcs.noaa.gov/slurm/overview.html#priority-and-fairshare">ⓘ</span></th>
+        <th>FY Used (hrs) <span class="th-help" title="Absolute core-hours consumed since the start of the current NOAA fiscal year (Oct 1), per sreport. The fairshare ratio above is decay-adjusted and normalised across the cluster, so this number won't match a simple multiplication.">ⓘ</span></th>
+        <th>QoSes &amp; walltime <span class="th-help" title="Queue-of-service classes you can submit to, each annotated with its max walltime and (where set) max node count">ⓘ</span></th>
+      </tr>
+    `
+    : `
+      <tr>
+        <th>System <span class="th-help" title="HPC system for this allocation">ⓘ</span></th>
+        <th>Subproject <span class="th-help" title="Project code or sub-account identifier">ⓘ</span></th>
+        <th>Allocated <span class="th-help" title="Total core-hours granted">ⓘ</span></th>
+        <th>Availability <span class="th-help" title="Percentage of allocation still remaining">ⓘ</span></th>
+      </tr>
+    `;
+
   return `
     <article class="cluster-card">
       <header>
@@ -504,36 +860,19 @@ const buildClusterCard = (cluster) => {
       </header>
       <div class="cluster-card-body">
         <div class="cluster-card-summary">
-          <div class="donut-chart" aria-label="${metadata.name || metadata.uri || "Cluster"} hours remaining">
-            <div class="donut" style="--donut-value:${percentRemaining}">
-              <strong>${Math.round(percentRemaining)}%</strong>
-              <span>Remaining</span>
-            </div>
-            <small>${donutDetail}</small>
-          </div>
-          <ul class="cluster-metrics">
-            <li title="Total core-hours granted to this cluster"><span>Allocated</span><strong>${formatHours(totals.allocations)}</strong></li>
-            <li title="Core-hours already consumed"><span>Used</span><strong>${formatHours(totals.used)}</strong></li>
-            <li title="Core-hours still available"><span>Remaining</span><strong>${formatHours(totals.remaining)}</strong></li>
-          </ul>
+          ${donutBlock}
+          ${metricsList}
         </div>
         <div class="cluster-subprojects">
           <div class="table-head compact">
-            <h5>Subprojects <span class="th-help" title="Allocations broken down by project or sub-account">ⓘ</span></h5>
+            <h5>${fairshareMode ? "Projects" : "Subprojects"} <span class="th-help" title="${fairshareMode ? "Projects you have access to on this cluster, with FY-to-date usage and fairshare context." : "Allocations broken down by project or sub-account"}">ⓘ</span></h5>
             <span>${systems.length} total</span>
           </div>
           <div class="table-scroll mini">
             <table class="quota-table">
-              <thead>
-                <tr>
-                  <th>System <span class="th-help" title="HPC system for this allocation">ⓘ</span></th>
-                  <th>Subproject <span class="th-help" title="Project code or sub-account identifier">ⓘ</span></th>
-                  <th>Allocated <span class="th-help" title="Total core-hours granted">ⓘ</span></th>
-                  <th>Availability <span class="th-help" title="Percentage of allocation still remaining">ⓘ</span></th>
-                </tr>
-              </thead>
+              <thead>${tableHeader}</thead>
               <tbody>
-                ${buildSubprojectRows(systems)}
+                ${buildSubprojectRows(systems, { fairshareMode })}
               </tbody>
             </table>
           </div>
@@ -561,9 +900,14 @@ const renderClusterGrid = () => {
   const sorted = [...state.clusters].sort((a, b) => {
     const aTotals = clusterTotals(a);
     const bTotals = clusterTotals(b);
-    const aPct = aTotals.allocations ? aTotals.remaining / aTotals.allocations : 0;
-    const bPct = bTotals.allocations ? bTotals.remaining / bTotals.allocations : 0;
-    return aPct - bPct;
+    // Allocation mode: sort by least-remaining ratio (most-burned first).
+    // Fairshare mode (NOAA): sort by hours used descending.
+    if (aTotals.allocations || bTotals.allocations) {
+      const aPct = aTotals.allocations ? aTotals.remaining / aTotals.allocations : 0;
+      const bPct = bTotals.allocations ? bTotals.remaining / bTotals.allocations : 0;
+      return aPct - bPct;
+    }
+    return (bTotals.used || 0) - (aTotals.used || 0);
   });
   elements.clusterGrid.innerHTML = sorted.map((cluster) => buildClusterCard(cluster)).join("");
   if (elements.clusterGridNote) {
