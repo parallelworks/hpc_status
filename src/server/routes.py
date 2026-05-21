@@ -15,7 +15,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from urllib.parse import urlparse, unquote
 
 if TYPE_CHECKING:
-    from .workers import DashboardState
+    from .workers import ClusterMonitorWorker, DashboardState
     from ..data.persistence import DataStore
 
 
@@ -31,6 +31,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     # These will be set by the server
     server_state: Optional["DashboardState"] = None
     cluster_state: Optional["DashboardState"] = None
+    cluster_worker: Optional["ClusterMonitorWorker"] = None
     data_store: Optional["DataStore"] = None
     web_dir: Path = Path("web")
     url_prefix: str = ""
@@ -225,23 +226,99 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_cluster_usage(self):
         payload = self._load_cluster_usage_payload()
-        if payload is None:
-            self.send_error(
-                HTTPStatus.SERVICE_UNAVAILABLE, "Cluster usage data unavailable."
+        progress = (
+            self.cluster_worker.get_progress() if self.cluster_worker else None
+        )
+        clusters_list = self._clusters_from_payload(payload)
+
+        # No cache at all — return a 200 envelope so the UI can render
+        # "collecting from N clusters" instead of treating it as an outage.
+        # Exception: if the first sweep already finished and just produced
+        # no clusters, send an empty list so the existing "no data" UI runs.
+        if not clusters_list:
+            if progress and progress.get("first_sweep_complete"):
+                self._send_json([])
+                return
+            self._send_json(
+                {
+                    "status": "warming_up",
+                    "progress": progress,
+                    "clusters": [],
+                }
             )
             return
-        # Return raw format for frontend compatibility
-        # The payload is already a list of cluster objects
+
+        # First sweep still running but some clusters are already done:
+        # surface what we have alongside progress so the user can see
+        # partial data instead of waiting in the dark.
+        if (
+            progress
+            and not progress.get("first_sweep_complete", True)
+            and progress.get("phase") == "warming_up"
+        ):
+            self._send_json(
+                {
+                    "status": "partial",
+                    "progress": progress,
+                    "clusters": clusters_list,
+                }
+            )
+            return
+
+        # Steady state — preserve the existing raw-list response so older
+        # consumers (storage page, cluster detail, insights) keep working.
         self._send_json(payload)
 
-    def _handle_storage(self):
-        """Return storage/filesystem data for all clusters."""
-        payload = self._load_cluster_usage_payload()
+    @staticmethod
+    def _clusters_from_payload(payload) -> list:
         if payload is None:
-            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Storage data unavailable.")
+            return []
+        if isinstance(payload, list):
+            return payload
+        if isinstance(payload, dict):
+            return payload.get("clusters") or payload.get("usage") or []
+        return []
+
+    def _handle_storage(self):
+        """Return storage/filesystem data for all clusters.
+
+        Shares the same warming/partial envelope as /api/cluster-usage so the
+        storage page can show progress during the first sweep instead of a
+        red HTTP-503 error.
+        """
+        payload = self._load_cluster_usage_payload()
+        progress = (
+            self.cluster_worker.get_progress() if self.cluster_worker else None
+        )
+        clusters_list = self._clusters_from_payload(payload)
+
+        if not clusters_list:
+            if progress and progress.get("first_sweep_complete"):
+                self._send_json([])
+                return
+            self._send_json(
+                {
+                    "status": "warming_up",
+                    "progress": progress,
+                    "clusters": [],
+                }
+            )
             return
-        # The payload already contains storage_data per cluster
-        # Return it as-is for the storage page
+
+        if (
+            progress
+            and not progress.get("first_sweep_complete", True)
+            and progress.get("phase") == "warming_up"
+        ):
+            self._send_json(
+                {
+                    "status": "partial",
+                    "progress": progress,
+                    "clusters": clusters_list,
+                }
+            )
+            return
+
         self._send_json(payload)
 
     def _handle_cluster_usage_detail(self, slug_part: str):

@@ -28,13 +28,55 @@ const DATA_URL = new URL("api/storage", apiBase).toString();
 
 const numberFormatter = new Intl.NumberFormat("en-US", { maximumFractionDigits: 1 });
 
+const RETRY_INTERVAL_MS = 15000;
+
 const state = {
   clusters: [],
   loading: false,
   lastUpdated: null,
+  retryHandle: null,
   features: {
     clusterPages: window.APP_CONFIG?.clusterPagesEnabled !== false,
   },
+};
+
+const scheduleRetry = () => {
+  if (state.retryHandle || !state.features.clusterPages) return;
+  state.retryHandle = setTimeout(() => {
+    state.retryHandle = null;
+    loadData({ silent: true });
+  }, RETRY_INTERVAL_MS);
+};
+
+const clearRetry = () => {
+  if (state.retryHandle) {
+    clearTimeout(state.retryHandle);
+    state.retryHandle = null;
+  }
+};
+
+const formatProgressMessage = (progress, isFirstSweep) => {
+  if (!progress || !progress.total) {
+    return isFirstSweep
+      ? "First-time setup: collecting storage data from your clusters…"
+      : "Refreshing storage data…";
+  }
+  const { collected = 0, total = 0, current_cluster: current } = progress;
+  const lead = isFirstSweep ? "Collecting storage data" : "Refreshing storage data";
+  const where = current ? ` (currently ${current})` : "";
+  return `${lead} from ${total} clusters — ${collected}/${total} ready${where}.`;
+};
+
+const formatProgressStatus = (progress, isFirstSweep) => {
+  if (!progress || !progress.total) {
+    return isFirstSweep
+      ? "Connecting to clusters for the first time — this can take a couple of minutes."
+      : "Refreshing…";
+  }
+  const { collected = 0, total = 0 } = progress;
+  return isFirstSweep
+    ? `First sweep in progress: ${collected} of ${total} clusters ready.`
+    : `Refresh in progress: ${collected} of ${total} clusters updated.`;
 };
 
 const elements = {};
@@ -370,6 +412,22 @@ const loadData = async ({ silent = true } = {}) => {
     }
     const payload = await response.json();
 
+    // Detect the warming/partial envelope so the first sweep shows progress
+    // instead of an empty grid + error banner.
+    const envelopeStatus =
+      payload && !Array.isArray(payload) && typeof payload === "object"
+        ? payload.status
+        : null;
+    if (envelopeStatus === "warming_up" && (!payload.clusters || !payload.clusters.length)) {
+      state.clusters = [];
+      state.lastUpdated = Date.now();
+      renderSummary();
+      showGeneratingPlaceholder(formatProgressMessage(payload.progress, true));
+      setBanner(formatProgressStatus(payload.progress, true), "info");
+      scheduleRetry();
+      return;
+    }
+
     if (Array.isArray(payload)) {
       state.clusters = payload;
     } else if (payload && Array.isArray(payload.clusters)) {
@@ -379,14 +437,21 @@ const loadData = async ({ silent = true } = {}) => {
     }
 
     state.lastUpdated = Date.now();
-    clearBanner();
     renderSummary();
     renderStorageGrid();
+    if (envelopeStatus === "partial") {
+      setBanner(formatProgressStatus(payload.progress, false), "info");
+      scheduleRetry();
+    } else {
+      clearBanner();
+      clearRetry();
+    }
   } catch (err) {
     console.error("Failed to load storage data:", err);
     if (!silent) {
       setBanner(`Failed to load storage data: ${err.message}`, "error");
     }
+    scheduleRetry();
   } finally {
     state.loading = false;
     disableRefresh(false);

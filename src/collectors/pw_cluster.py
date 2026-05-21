@@ -150,8 +150,16 @@ class PWClusterCollector(BaseCollector):
             _log(f"[pw_cluster] Authentication check error: {e}")
             return False, str(e)
 
-    def collect(self) -> Dict[str, Any]:
+    def collect(self, progress_cb=None) -> Dict[str, Any]:
         """Collect data from all active PW clusters.
+
+        Args:
+            progress_cb: Optional callable invoked twice per cluster — once
+                as ``progress_cb("start", idx, total, name, None)`` before
+                each cluster's data is gathered, and again as
+                ``progress_cb("complete", idx+1, total, name, cluster_data)``
+                once the SSH round-trips finish. Lets the worker stream
+                progress + partial results to the UI during long first sweeps.
 
         Returns:
             Dictionary with 'clusters' list and 'meta' information.
@@ -172,11 +180,23 @@ class PWClusterCollector(BaseCollector):
                 }
 
             results = []
-            for cluster in clusters:
+            total = len(clusters)
+            for idx, cluster in enumerate(clusters):
+                cluster_name = cluster["uri"].split("/")[-1]
+                if progress_cb is not None:
+                    try:
+                        progress_cb("start", idx, total, cluster_name, None)
+                    except Exception as cb_exc:
+                        _log(f"[pw_cluster] progress_cb(start) raised: {cb_exc}")
                 cluster_data = self._process_cluster(cluster)
                 if cluster_data:
                     results.append(cluster_data)
                     self._known_clusters.add(cluster["uri"])
+                if progress_cb is not None:
+                    try:
+                        progress_cb("complete", idx + 1, total, cluster_name, cluster_data)
+                    except Exception as cb_exc:
+                        _log(f"[pw_cluster] progress_cb(complete) raised: {cb_exc}")
 
             return {
                 "meta": {

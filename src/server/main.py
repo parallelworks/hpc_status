@@ -240,6 +240,7 @@ def run_server(args) -> None:
 
     # Configure the request handler
     DashboardRequestHandler.server_state = state
+    DashboardRequestHandler.cluster_worker = cluster_worker
     DashboardRequestHandler.data_store = store
     DashboardRequestHandler.web_dir = web_dir
     DashboardRequestHandler.url_prefix = config.server.url_prefix

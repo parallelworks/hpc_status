@@ -178,6 +178,22 @@ class ClusterMonitorWorker(threading.Thread):
         # Periodic cleanup counter
         self._collection_count = 0
         self._cleanup_every = 100
+        # Progress tracking — surfaced to the UI so the queue/quota/storage
+        # pages can show "collecting 3/12 clusters" instead of HTTP 503.
+        self._progress_lock = threading.Lock()
+        self._progress: Dict[str, Any] = {
+            "phase": "idle",  # idle | warming_up | refreshing | ready | error
+            "total": 0,
+            "collected": 0,
+            "current_cluster": None,
+            "started_at": None,
+            "last_completed_at": None,
+            "first_sweep_complete": False,
+        }
+        # Cumulative results for the *current* in-flight sweep. During the
+        # first sweep we persist this list incrementally so partial data
+        # shows up in the UI as clusters finish.
+        self._cycle_results: list = []
 
     def run(self) -> None:
         # Initialize collector lazily
@@ -188,6 +204,23 @@ class ClusterMonitorWorker(threading.Thread):
              f"pause_duration={self._pause_duration}s)")
 
         self._collector = PWClusterCollector(pw_context=self.pw_context)
+
+        # If we already have a usable cluster_usage cache on disk, treat the
+        # first sweep as already done so the UI doesn't slip back into
+        # "warming up" after a service restart.
+        try:
+            cached = self.store.load_cache("cluster_usage")
+            if cached:
+                count = len(cached if isinstance(cached, list) else cached.get("clusters") or [])
+                if count:
+                    self._progress_update(
+                        phase="ready",
+                        first_sweep_complete=True,
+                        collected=count,
+                        total=count,
+                    )
+        except Exception as exc:
+            _log(f"[cluster-monitor] Cache probe at startup failed: {exc}")
 
         if not self._collector.is_available():
             _log("[cluster-monitor] WARNING: pw CLI not available, will retry each cycle")
@@ -219,6 +252,47 @@ class ClusterMonitorWorker(threading.Thread):
 
     def stop(self) -> None:
         self._stop_event.set()
+
+    def get_progress(self) -> Dict[str, Any]:
+        """Snapshot the current collection progress for the API to surface."""
+        with self._progress_lock:
+            return dict(self._progress)
+
+    def _progress_update(self, **kwargs) -> None:
+        with self._progress_lock:
+            self._progress.update(kwargs)
+
+    def _on_cluster_progress(self, phase, collected, total, cluster_name, cluster_data):
+        """Per-cluster callback from the collector.
+
+        On the *first* sweep (no cache yet), we persist the cumulative list
+        after each cluster finishes so the UI can render partial data as it
+        arrives. On subsequent sweeps we only update progress fields and let
+        the worker save the full result at the end of the cycle — that keeps
+        a good cache from being overwritten by a partial one mid-refresh.
+        """
+        if phase == "start":
+            self._progress_update(
+                current_cluster=cluster_name,
+                total=total,
+            )
+            return
+        # phase == "complete"
+        self._progress_update(
+            collected=collected,
+            total=total,
+            last_completed_at=datetime.utcnow().isoformat() + "Z",
+        )
+        if cluster_data is None:
+            return
+        self._cycle_results.append(cluster_data)
+        with self._progress_lock:
+            first_sweep_done = self._progress.get("first_sweep_complete", False)
+        if not first_sweep_done:
+            try:
+                self.store.save_cache("cluster_usage", list(self._cycle_results))
+            except Exception as exc:
+                _log(f"[cluster-monitor] Incremental cache save failed: {exc}")
 
     def _check_auth_or_expire(self) -> bool:
         """Check authentication; set _auth_expired if token is gone.
@@ -252,9 +326,21 @@ class ClusterMonitorWorker(threading.Thread):
                 return
             self._consecutive_failures = 0
 
+        # Mark the start of this sweep so the UI can render progress.
+        with self._progress_lock:
+            first_sweep_done = self._progress.get("first_sweep_complete", False)
+        self._cycle_results = []
+        self._progress_update(
+            phase="refreshing" if first_sweep_done else "warming_up",
+            started_at=datetime.utcnow().isoformat() + "Z",
+            collected=0,
+            total=0,
+            current_cluster=None,
+        )
+
         try:
             _log("[cluster-monitor] Collecting cluster data...")
-            data = self._collector.collect()
+            data = self._collector.collect(progress_cb=self._on_cluster_progress)
             clusters = data.get("clusters", [])
 
             if not clusters:
@@ -270,12 +356,23 @@ class ClusterMonitorWorker(threading.Thread):
                         return
                 data.setdefault("meta", {})["empty_result"] = True
                 self.store.save_snapshot("pw_cluster", data)
+                self._progress_update(
+                    phase="ready" if first_sweep_done else "error",
+                    current_cluster=None,
+                )
                 return
 
-            # Success: reset failure counter and save
+            # Success: reset failure counter and save the canonical cache.
             self._consecutive_failures = 0
             self.store.save_cache("cluster_usage", clusters)
             self.store.save_snapshot("pw_cluster", data)
+            self._progress_update(
+                phase="ready",
+                first_sweep_complete=True,
+                current_cluster=None,
+                collected=len(clusters),
+                total=len(clusters),
+            )
             _log(f"[cluster-monitor] Collected data for {data['meta']['cluster_count']} clusters")
 
             # Periodic database cleanup
@@ -292,6 +389,10 @@ class ClusterMonitorWorker(threading.Thread):
             _log(
                 f"[cluster-monitor] Collection failed "
                 f"(failure {self._consecutive_failures}/{self._failure_threshold}): {exc}"
+            )
+            self._progress_update(
+                phase="ready" if first_sweep_done else "error",
+                current_cluster=None,
             )
             # On repeated exceptions, check if it's an auth problem
             if self._consecutive_failures >= self._failure_threshold:
