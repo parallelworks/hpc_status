@@ -160,6 +160,30 @@ const cacheElements = () => {
   elements.fleetQueueTags = getElement("fleet-queue-tags");
 };
 
+const formatProgressMessage = (progress, isFirstSweep) => {
+  if (!progress || !progress.total) {
+    return isFirstSweep
+      ? "First-time setup: collecting quota data from your clusters…"
+      : "Refreshing quota data…";
+  }
+  const { collected = 0, total = 0, current_cluster: current } = progress;
+  const lead = isFirstSweep ? "Collecting quota data" : "Refreshing quota data";
+  const where = current ? ` (currently ${current})` : "";
+  return `${lead} from ${total} clusters — ${collected}/${total} ready${where}.`;
+};
+
+const formatProgressStatus = (progress, isFirstSweep) => {
+  if (!progress || !progress.total) {
+    return isFirstSweep
+      ? "Connecting to clusters for the first time — this can take a couple of minutes."
+      : "Refreshing…";
+  }
+  const { collected = 0, total = 0 } = progress;
+  return isFirstSweep
+    ? `First sweep in progress: ${collected} of ${total} clusters ready.`
+    : `Refresh in progress: ${collected} of ${total} clusters updated.`;
+};
+
 const showGeneratingPlaceholder = (message = "Cluster monitor is generating quota data…") => {
   if (!elements.clusterGrid) return;
   elements.clusterGrid.innerHTML = `
@@ -965,12 +989,31 @@ const loadData = async ({ silent = true } = {}) => {
       throw new Error(`HTTP ${response.status}`);
     }
     const payload = await response.json();
-    applyClusterPayload(payload);
-    setBanner(silent ? "" : "Quota data updated just now.");
-    if (state.clusters.length) {
-      clearRetry();
-    } else {
+    // First-sweep envelope: show progress instead of an empty "no data" state.
+    const envelopeStatus =
+      payload && !Array.isArray(payload) && typeof payload === "object"
+        ? payload.status
+        : null;
+    if (envelopeStatus === "warming_up" && (!payload.clusters || !payload.clusters.length)) {
+      state.clusters = [];
+      state.lastUpdated = Date.now();
+      renderSummary();
+      showGeneratingPlaceholder(formatProgressMessage(payload.progress, true));
+      setBanner(formatProgressStatus(payload.progress, true), "info");
       scheduleRetry();
+      return;
+    }
+    applyClusterPayload(payload);
+    if (envelopeStatus === "partial") {
+      setBanner(formatProgressStatus(payload.progress, false), "info");
+      scheduleRetry();
+    } else {
+      setBanner(silent ? "" : "Quota data updated just now.");
+      if (state.clusters.length) {
+        clearRetry();
+      } else {
+        scheduleRetry();
+      }
     }
   } catch (err) {
     console.error("Unable to load quota data", err);

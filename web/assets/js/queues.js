@@ -231,6 +231,30 @@ const disableRefresh = (disabled) => {
   }
 };
 
+const formatProgressMessage = (progress, isFirstSweep) => {
+  if (!progress || !progress.total) {
+    return isFirstSweep
+      ? "First-time setup: collecting queue data from your clusters…"
+      : "Refreshing queue data…";
+  }
+  const { collected = 0, total = 0, current_cluster: current } = progress;
+  const lead = isFirstSweep ? "Collecting queue data" : "Refreshing queue data";
+  const where = current ? ` (currently ${current})` : "";
+  return `${lead} from ${total} clusters — ${collected}/${total} ready${where}.`;
+};
+
+const formatProgressStatus = (progress, isFirstSweep) => {
+  if (!progress || !progress.total) {
+    return isFirstSweep
+      ? "Connecting to clusters for the first time — this can take a couple of minutes."
+      : "Refreshing…";
+  }
+  const { collected = 0, total = 0 } = progress;
+  return isFirstSweep
+    ? `First sweep in progress: ${collected} of ${total} clusters ready.`
+    : `Refresh in progress: ${collected} of ${total} clusters updated.`;
+};
+
 const showGeneratingPlaceholder = (message = "Cluster monitor is generating queue data…") => {
   setQueueGridPlaceholder(message);
   setNodePlaceholder(message);
@@ -1163,6 +1187,23 @@ const loadData = async ({ silent = true } = {}) => {
       throw new Error(`HTTP ${response.status}`);
     }
     const payload = await response.json();
+    // The API returns a warming/partial envelope while the first cluster
+    // sweep is still in progress; render that as a progress UI rather than
+    // an error. Once the sweep completes the response is a raw list again.
+    const envelopeStatus =
+      payload && !Array.isArray(payload) && typeof payload === "object"
+        ? payload.status
+        : null;
+    if (envelopeStatus === "warming_up" && (!payload.clusters || !payload.clusters.length)) {
+      state.clusters = [];
+      state.lastUpdated = Date.now();
+      renderSummary();
+      renderClusterOptions();
+      showGeneratingPlaceholder(formatProgressMessage(payload.progress, true));
+      setStatus(formatProgressStatus(payload.progress, true), "info");
+      scheduleRetry();
+      return;
+    }
     // Handle both array format and {clusters: [...]} format
     if (Array.isArray(payload)) {
       state.clusters = payload;
@@ -1187,11 +1228,16 @@ const loadData = async ({ silent = true } = {}) => {
     renderSummary();
     renderClusterOptions();
     renderClusterDetail();
-    setStatus(silent ? "" : "Queue data updated just now.");
-    if (state.clusters.length) {
-      clearRetry();
-    } else {
+    if (envelopeStatus === "partial") {
+      setStatus(formatProgressStatus(payload.progress, false), "info");
       scheduleRetry();
+    } else {
+      setStatus(silent ? "" : "Queue data updated just now.");
+      if (state.clusters.length) {
+        clearRetry();
+      } else {
+        scheduleRetry();
+      }
     }
   } catch (err) {
     console.error("Unable to load queue data", err);
