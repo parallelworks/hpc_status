@@ -3298,6 +3298,12 @@ th[data-sortable][data-sort-dir="desc"]::after {
   stroke-width: 2.5;
 }
 
+/* A cloud region is a real place with an approximate address, so its pin
+   is drawn like a site but with a dashed edge. */
+.topo-node--group.is-cloud .topo-node-core {
+  stroke-dasharray: 4 3;
+}
+
 .topo-node--monitor .topo-node-core {
   fill: var(--accent);
   stroke: var(--panel);

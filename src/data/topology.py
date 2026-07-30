@@ -93,6 +93,68 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 40.35,
         "lon": -74.65,
     },
+    # --- Cloud regions.
+    #
+    # Coordinates are the published region locality, not a datacenter
+    # address — providers do not publish those, and a region spans several
+    # availability zones anyway. They are precise enough to put a pin in
+    # the right state and no more, which is what the map is for.
+    "usgovwest1": {
+        "name": "AWS GovCloud (US-West)",
+        "organization": "Amazon Web Services · us-gov-west-1",
+        "location": "Oregon (approx.)",
+        "lat": 45.84,
+        "lon": -119.70,
+        "cloud": True,
+    },
+    "usgoveast1": {
+        "name": "AWS GovCloud (US-East)",
+        "organization": "Amazon Web Services · us-gov-east-1",
+        "location": "Ohio (approx.)",
+        "lat": 39.96,
+        "lon": -83.00,
+        "cloud": True,
+    },
+    "useast1": {
+        "name": "AWS US East (N. Virginia)",
+        "organization": "Amazon Web Services · us-east-1",
+        "location": "Northern Virginia (approx.)",
+        "lat": 39.04,
+        "lon": -77.49,
+        "cloud": True,
+    },
+    "useast2": {
+        "name": "AWS US East (Ohio)",
+        "organization": "Amazon Web Services · us-east-2",
+        "location": "Ohio (approx.)",
+        "lat": 39.96,
+        "lon": -83.00,
+        "cloud": True,
+    },
+    "uswest1": {
+        "name": "AWS US West (N. California)",
+        "organization": "Amazon Web Services · us-west-1",
+        "location": "Northern California (approx.)",
+        "lat": 37.34,
+        "lon": -121.89,
+        "cloud": True,
+    },
+    "uswest2": {
+        "name": "AWS US West (Oregon)",
+        "organization": "Amazon Web Services · us-west-2",
+        "location": "Oregon (approx.)",
+        "lat": 45.84,
+        "lon": -119.70,
+        "cloud": True,
+    },
+    # Provider without a known region: still better than "Unassigned".
+    "aws": {
+        "name": "AWS",
+        "organization": "Amazon Web Services · region unknown",
+        "cloud": True,
+    },
+    "azure": {"name": "Azure", "organization": "Microsoft Azure", "cloud": True},
+    "gcp": {"name": "Google Cloud", "organization": "Google Cloud", "cloud": True},
 }
 
 # System-name → site for deployments whose collector does not report a site.
@@ -127,6 +189,34 @@ DOMAIN_SITE_HINTS: Dict[str, str] = {
     "ncrc": "ornl",
     "ornl": "ornl",
     "nessc": "nessc",
+    # EC2 puts the region straight into the instance's own name:
+    # ip-10-1-2-3.us-gov-west-1.compute.internal
+    "usgovwest1": "usgovwest1",
+    "usgoveast1": "usgoveast1",
+    "useast1": "useast1",
+    "useast2": "useast2",
+    "uswest1": "uswest1",
+    "uswest2": "uswest2",
+}
+
+# us-east-1 is the exception: instances there use a bare ec2.internal /
+# compute-1.amazonaws.com suffix with no region in the name at all.
+AWS_LEGACY_SUFFIXES: Tuple[Tuple[str, str], ...] = (
+    (".ec2.internal", "useast1"),
+    (".compute-1.amazonaws.com", "useast1"),
+)
+
+# Labels that name a provider but not a place. They are real answers, just
+# weak ones: if the hostname can say which region, that wins.
+CLOUD_PROVIDER_IDS = frozenset(
+    {"aws", "amazon", "azure", "gcp", "google", "googlecloud", "cloud", "oci", "oracle"}
+)
+
+CLOUD_PROVIDER_ALIASES: Dict[str, str] = {
+    "amazon": "aws",
+    "google": "gcp",
+    "googlecloud": "gcp",
+    "oci": "oracle",
 }
 
 # Site ids that mean "we don't know where this runs" and should not be
@@ -214,6 +304,9 @@ def site_from_hostname(hostname: Any) -> Optional[str]:
     text = str(hostname or "").strip().lower()
     if not text or "://" in text:
         return None
+    for suffix, site in AWS_LEGACY_SUFFIXES:
+        if text.endswith(suffix):
+            return site
     for label in text.split("."):
         site = DOMAIN_SITE_HINTS.get(re.sub(r"[^a-z0-9]", "", label))
         if site:
@@ -246,16 +339,25 @@ def resolve_site_id(
             return slugify(explicit) or UNASSIGNED_SITE_ID
 
     site_slug = slugify(raw_site)
+    provider_fallback = None
     if site_slug and site_slug not in GENERIC_SITE_IDS:
-        # "ERDC DSRC" and "erdc" should collapse to the same facility.
-        trimmed = site_slug.replace("dsrc", "") or site_slug
-        if trimmed in SITE_CATALOG:
-            return trimmed
-        return site_slug
+        if site_slug in CLOUD_PROVIDER_IDS:
+            # "aws" is a true answer but a weak one — it names a company,
+            # not a place. Hold it in reserve and see if the hostname can
+            # name the actual region first.
+            provider_fallback = CLOUD_PROVIDER_ALIASES.get(site_slug, site_slug)
+        else:
+            # "ERDC DSRC" and "erdc" should collapse to the same facility.
+            trimmed = site_slug.replace("dsrc", "") or site_slug
+            if trimmed in SITE_CATALOG:
+                return trimmed
+            return site_slug
 
     from_host = site_from_hostname(hostname)
     if from_host:
         return from_host
+    if provider_fallback:
+        return provider_fallback
 
     for needle, site_id in SYSTEM_SITE_HINTS:
         if needle in system_slug:
@@ -282,6 +384,7 @@ def describe_site(site_id: str, overrides: Optional[Dict[str, Dict]] = None) -> 
         "location": base.get("location"),
         "lat": base.get("lat"),
         "lon": base.get("lon"),
+        "cloud": bool(base.get("cloud")),
     }
 
 
@@ -573,6 +676,7 @@ def build_topology(
                 "organization": site["organization"],
                 "lat": site["lat"],
                 "lon": site["lon"],
+                "cloud": site["cloud"],
                 "capacity": site["capacity"],
             }
         )
