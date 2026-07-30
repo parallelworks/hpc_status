@@ -326,6 +326,13 @@ contains only the monitor node and `meta.ready` is `false`.
 | `site` | A DSRC / data center, with rolled-up status and capacity |
 | `system` | One HPC system |
 
+**`site_source`** on a system node says how its site was decided:
+`config` (`topology.system_sites`), `collector` (the collector's own
+label), `hostname` (the login hostname's domain), `cloud-default`
+(`topology.cloud_region_default`), `provider` (a cloud provider with no
+known region), `name-hint`, or `none`. It exists so "why is this machine
+here?" is answerable without reading the resolver.
+
 **`cloud`** marks a site that is a cloud region rather than a physical
 facility; its coordinates are the region's published locality.
 
