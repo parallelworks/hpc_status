@@ -33,6 +33,11 @@ const GROUPINGS = new Set(["site", "scheduler", "status", "connection"]);
 const SLOW_LINK_MS = 1500;
 // Zoom at which "auto" map detail switches from site pins to systems.
 const MAP_SYSTEM_ZOOM = 1.5;
+// Node labels are authored at 12px and then counter-scaled to stay inside
+// this band on screen, whatever the viewport transform is doing.
+const LABEL_BASE_PX = 12;
+const LABEL_MIN_PX = 9.5;
+const LABEL_MAX_PX = 13.5;
 const MAP_DETAILS = new Set(["auto", "sites", "systems"]);
 const COMPARE_LIMIT = 4;
 
@@ -50,6 +55,7 @@ const state = {
   compareMode: false,
   mapDetail: "auto", // auto | sites | systems — see mapShowsSystems()
   mapSystemsShown: false,
+  geoLayoutZoom: 1, // zoom the current geo layout was measured at
   view: { nodes: [], edges: [], groups: [] },
   positions: new Map(), // id -> {x, y} — what is on screen right now
   targets: new Map(), // id -> {x, y} — where the layout wants them
@@ -182,11 +188,16 @@ const mapShowsSystems = () => {
 let mapDetailScheduled = false;
 const maybeRefreshMapDetail = () => {
   if (state.layout !== "geo" || mapDetailScheduled) return;
-  if (mapShowsSystems() === state.mapSystemsShown) return;
+  const zoomDrift =
+    state.mapSystemsShown && state.geoLayoutZoom
+      ? Math.abs(state.transform.k / state.geoLayoutZoom - 1)
+      : 0;
+  if (mapShowsSystems() === state.mapSystemsShown && zoomDrift < 0.25) return;
   mapDetailScheduled = true;
   requestAnimationFrame(() => {
     mapDetailScheduled = false;
-    if (state.layout === "geo") renderGraph({ animate: true });
+    // No fit: re-fitting on every zoom step would fight the user's zoom.
+    if (state.layout === "geo") renderGraph({ animate: false });
   });
 };
 
@@ -483,16 +494,40 @@ const projectGeo = (lat, lon) => ({
 // line back to the true position keeps the map honest about it.
 const GEO_LEADER_THRESHOLD = 8;
 
+/**
+ * Where the nth of `count` systems sits around its site pin.
+ *
+ * Small sites get an arc below the pin rather than a full circle: three
+ * systems spread over 360 degrees read as three unrelated dots, while an
+ * arc reads as "these belong to that". The top stays clear either way,
+ * because the site's own label sits above the pin when systems are fanned.
+ */
+const FAN_ARC = (200 * Math.PI) / 180;
+const fanPoint = (x, y, index, count, radius) => {
+  const bottom = Math.PI / 2;
+  const angle =
+    count <= 5
+      ? bottom - FAN_ARC / 2 + (count === 1 ? FAN_ARC / 2 : (index / (count - 1)) * FAN_ARC)
+      : bottom + (index / count) * Math.PI * 2;
+  return { x: x + Math.cos(angle) * radius, y: y + Math.sin(angle) * radius };
+};
+
 const layoutGeo = (view) => {
   const positions = new Map();
   state.geoAnchors = new Map();
 
   const showSystems = mapShowsSystems();
-  // Pin radius plus room for the two label lines underneath it, and for the
-  // ring of systems when they are fanned out.
-  const memberRing = (group) => 62 + Math.min(group.members.length, 8) * 6;
-  const pinRadius = (group) =>
-    nodeRadius(group) + 40 + (showSystems ? memberRing(group) : 0);
+  // The fan is sized in SCREEN pixels and converted to world units, so it
+  // stays a constant visual distance however far you zoom in — and, more to
+  // the point, does not shove a site's pin hundreds of miles off its real
+  // coordinates just to make room for its systems.
+  const zoom = Math.max(0.2, state.transform.k || 1);
+  state.geoLayoutZoom = zoom;
+  const memberRing = (group) =>
+    (76 + Math.min(group.members.length, 8) * 9) / zoom;
+  // Pins are relaxed against each other on their own size only; the systems
+  // ride along with whichever pin they belong to.
+  const pinRadius = (group) => nodeRadius(group) + 40;
   const hasCoords = (g) => Number.isFinite(g.lat) && Number.isFinite(g.lon);
   const inConus = (g) =>
     g.lon >= CONUS_BOUNDS.west &&
@@ -544,11 +579,7 @@ const layoutGeo = (view) => {
     const radius = memberRing(group);
     const count = group.members.length;
     group.members.forEach((member, index) => {
-      const angle = (index / Math.max(1, count)) * Math.PI * 2 - Math.PI / 2;
-      positions.set(member.id, {
-        x: x + Math.cos(angle) * radius,
-        y: y + Math.sin(angle) * radius,
-      });
+      positions.set(member.id, fanPoint(x, y, index, count, radius));
     });
   });
 
@@ -618,11 +649,7 @@ const layoutGeo = (view) => {
       const radius = Math.min(memberRing(group), Math.min(box.width, box.height) / 2 - 12);
       const count = group.members.length;
       group.members.forEach((member, index) => {
-        const angle = (index / Math.max(1, count)) * Math.PI * 2 - Math.PI / 2;
-        positions.set(member.id, {
-          x: point.x + Math.cos(angle) * radius,
-          y: point.y + Math.sin(angle) * radius,
-        });
+        positions.set(member.id, fanPoint(point.x, point.y, index, count, radius));
       });
     });
     const label =
@@ -653,11 +680,7 @@ const layoutGeo = (view) => {
       const radius = Math.min(memberRing(group), box.height / 2 - 16);
       const count = group.members.length;
       group.members.forEach((member, idx) => {
-        const angle = (idx / Math.max(1, count)) * Math.PI * 2 - Math.PI / 2;
-        positions.set(member.id, {
-          x: point.x + Math.cos(angle) * radius,
-          y: point.y + Math.sin(angle) * radius,
-        });
+        positions.set(member.id, fanPoint(point.x, point.y, idx, count, radius));
       });
     });
     trays.push({ box, label: "No location reported" });
@@ -807,8 +830,13 @@ const createNodeElement = (node) => {
   const core = svgEl("circle", { class: "topo-node-core", r: 0 });
   const util = svgEl("circle", { class: "topo-node-util", r: 0 });
   const glyph = svgEl("text", { class: "topo-node-glyph", "text-anchor": "middle", dy: "0.34em" });
-  const label = svgEl("text", { class: "topo-node-label", "text-anchor": "middle" });
-  const sublabel = svgEl("text", { class: "topo-node-sublabel", "text-anchor": "middle" });
+  // Labels live in their own group so they can be held at a constant screen
+  // size: text that grows with the zoom is text that collides with the
+  // neighbours as soon as you lean in.
+  const labels = svgEl("g", { class: "topo-node-labels" });
+  const label = svgEl("text", { class: "topo-node-label", "text-anchor": "middle", y: 0 });
+  const sublabel = svgEl("text", { class: "topo-node-sublabel", "text-anchor": "middle", y: 15 });
+  labels.append(label, sublabel);
 
   // Alert badge — hidden unless the node has an insight against it.
   const badge = svgEl("g", { class: "topo-badge" });
@@ -816,8 +844,8 @@ const createNodeElement = (node) => {
   const badgeText = svgEl("text", { class: "topo-badge-text", "text-anchor": "middle", dy: "0.35em" });
   badge.append(badgeDot, badgeText);
 
-  group.append(halo, util, core, glyph, label, sublabel, badge);
-  group.__refs = { halo, core, util, glyph, label, sublabel, badge, badgeText };
+  group.append(halo, util, core, glyph, labels, badge);
+  group.__refs = { halo, core, util, glyph, labels, label, sublabel, badge, badgeText };
   return group;
 };
 
@@ -872,7 +900,13 @@ const updateNodeElement = (node, element) => {
   }
 
   refs.label.textContent = node.label || "";
-  refs.label.setAttribute("y", radius + 20);
+  // On the map a site pin has its systems fanned around it, and the ring's
+  // bottom lands exactly where a label underneath would sit — so the site's
+  // own label goes above it instead.
+  const labelsAbove =
+    node.kind === "group" && state.layout === "geo" && state.mapSystemsShown;
+  element.__labelOffset = labelsAbove ? -(radius + 26) : radius + 20;
+  refs.labels.setAttribute("data-above", labelsAbove ? "true" : "false");
 
   const sub =
     node.kind === "system"
@@ -883,7 +917,8 @@ const updateNodeElement = (node, element) => {
           ? String(node.platform).toUpperCase()
           : "";
   refs.sublabel.textContent = sub.length > 34 ? `${sub.slice(0, 33)}…` : sub;
-  refs.sublabel.setAttribute("y", radius + 36);
+  refs.sublabel.setAttribute("y", labelsAbove ? -15 : 15);
+  refs.label.setAttribute("y", labelsAbove ? -30 : 0);
 
   // Alert badge, top-right of the node.
   const alert = node.alert || null;
@@ -1355,7 +1390,10 @@ const animateTo = (animate, onComplete) => {
   if (!animate) {
     state.targets.forEach((point, id) => state.positions.set(id, { ...point }));
     drawFrame();
-    fitToView({ animate: false });
+    // Deliberately no fit here: re-laying out is not a reason to throw away
+    // the viewport. Zooming in to reveal systems triggers a re-layout, and
+    // an implicit fit would snap the zoom straight back out again — which
+    // then hid the systems, then zoomed in, then hid them...
     onComplete?.();
     return;
   }
@@ -1433,11 +1471,25 @@ const reheatForce = () => {
 
 /** Paint one frame: node transforms, edge geometry, viewport transform. */
 const drawFrame = () => {
+  // Hold labels within a readable band of on-screen sizes. Without this,
+  // text scales with the viewport transform: unreadable when zoomed out,
+  // and colliding with every neighbour when zoomed in.
+  const onScreen = LABEL_BASE_PX * state.transform.k;
+  const target = Math.min(LABEL_MAX_PX, Math.max(LABEL_MIN_PX, onScreen));
+  const labelScale = target / onScreen;
   state.view.nodes.forEach((node) => {
     const element = state.elements.get(node.id);
     const point = state.positions.get(node.id);
     if (!element || !point) return;
     element.setAttribute("transform", `translate(${point.x.toFixed(2)},${point.y.toFixed(2)})`);
+    const labels = element.__refs?.labels;
+    if (labels) {
+      const offset = element.__labelOffset ?? 0;
+      labels.setAttribute(
+        "transform",
+        `translate(0,${offset.toFixed(1)}) scale(${labelScale.toFixed(3)})`
+      );
+    }
   });
   state.view.edges.forEach((edge) => {
     const element = state.elements.get(edge.id);
