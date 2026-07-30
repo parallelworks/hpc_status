@@ -95,6 +95,9 @@ class TopologyConfig:
     # place (not on a status page, and a login hostname that gives no
     # domain away):  system_sites: {chessie: arl, crux: mhpcc}
     system_sites: Dict[str, str] = field(default_factory=dict)
+    # Region to assume for cloud clusters whose hostname does not name one,
+    # e.g. "usgovwest1" for a fleet that runs entirely in AWS GovCloud West.
+    cloud_region_default: Optional[str] = None
 
 
 @dataclass
@@ -174,6 +177,7 @@ class Config:
             wait_estimate_window_hours=topo_data.get("wait_estimate_window_hours", 6),
             sites=topo_data.get("sites", {}) or {},
             system_sites=topo_data.get("system_sites", {}) or {},
+            cloud_region_default=topo_data.get("cloud_region_default"),
         )
 
         # Parse alerting config
@@ -304,6 +308,7 @@ class Config:
                 "wait_estimate_window_hours": self.topology.wait_estimate_window_hours,
                 "sites": self.topology.sites,
                 "system_sites": self.topology.system_sites,
+                "cloud_region_default": self.topology.cloud_region_default,
             },
             "collectors": {
                 name: {

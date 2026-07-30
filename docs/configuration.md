@@ -189,6 +189,18 @@ topology:
   sites: {}                   # Site metadata overrides (see below)
 ```
 
+**A default cloud region.** A fleet that runs all its cloud in one place
+can say so, which places instances whose hostname does not name a region:
+
+```yaml
+topology:
+  cloud_region_default: usgovwest1   # AWS GovCloud (US-West)
+```
+
+A hostname that *does* name a region still wins, and this never overrides
+a physical site. The HPCMP config ships with this set, since HPCMP's cloud
+resources are all in GovCloud (US-West).
+
 **Cloud regions.** AWS regions are in the catalog too, GovCloud included,
 and are read straight off an instance's own hostname — EC2 puts the region
 in it (`ip-10-1-2-3.us-gov-west-1.compute.internal`), except in us-east-1

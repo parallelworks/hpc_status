@@ -441,6 +441,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             ),
             site_overrides=topology_cfg.get("sites"),
             system_sites=topology_cfg.get("system_sites"),
+            cloud_region_default=topology_cfg.get("cloud_region_default"),
             insights=generate_fleet_insights(payload, clusters),
         )
 

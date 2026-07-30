@@ -20,6 +20,7 @@ const state = {
   loading: false,
   lastUpdated: null,
   retryHandle: null,
+  deepLinkScrolled: false,
   features: {
     clusterPages: clusterPagesEnabled(),
   },
@@ -1243,6 +1244,18 @@ const renderGpuQueueGrid = (gpus, sysInfo) => {
   elements.queueGrid.innerHTML = cards;
 };
 
+/** Bring the selected cluster's detail panel into view. */
+const scrollToClusterDetail = () => {
+  const target = elements.clusterSelect?.closest(".panel") || elements.clusterSelect;
+  if (!target || typeof target.scrollIntoView !== "function") return;
+  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+  // requestAnimationFrame so the freshly rendered panel has its final height
+  // before we measure where to put it.
+  requestAnimationFrame(() => {
+    target.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "start" });
+  });
+};
+
 const loadData = async ({ silent = true } = {}) => {
   if (!state.features.clusterPages) {
     return;
@@ -1258,6 +1271,7 @@ const loadData = async ({ silent = true } = {}) => {
   const previousIdentifier = state.clusters.length
     ? getClusterIdentifier(state.clusters[state.selectedIndex])
     : null;
+  let deepLinked = false;
   try {
     const response = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) {
@@ -1300,6 +1314,7 @@ const loadData = async ({ silent = true } = {}) => {
       // Deep link from the topology graph (or a shared URL) wins over the
       // "most available cluster" default.
       state.selectedIndex = findClusterIndexBySlug(requestedSlug);
+      deepLinked = true;
     } else {
       // Initial load: default to the most-available cluster (top of the
       // ranking) so the user lands on something useful instead of the
@@ -1310,6 +1325,13 @@ const loadData = async ({ silent = true } = {}) => {
     renderSummary();
     renderClusterOptions();
     renderClusterDetail();
+    // Arriving from a deep link should land on the cluster you asked for,
+    // not at the top of the page with the answer somewhere below the fold.
+    // Once only: a background refresh must not yank the page around.
+    if (deepLinked && !state.deepLinkScrolled) {
+      state.deepLinkScrolled = true;
+      scrollToClusterDetail();
+    }
     if (envelopeStatus === "partial") {
       setStatus(formatProgressStatus(payload.progress, false), "info");
       scheduleRetry();
@@ -1375,4 +1397,18 @@ const bootstrap = () => {
   loadData();
 };
 
-document.addEventListener("DOMContentLoaded", bootstrap);
+// Run once, whenever this module happens to execute: a module script
+// normally runs before DOMContentLoaded, but waiting for an event that may
+// already have fired means never booting at all.
+let booted = false;
+const bootOnce = () => {
+  if (booted) return;
+  booted = true;
+  bootstrap();
+};
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootOnce, { once: true });
+} else {
+  bootOnce();
+}
