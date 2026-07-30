@@ -38,6 +38,21 @@ const MAP_SYSTEM_ZOOM = 1.5;
 const LABEL_BASE_PX = 12;
 const LABEL_MIN_PX = 9.5;
 const LABEL_MAX_PX = 13.5;
+// How far the map is allowed to drift from drawing pins at their authored
+// size, when the zoom goes to extremes.
+const NODE_SCALE_MIN = 0.22;
+const NODE_SCALE_MAX = 1.8;
+
+/** How much a map pin is shrunk to hold its authored size on screen. */
+const mapPinScale = () =>
+  Math.min(NODE_SCALE_MAX, Math.max(NODE_SCALE_MIN, 1 / (state.transform.k || 1)));
+
+const labels_transform = (element, offset, scale) => {
+  element.setAttribute(
+    "transform",
+    `translate(0,${offset.toFixed(1)}) scale(${scale.toFixed(3)})`
+  );
+};
 const MAP_DETAILS = new Set(["auto", "sites", "systems"]);
 const COMPARE_LIMIT = 4;
 
@@ -517,17 +532,19 @@ const layoutGeo = (view) => {
   state.geoAnchors = new Map();
 
   const showSystems = mapShowsSystems();
-  // The fan is sized in SCREEN pixels and converted to world units, so it
-  // stays a constant visual distance however far you zoom in — and, more to
-  // the point, does not shove a site's pin hundreds of miles off its real
-  // coordinates just to make room for its systems.
+  // Pins are drawn at a constant screen size, so everything measured
+  // against them — the fan of systems, and how far two pins must sit apart
+  // to stop overlapping — is in screen pixels converted to world units by
+  // the same factor. Measuring any of it in raw world units is what shoved
+  // sites hundreds of miles off their real coordinates.
   const zoom = Math.max(0.2, state.transform.k || 1);
   state.geoLayoutZoom = zoom;
+  const scale = mapPinScale();
   const memberRing = (group) =>
-    (76 + Math.min(group.members.length, 8) * 9) / zoom;
-  // Pins are relaxed against each other on their own size only; the systems
-  // ride along with whichever pin they belong to.
-  const pinRadius = (group) => nodeRadius(group) + 40;
+    (76 + Math.min(group.members.length, 8) * 9) * scale;
+  // Pins are relaxed against their own drawn size only; the systems ride
+  // along with whichever pin they belong to.
+  const pinRadius = (group) => (nodeRadius(group) + 40) * scale;
   const hasCoords = (g) => Number.isFinite(g.lat) && Number.isFinite(g.lon);
   const inConus = (g) =>
     g.lon >= CONUS_BOUNDS.west &&
@@ -844,8 +861,13 @@ const createNodeElement = (node) => {
   const badgeText = svgEl("text", { class: "topo-badge-text", "text-anchor": "middle", dy: "0.35em" });
   badge.append(badgeDot, badgeText);
 
-  group.append(halo, util, core, glyph, labels, badge);
-  group.__refs = { halo, core, util, glyph, labels, label, sublabel, badge, badgeText };
+  // Everything visual hangs off an inner group so the node can be held at
+  // a constant screen size on the map, the way a map pin behaves: zooming
+  // in should spread the pins apart, not inflate them.
+  const scaler = svgEl("g", { class: "topo-node-scale" });
+  scaler.append(halo, util, core, glyph, labels, badge);
+  group.append(scaler);
+  group.__refs = { scaler, halo, core, util, glyph, labels, label, sublabel, badge, badgeText };
   return group;
 };
 
@@ -1471,24 +1493,33 @@ const reheatForce = () => {
 
 /** Paint one frame: node transforms, edge geometry, viewport transform. */
 const drawFrame = () => {
+  const zoom = state.transform.k || 1;
   // Hold labels within a readable band of on-screen sizes. Without this,
   // text scales with the viewport transform: unreadable when zoomed out,
   // and colliding with every neighbour when zoomed in.
-  const onScreen = LABEL_BASE_PX * state.transform.k;
+  const onScreen = LABEL_BASE_PX * zoom;
   const target = Math.min(LABEL_MAX_PX, Math.max(LABEL_MIN_PX, onScreen));
   const labelScale = target / onScreen;
+  // On the map, positions are geography and zoom means "look closer" — so
+  // the pins themselves stay one size. In the graph layouts, positions are
+  // synthetic and magnifying everything together is the expected result.
+  const nodeScale = state.layout === "geo" ? mapPinScale() : 1;
+
   state.view.nodes.forEach((node) => {
     const element = state.elements.get(node.id);
     const point = state.positions.get(node.id);
     if (!element || !point) return;
     element.setAttribute("transform", `translate(${point.x.toFixed(2)},${point.y.toFixed(2)})`);
-    const labels = element.__refs?.labels;
-    if (labels) {
+    const refs = element.__refs;
+    if (!refs) return;
+    if (refs.scaler) {
+      refs.scaler.setAttribute("transform", `scale(${nodeScale.toFixed(4)})`);
+    }
+    if (refs.labels) {
       const offset = element.__labelOffset ?? 0;
-      labels.setAttribute(
-        "transform",
-        `translate(0,${offset.toFixed(1)}) scale(${labelScale.toFixed(3)})`
-      );
+      // Divide by the node scale so the net label size is the target one:
+      // the labels live inside the group that was just scaled.
+      labels_transform(refs.labels, offset, labelScale / nodeScale);
     }
   });
   state.view.edges.forEach((edge) => {
