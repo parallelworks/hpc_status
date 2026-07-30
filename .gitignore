@@ -65,3 +65,7 @@ uv.lock
 # OS
 .DS_Store
 Thumbs.db
+
+# Stray runtime artefacts (dev servers started during development)
+*.pid
+nohup.out
