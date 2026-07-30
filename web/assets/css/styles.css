@@ -3409,11 +3409,25 @@ th[data-sortable][data-sort-dir="desc"]::after {
 
 .topo-node--group .topo-node-glyph { fill: var(--text); }
 
+.topo-node-labels {
+  pointer-events: none;
+}
+
 .topo-node-label {
   fill: var(--text);
   font-size: 12px;
   font-weight: 600;
   pointer-events: none;
+  /* A thin halo in the canvas colour keeps names legible where they cross
+     a coastline, a grid line, or another node's ring. */
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.topo-canvas.is-map .topo-node-label {
+  stroke: var(--map-land);
 }
 
 .topo-node--group .topo-node-label,
@@ -3427,6 +3441,14 @@ th[data-sortable][data-sort-dir="desc"]::after {
   font-size: 10px;
   font-weight: 500;
   pointer-events: none;
+  paint-order: stroke;
+  stroke: var(--panel);
+  stroke-width: 2.5px;
+  stroke-linejoin: round;
+}
+
+.topo-canvas.is-map .topo-node-sublabel {
+  stroke: var(--map-land);
 }
 
 /* --- canvas chrome */
