@@ -263,6 +263,7 @@ contains only the monitor node and `meta.ready` is `false`.
       "location": "Stennis Space Center, MS",
       "lat": 30.36,
       "lon": -89.6,
+      "cloud": false,
       "systems": 3,
       "connected": 1,
       "status": "UP",
@@ -324,6 +325,9 @@ contains only the monitor node and `meta.ready` is `false`.
 | `monitor` | The dashboard itself — the graph root |
 | `site` | A DSRC / data center, with rolled-up status and capacity |
 | `system` | One HPC system |
+
+**`cloud`** marks a site that is a cloud region rather than a physical
+facility; its coordinates are the region's published locality.
 
 **`origin`** tells you where a system node came from: `fleet` (site status
 page only), `pw` (a connected cluster the status page never mentioned), or

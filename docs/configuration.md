@@ -189,8 +189,17 @@ topology:
   sites: {}                   # Site metadata overrides (see below)
 ```
 
+**Cloud regions.** AWS regions are in the catalog too, GovCloud included,
+and are read straight off an instance's own hostname — EC2 puts the region
+in it (`ip-10-1-2-3.us-gov-west-1.compute.internal`), except in us-east-1
+where the legacy `ec2.internal` suffix means the same thing. A cluster
+labelled only `aws` keeps that label until a hostname can name the region,
+at which point the region wins. Region coordinates are the published
+locality, not a datacenter address: precise enough to pin the right state
+and no more.
+
 **Site overrides.** The builder ships with a catalog of known facilities
-(HPCMP DSRCs, NOAA RDHPCS sites). Any site id your collector reports can be
+(HPCMP DSRCs, NOAA RDHPCS sites, AWS regions). Any site id your collector reports can be
 named, described, and placed on the map:
 
 ```yaml

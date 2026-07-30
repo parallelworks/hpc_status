@@ -57,6 +57,7 @@ const state = {
   animation: { handle: null, start: 0, duration: 620, from: new Map() },
   forceTicks: 0,
   suppressClick: false,
+  pressedNodeId: null,
   loading: false,
   lastUpdated: null,
   pollHandle: null,
@@ -169,6 +170,7 @@ const buildView = () => {
         site: site || null,
         location: site?.location || null,
         organization: site?.organization || null,
+        cloud: Boolean(site?.cloud),
         lat: site?.lat ?? null,
         lon: site?.lon ?? null,
         members: [],
@@ -731,6 +733,7 @@ const updateNodeElement = (node, element) => {
       state.selectedId === node.id ? "is-selected" : "",
       state.hoverId === node.id ? "is-hover" : "",
       state.compare.has(node.id) ? "is-compared" : "",
+      node.cloud ? "is-cloud" : "",
     ]
       .filter(Boolean)
       .join(" ")
@@ -2152,18 +2155,23 @@ const bindEvents = () => {
       state.suppressClick = false;
       return;
     }
+    // A captured pointer retargets the click to the <svg>, so fall back to
+    // whatever the press started on before calling it a background click.
     const group = event.target.closest(".topo-node");
-    if (!group) {
+    const nodeId = group ? group.dataset.id : state.pressedNodeId;
+    state.pressedNodeId = null;
+    if (!nodeId) {
       clearSelection();
       return;
     }
+    const kind = nodeById(nodeId)?.kind;
     // Shift-click always pins into the comparison; in compare mode a plain
     // click does too, so you can rack up systems without a modifier.
-    if (event.shiftKey || (state.compareMode && group.dataset.kind === "system")) {
-      toggleCompare(group.dataset.id);
+    if (event.shiftKey || (state.compareMode && kind === "system")) {
+      toggleCompare(nodeId);
       return;
     }
-    selectNode(group.dataset.id, { navigateIfSelected: true });
+    selectNode(nodeId, { navigateIfSelected: true });
   });
 
   dom.svg.addEventListener("dblclick", (event) => {
@@ -2224,25 +2232,55 @@ const bindEvents = () => {
   dom.svg.addEventListener("pointerdown", (event) => {
     if (event.button !== 0) return;
     const group = event.target.closest(".topo-node");
-    if (group && state.layout === "force") {
-      drag = { type: "node", id: group.dataset.id, moved: false };
-    } else {
-      drag = { type: "pan", x: event.clientX, y: event.clientY, origin: { ...state.transform } };
-      dom.canvas.classList.add("is-panning");
-    }
-    dom.svg.setPointerCapture(event.pointerId);
+    // Remember what the press started on. Browsers retarget the click when
+    // a pointer has been captured, so this is what makes a node click a
+    // node click rather than a background click.
+    state.pressedNodeId = group ? group.dataset.id : null;
+    hideTooltip();
+    drag =
+      group && state.layout === "force"
+        ? { type: "node", id: group.dataset.id, moved: false, pointerId: event.pointerId }
+        : {
+            type: "pan",
+            x: event.clientX,
+            y: event.clientY,
+            origin: { ...state.transform },
+            moved: false,
+            pointerId: event.pointerId,
+          };
+    // Capture is deliberately NOT taken here: capturing on pointerdown makes
+    // the browser retarget the following click to the <svg>, which turns
+    // every node click into a background click. It is taken below, once the
+    // pointer has actually moved far enough to be a drag.
   });
+
+  const DRAG_THRESHOLD = 4;
+
+  const beginDrag = (event) => {
+    if (drag.captured) return;
+    drag.captured = true;
+    drag.moved = true;
+    if (drag.type === "pan") dom.canvas.classList.add("is-panning");
+    try {
+      dom.svg.setPointerCapture(event.pointerId);
+    } catch (err) {
+      // Capture is a nicety (it keeps a drag alive outside the canvas);
+      // losing it must not break dragging.
+    }
+  };
 
   dom.svg.addEventListener("pointermove", (event) => {
     if (!drag) return;
     if (drag.type === "pan") {
       const dx = event.clientX - drag.x;
       const dy = event.clientY - drag.y;
-      if (Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true;
+      if (Math.abs(dx) + Math.abs(dy) <= DRAG_THRESHOLD && !drag.captured) return;
+      beginDrag(event);
       state.transform = { ...state.transform, x: drag.origin.x + dx, y: drag.origin.y + dy };
       drawFrame();
       return;
     }
+    beginDrag(event);
     const rect = dom.canvas.getBoundingClientRect();
     const world = {
       x: (event.clientX - rect.left - state.transform.x) / state.transform.k,
@@ -2260,7 +2298,13 @@ const bindEvents = () => {
     if (!drag) return;
     if (drag.type === "pan") dom.canvas.classList.remove("is-panning");
     state.suppressClick = Boolean(drag.moved);
-    dom.svg.releasePointerCapture?.(event.pointerId);
+    if (drag.captured) {
+      try {
+        dom.svg.releasePointerCapture(event.pointerId);
+      } catch (err) {
+        /* already released */
+      }
+    }
     drag = null;
   };
   dom.svg.addEventListener("pointerup", endDrag);

@@ -143,6 +143,46 @@ class TestHelpers:
     def test_site_from_hostname(self, hostname, expected):
         assert site_from_hostname(hostname) == expected
 
+    @pytest.mark.parametrize(
+        "hostname,expected",
+        [
+            # EC2 puts the region in the instance's own name...
+            ("ip-10-1-2-3.us-gov-west-1.compute.internal", "usgovwest1"),
+            ("ec2-52-61-1-2.us-gov-west-1.compute.amazonaws.com", "usgovwest1"),
+            ("ip-10-0-0-5.us-west-2.compute.internal", "uswest2"),
+            ("ip-10-0-0-5.us-gov-east-1.compute.internal", "usgoveast1"),
+            # ...except us-east-1, which uses a bare legacy suffix.
+            ("ip-10-0-0-5.ec2.internal", "useast1"),
+            ("ec2-1-2-3-4.compute-1.amazonaws.com", "useast1"),
+        ],
+    )
+    def test_aws_regions_are_read_from_ec2_hostnames(self, hostname, expected):
+        assert site_from_hostname(hostname) == expected
+
+    def test_provider_label_yields_to_a_region_hostname(self):
+        """"aws" names a company, not a place — the hostname names the region."""
+        assert (
+            resolve_site_id("aws", "c1", "ip-10-1-2-3.us-gov-west-1.compute.internal")
+            == "usgovwest1"
+        )
+
+    def test_provider_label_is_used_when_nothing_better_exists(self):
+        assert resolve_site_id("aws", "c1", "") == "aws"
+        assert resolve_site_id("Amazon", "c1", "") == "aws"
+
+    def test_a_real_site_still_beats_a_region_hostname(self):
+        assert (
+            resolve_site_id("erdc", "c1", "ip-10-1-2-3.us-gov-west-1.compute.internal")
+            == "erdc"
+        )
+
+    def test_cloud_regions_are_mapped_and_flagged(self):
+        site = describe_site("usgovwest1")
+        assert site["name"] == "AWS GovCloud (US-West)"
+        assert site["cloud"] is True
+        assert site["lat"] and site["lon"]
+        assert describe_site("erdc")["cloud"] is False
+
     def test_hostname_beats_a_generic_collector_label(self):
         # PW reports type="existing", which says nothing; the login node does.
         assert resolve_site_id("existing", "crux", "crux.mhpcc.hpc.mil") == "mhpcc"
