@@ -116,6 +116,15 @@
           </select>
         </label>
 
+        <label class="topo-field" id="topo-detail-field" hidden>
+          <span>Map detail</span>
+          <select id="topo-detail" title="On the map: one pin per site, every system, or switch automatically as you zoom in">
+            <option value="auto">Auto (by zoom)</option>
+            <option value="sites">Sites only</option>
+            <option value="systems">Systems</option>
+          </select>
+        </label>
+
         <label class="topo-field">
           <span>Status</span>
           <select id="topo-status-filter">
@@ -161,7 +170,7 @@
             <li><span class="topo-swatch topo-swatch--live"></span>Live telemetry</li>
             <li><span class="topo-swatch topo-swatch--reported"></span>Status page only</li>
             <li><span class="topo-swatch topo-swatch--alert">!</span>Open insight</li>
-            <li class="topo-legend-note">On the map, each pin is one site — click it to see its systems.</li>
+            <li class="topo-legend-note">On the map, each pin is one site — zoom in (or set Map detail) to see individual systems.</li>
           </ul>
         </div>
 

@@ -106,6 +106,7 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 45.84,
         "lon": -119.70,
         "cloud": True,
+        "provider": "aws",
     },
     "usgoveast1": {
         "name": "AWS GovCloud (US-East)",
@@ -114,6 +115,7 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 39.96,
         "lon": -83.00,
         "cloud": True,
+        "provider": "aws",
     },
     "useast1": {
         "name": "AWS US East (N. Virginia)",
@@ -122,6 +124,7 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 39.04,
         "lon": -77.49,
         "cloud": True,
+        "provider": "aws",
     },
     "useast2": {
         "name": "AWS US East (Ohio)",
@@ -130,6 +133,7 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 39.96,
         "lon": -83.00,
         "cloud": True,
+        "provider": "aws",
     },
     "uswest1": {
         "name": "AWS US West (N. California)",
@@ -138,6 +142,7 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 37.34,
         "lon": -121.89,
         "cloud": True,
+        "provider": "aws",
     },
     "uswest2": {
         "name": "AWS US West (Oregon)",
@@ -146,15 +151,27 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 45.84,
         "lon": -119.70,
         "cloud": True,
+        "provider": "aws",
     },
     # Provider without a known region: still better than "Unassigned".
     "aws": {
         "name": "AWS",
         "organization": "Amazon Web Services · region unknown",
         "cloud": True,
+        "provider": "aws",
     },
-    "azure": {"name": "Azure", "organization": "Microsoft Azure", "cloud": True},
-    "gcp": {"name": "Google Cloud", "organization": "Google Cloud", "cloud": True},
+    "azure": {
+        "name": "Azure",
+        "organization": "Microsoft Azure",
+        "cloud": True,
+        "provider": "azure",
+    },
+    "gcp": {
+        "name": "Google Cloud",
+        "organization": "Google Cloud",
+        "cloud": True,
+        "provider": "gcp",
+    },
 }
 
 # System-name → site for deployments whose collector does not report a site.
@@ -206,18 +223,32 @@ AWS_LEGACY_SUFFIXES: Tuple[Tuple[str, str], ...] = (
     (".compute-1.amazonaws.com", "useast1"),
 )
 
-# Labels that name a provider but not a place. They are real answers, just
-# weak ones: if the hostname can say which region, that wins.
-CLOUD_PROVIDER_IDS = frozenset(
-    {"aws", "amazon", "azure", "gcp", "google", "googlecloud", "cloud", "oci", "oracle"}
-)
-
-CLOUD_PROVIDER_ALIASES: Dict[str, str] = {
+# Tokens that name a cloud provider but not a place. Matched per word, so
+# the labels collectors actually emit resolve: PW reports a cluster's type
+# as "aws-slurm" / "google-slurm" / "azure-slurm", not "aws".
+CLOUD_PROVIDER_TOKENS: Dict[str, str] = {
+    "aws": "aws",
     "amazon": "aws",
+    "ec2": "aws",
+    "azure": "azure",
+    "gcp": "gcp",
     "google": "gcp",
-    "googlecloud": "gcp",
+    "gce": "gcp",
     "oci": "oracle",
+    "oracle": "oracle",
 }
+
+
+def cloud_provider_from_label(raw_site: Any) -> Optional[str]:
+    """Return the provider a collector's label names, if it names one.
+
+    Whole words only: "aws-slurm" is AWS, "awsome-cluster" is not.
+    """
+    for token in re.split(r"[^a-z0-9]+", str(raw_site or "").lower()):
+        provider = CLOUD_PROVIDER_TOKENS.get(token)
+        if provider:
+            return provider
+    return None
 
 # Site ids that mean "we don't know where this runs" and should not be
 # treated as a real facility.
@@ -314,14 +345,18 @@ def site_from_hostname(hostname: Any) -> Optional[str]:
     return None
 
 
-def resolve_site_id(
+def resolve_site(
     raw_site: Any,
     system_name: Any = "",
     hostname: Any = "",
     system_sites: Optional[Dict[str, str]] = None,
     cloud_region_default: Optional[str] = None,
-) -> str:
-    """Map a system to a catalog site id.
+) -> Tuple[str, str]:
+    """Map a system to a catalog site id, and say where the answer came from.
+
+    Returns ``(site_id, source)``. The source is carried through to the API
+    and the inspector, because "why is this machine there?" was otherwise
+    unanswerable without reading this function.
 
     Precedence, most authoritative first:
 
@@ -339,39 +374,42 @@ def resolve_site_id(
     if system_sites:
         explicit = system_sites.get(system_slug)
         if explicit:
-            return slugify(explicit) or UNASSIGNED_SITE_ID
+            return slugify(explicit) or UNASSIGNED_SITE_ID, "config"
 
     site_slug = slugify(raw_site)
-    provider_fallback = None
-    if site_slug and site_slug not in GENERIC_SITE_IDS:
-        if site_slug in CLOUD_PROVIDER_IDS:
-            # "aws" is a true answer but a weak one — it names a company,
-            # not a place. Hold it in reserve and see if the hostname can
-            # name the actual region first.
-            provider_fallback = CLOUD_PROVIDER_ALIASES.get(site_slug, site_slug)
-        else:
-            # "ERDC DSRC" and "erdc" should collapse to the same facility.
-            trimmed = site_slug.replace("dsrc", "") or site_slug
-            if trimmed in SITE_CATALOG:
-                return trimmed
-            return site_slug
+    provider = cloud_provider_from_label(raw_site)
+    if site_slug and site_slug not in GENERIC_SITE_IDS and not provider:
+        # "ERDC DSRC" and "erdc" should collapse to the same facility.
+        trimmed = site_slug.replace("dsrc", "") or site_slug
+        if trimmed in SITE_CATALOG:
+            return trimmed, "collector"
+        return site_slug, "collector"
 
     from_host = site_from_hostname(hostname)
     if from_host:
-        return from_host
-    if provider_fallback:
-        # A deployment that runs all its cloud in one region can say so
-        # rather than watching every instance land on a provider pin with
+        return from_host, "hostname"
+    if provider:
+        # The provider is a true answer but a weak one — it names a company,
+        # not a place. A deployment that runs all its cloud in one region can
+        # say which, rather than watching every instance land on a pin with
         # no coordinates.
         default = slugify(cloud_region_default)
-        if default and default in SITE_CATALOG:
-            return default
-        return provider_fallback
+        # Only if the default region belongs to this provider: a Google
+        # cluster does not live in an AWS region because the config named
+        # one.
+        if default and SITE_CATALOG.get(default, {}).get("provider") == provider:
+            return default, "cloud-default"
+        return provider, "provider"
 
     for needle, site_id in SYSTEM_SITE_HINTS:
         if needle in system_slug:
-            return site_id
-    return UNASSIGNED_SITE_ID
+            return site_id, "name-hint"
+    return UNASSIGNED_SITE_ID, "none"
+
+
+def resolve_site_id(*args, **kwargs) -> str:
+    """Site id only, for callers that do not care where it came from."""
+    return resolve_site(*args, **kwargs)[0]
 
 
 def describe_site(site_id: str, overrides: Optional[Dict[str, Dict]] = None) -> Dict[str, Any]:
@@ -803,7 +841,7 @@ def _build_system_node(
     queues = _cluster_queues(cluster) if cluster else None
     allocation = _cluster_allocation(cluster) if cluster else None
 
-    site_id = resolve_site_id(
+    site_id, site_source = resolve_site(
         row.get("dsrc"), name, hostname, system_sites, cloud_region_default
     )
     node_insights, alert = _attach_insights(slug, insight_index or {})
@@ -839,6 +877,7 @@ def _build_system_node(
         "source_url": row.get("source_url"),
         "insights": node_insights,
         "alert": alert,
+        "site_source": site_source,
         "links": {
             "queues": f"queues.html?cluster={slug}",
             "quota": f"quota.html?cluster={slug}",

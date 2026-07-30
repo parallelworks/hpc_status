@@ -31,6 +31,9 @@ const LAYOUTS = new Set(["hierarchy", "radial", "force", "lanes", "geo"]);
 const GROUPINGS = new Set(["site", "scheduler", "status", "connection"]);
 // Control-plane round trip above which a link is called out as slow.
 const SLOW_LINK_MS = 1500;
+// Zoom at which "auto" map detail switches from site pins to systems.
+const MAP_SYSTEM_ZOOM = 1.5;
+const MAP_DETAILS = new Set(["auto", "sites", "systems"]);
 const COMPARE_LIMIT = 4;
 
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -45,6 +48,8 @@ const state = {
   hoverId: null,
   compare: new Set(), // node ids pinned into the comparison panel
   compareMode: false,
+  mapDetail: "auto", // auto | sites | systems — see mapShowsSystems()
+  mapSystemsShown: false,
   view: { nodes: [], edges: [], groups: [] },
   positions: new Map(), // id -> {x, y} — what is on screen right now
   targets: new Map(), // id -> {x, y} — where the layout wants them
@@ -94,6 +99,11 @@ const formatDuration = (seconds) => {
   if (minutes) return `${minutes}m`;
   return "just now";
 };
+
+// Number(null) === 0 and Number.isFinite(0) === true, so a plain
+// Number.isFinite check reports "0 ms" for a field that is simply absent.
+const isNumber = (value) =>
+  value !== null && value !== undefined && value !== "" && Number.isFinite(Number(value));
 
 const formatPercent = (value, digits = 0) =>
   Number.isFinite(Number(value)) ? `${Number(value).toFixed(digits)}%` : "—";
@@ -150,6 +160,34 @@ const groupDescriptor = (node) => {
     default:
       return { id: `site:${node.site}`, label: node.site_label || node.site };
   }
+};
+
+/**
+ * Does the map draw individual systems, or one pin per site?
+ *
+ * "auto" ties it to zoom, which is the gesture people already reach for:
+ * the country view stays readable, and leaning in reveals the machines.
+ */
+const mapShowsSystems = () => {
+  if (state.mapDetail === "systems") return true;
+  if (state.mapDetail === "sites") return false;
+  return state.transform.k >= MAP_SYSTEM_ZOOM;
+};
+
+/**
+ * Re-render when zooming crosses the threshold. Scheduled rather than
+ * immediate: this is called from the frame loop, and re-entering the
+ * renderer mid-frame would recurse.
+ */
+let mapDetailScheduled = false;
+const maybeRefreshMapDetail = () => {
+  if (state.layout !== "geo" || mapDetailScheduled) return;
+  if (mapShowsSystems() === state.mapSystemsShown) return;
+  mapDetailScheduled = true;
+  requestAnimationFrame(() => {
+    mapDetailScheduled = false;
+    if (state.layout === "geo") renderGraph({ animate: true });
+  });
 };
 
 /** Collapse the raw graph into what is actually drawn for the current filters. */
@@ -224,14 +262,35 @@ const buildView = () => {
     label: "Status Monitor",
   };
 
-  // The geographic layout is a map, not a graph: one pin per site, with the
-  // systems behind it reachable from the inspector. Drawing every system on
-  // a country-scale map turns it into confetti.
+  // The geographic layout is a map, not a graph: by default one pin per
+  // site, because drawing every system on a country-scale map turns it into
+  // confetti. Zooming in (or asking outright) fans the systems out.
   const mapMode = state.layout === "geo";
-  const nodes = mapMode ? [...groupList] : [monitor, ...groupList, ...systems];
+  const mapSystems = mapMode && mapShowsSystems();
+  state.mapSystemsShown = mapSystems;
+  const nodes = mapMode
+    ? mapSystems
+      ? [...groupList, ...systems]
+      : [...groupList]
+    : [monitor, ...groupList, ...systems];
   const edges = [];
   groupList.forEach((group) => {
-    if (mapMode) return; // a map wants pins on land, not a tree over it
+    if (mapMode && !mapSystems) return; // pins on land, not a tree over it
+    if (mapMode) {
+      // On the map the site pin is the anchor; there is no monitor node.
+      group.members.forEach((member) => {
+        edges.push({
+          id: `${group.id}->${member.id}`,
+          source: group.id,
+          target: member.id,
+          kind: "member",
+          connected: Boolean(member.connected),
+          status: member.status,
+          latency_ms: member.connection?.latency_ms ?? null,
+        });
+      });
+      return;
+    }
     edges.push({
       id: `${monitor.id}->${group.id}`,
       source: monitor.id,
@@ -428,8 +487,12 @@ const layoutGeo = (view) => {
   const positions = new Map();
   state.geoAnchors = new Map();
 
-  // Pin radius plus room for the two label lines underneath it.
-  const pinRadius = (group) => nodeRadius(group) + 40;
+  const showSystems = mapShowsSystems();
+  // Pin radius plus room for the two label lines underneath it, and for the
+  // ring of systems when they are fanned out.
+  const memberRing = (group) => 62 + Math.min(group.members.length, 8) * 6;
+  const pinRadius = (group) =>
+    nodeRadius(group) + 40 + (showSystems ? memberRing(group) : 0);
   const hasCoords = (g) => Number.isFinite(g.lat) && Number.isFinite(g.lon);
   const inConus = (g) =>
     g.lon >= CONUS_BOUNDS.west &&
@@ -474,7 +537,20 @@ const layoutGeo = (view) => {
     }
     if (!moved) break;
   }
-  points.forEach(({ group, x, y }) => positions.set(group.id, { x, y }));
+  points.forEach(({ group, x, y }) => {
+    positions.set(group.id, { x, y });
+    if (!showSystems) return;
+    // Fan the systems around their site pin, clockwise from the top.
+    const radius = memberRing(group);
+    const count = group.members.length;
+    group.members.forEach((member, index) => {
+      const angle = (index / Math.max(1, count)) * Math.PI * 2 - Math.PI / 2;
+      positions.set(member.id, {
+        x: x + Math.cos(angle) * radius,
+        y: y + Math.sin(angle) * radius,
+      });
+    });
+  });
 
   // --- insets for anything off the mainland
   //
@@ -514,11 +590,12 @@ const layoutGeo = (view) => {
       south: Math.min(...lats) - GEO_INSET.pad,
       north: Math.max(...lats) + GEO_INSET.pad,
     };
+    const scaleUp = showSystems ? 1.7 : 1;
     const box = {
       x: cursorX,
       y: insetTop,
-      width: GEO_INSET.width,
-      height: GEO_INSET.height,
+      width: GEO_INSET.width * scaleUp,
+      height: GEO_INSET.height * scaleUp,
     };
     // Uniform scale inside the box so the inset is not a funhouse mirror,
     // and centred so the site is not pinned against a frame edge.
@@ -535,6 +612,18 @@ const layoutGeo = (view) => {
       const point = project(group.lat, group.lon);
       positions.set(group.id, point);
       state.geoAnchors.set(group.id, point);
+      if (!showSystems) return;
+      // Fan this inset's systems around its pin too — they were otherwise
+      // left at the origin, stranded off the map.
+      const radius = Math.min(memberRing(group), Math.min(box.width, box.height) / 2 - 12);
+      const count = group.members.length;
+      group.members.forEach((member, index) => {
+        const angle = (index / Math.max(1, count)) * Math.PI * 2 - Math.PI / 2;
+        positions.set(member.id, {
+          x: point.x + Math.cos(angle) * radius,
+          y: point.y + Math.sin(angle) * radius,
+        });
+      });
     });
     const label =
       cluster.groups.length === 1
@@ -547,16 +636,28 @@ const layoutGeo = (view) => {
   // --- sites with no coordinates at all
   const trays = [];
   if (unplaced.length) {
+    const trayScale = showSystems ? 1.7 : 1;
     const box = {
       x: cursorX,
       y: insetTop,
-      width: Math.max(GEO_INSET.width, unplaced.length * 150),
-      height: GEO_INSET.height,
+      width: Math.max(GEO_INSET.width, unplaced.length * 150) * trayScale,
+      height: GEO_INSET.height * trayScale,
     };
     unplaced.forEach((group, index) => {
-      positions.set(group.id, {
+      const point = {
         x: box.x + (box.width / (unplaced.length + 1)) * (index + 1),
         y: box.y + box.height / 2 - 14,
+      };
+      positions.set(group.id, point);
+      if (!showSystems) return;
+      const radius = Math.min(memberRing(group), box.height / 2 - 16);
+      const count = group.members.length;
+      group.members.forEach((member, idx) => {
+        const angle = (idx / Math.max(1, count)) * Math.PI * 2 - Math.PI / 2;
+        positions.set(member.id, {
+          x: point.x + Math.cos(angle) * radius,
+          y: point.y + Math.sin(angle) * radius,
+        });
       });
     });
     trays.push({ box, label: "No location reported" });
@@ -1344,6 +1445,7 @@ const drawFrame = () => {
   });
   const { x, y, k } = state.transform;
   dom.root.setAttribute("transform", `translate(${x.toFixed(2)},${y.toFixed(2)}) scale(${k.toFixed(4)})`);
+  maybeRefreshMapDetail();
 };
 
 // ---------------------------------------------------------------------------
@@ -1515,7 +1617,7 @@ const showTooltip = (node, event) => {
     }
     const connectedFor = formatDuration(node.connection?.connected_for_seconds);
     if (connectedFor) rows.push(["Connected", connectedFor]);
-    if (Number.isFinite(Number(node.connection?.latency_ms))) {
+    if (isNumber(node.connection?.latency_ms)) {
       rows.push(["Round trip", `${fmt(node.connection.latency_ms)} ms`]);
     }
   } else if (node.kind === "group") {
@@ -1578,7 +1680,7 @@ const statusTimeline = (connection) => {
   const total = spans.reduce((sum, span) => sum + (Number(span.seconds) || 0), 0);
   if (total <= 0) return "";
   const window = connection.uptime_window_hours || 24;
-  const uptime = Number.isFinite(Number(connection.uptime_ratio))
+  const uptime = isNumber(connection.uptime_ratio)
     ? formatPercent(Number(connection.uptime_ratio) * 100, 1)
     : "—";
   const segments = spans
@@ -1685,7 +1787,7 @@ const renderInspector = (node) => {
   const queues = node.queues || {};
   const allocation = node.allocation;
   const connectedFor = formatDuration(connection.connected_for_seconds);
-  const uptime = Number.isFinite(Number(connection.uptime_ratio))
+  const uptime = isNumber(connection.uptime_ratio)
     ? formatPercent(Number(connection.uptime_ratio) * 100, 1)
     : null;
 
@@ -1717,12 +1819,14 @@ const renderInspector = (node) => {
       ${metaRow("Address", node.address ? `<code>${escapeHtml(node.address)}</code>` : null,
         "Resolved from the login hostname by the monitor")}
       ${metaRow("Scheduler", node.scheduler ? escapeHtml(node.scheduler) : null)}
+      ${metaRow("Placed by", SITE_SOURCE_LABELS[node.site_source] || null,
+        "How this system's site was determined")}
       ${metaRow("Data source", node.connected ? "Live session + status page" : "Status page only")}
       ${metaRow("Connected for", connectedFor ? escapeHtml(connectedFor) : null,
         connection.connected_since ? `Since ${connection.connected_since}` : "")}
       ${metaRow(
         "Round trip",
-        Number.isFinite(Number(connection.latency_ms))
+        isNumber(connection.latency_ms)
           ? `${fmt(connection.latency_ms)} ms${Number(connection.latency_ms) > SLOW_LINK_MS ? " <small>slow</small>" : ""}`
           : null,
         "Time for one no-op command over the control plane (PW CLI + auth + SSH), not a network ping"
@@ -1782,6 +1886,18 @@ const renderInspector = (node) => {
 // Compare panel
 // ---------------------------------------------------------------------------
 
+// Why a node sits where it does — otherwise unanswerable without reading
+// the resolver.
+const SITE_SOURCE_LABELS = {
+  config: "topology.system_sites",
+  collector: "the collector's site label",
+  hostname: "the login hostname",
+  "cloud-default": "topology.cloud_region_default",
+  provider: "cloud provider (region unknown)",
+  "name-hint": "a built-in system-name hint",
+  none: "nothing — no signal to place it",
+};
+
 const COMPARE_ROWS = [
   { label: "Status", value: (n) => `<span class="badge ${statusKey(n.status)}">${escapeHtml(n.status)}</span>` },
   { label: "Site", value: (n) => escapeHtml(n.site_label || n.site || "—") },
@@ -1819,17 +1935,17 @@ const COMPARE_ROWS = [
   },
   {
     label: "Round trip",
-    value: (n) => (Number.isFinite(Number(n.connection?.latency_ms)) ? `${fmt(n.connection.latency_ms)} ms` : "—"),
-    best: (n) => (Number.isFinite(Number(n.connection?.latency_ms)) ? Number(n.connection.latency_ms) : null),
+    value: (n) => (isNumber(n.connection?.latency_ms) ? `${fmt(n.connection.latency_ms)} ms` : "—"),
+    best: (n) => (isNumber(n.connection?.latency_ms) ? Number(n.connection.latency_ms) : null),
     prefer: "min",
   },
   {
     label: "Uptime",
     value: (n) =>
-      Number.isFinite(Number(n.connection?.uptime_ratio))
+      isNumber(n.connection?.uptime_ratio)
         ? formatPercent(Number(n.connection.uptime_ratio) * 100, 1)
         : "—",
-    best: (n) => (Number.isFinite(Number(n.connection?.uptime_ratio)) ? Number(n.connection.uptime_ratio) : null),
+    best: (n) => (isNumber(n.connection?.uptime_ratio) ? Number(n.connection.uptime_ratio) : null),
     prefer: "max",
   },
   { label: "Open insights", value: (n) => String(n.insights?.length || 0) },
@@ -2053,6 +2169,8 @@ const readLocation = () => {
   state.filters.connectedOnly = params.get("connected") === "1";
   const node = params.get("node");
   if (node) state.selectedId = node;
+  const detail = params.get("detail");
+  if (detail && MAP_DETAILS.has(detail)) state.mapDetail = detail;
   const compare = params.get("compare");
   if (compare) {
     compare
@@ -2071,6 +2189,7 @@ const syncLocation = () => {
   if (state.filters.status) params.set("status", state.filters.status);
   if (state.filters.connectedOnly) params.set("connected", "1");
   if (state.selectedId) params.set("node", state.selectedId);
+  if (state.mapDetail !== "auto") params.set("detail", state.mapDetail);
   if (state.compare.size) params.set("compare", [...state.compare].join(","));
   window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
 };
@@ -2099,12 +2218,17 @@ const cacheDom = () => {
   dom.layoutButtons = document.getElementById("topo-layout");
   dom.footer = document.getElementById("topo-footer");
   dom.compareToggle = document.getElementById("topo-compare");
+  dom.detailSelect = document.getElementById("topo-detail");
+  dom.detailField = document.getElementById("topo-detail-field");
 };
 
 const applyControlsFromState = () => {
   dom.search.value = state.filters.search;
   dom.connectedOnly.checked = state.filters.connectedOnly;
   dom.groupSelect.value = state.group;
+  if (dom.detailSelect) dom.detailSelect.value = state.mapDetail;
+  // The control only means anything on the map.
+  if (dom.detailField) dom.detailField.hidden = state.layout !== "geo";
   [...dom.layoutButtons.querySelectorAll("button")].forEach((btn) => {
     const active = btn.dataset.layout === state.layout;
     btn.classList.toggle("is-active", active);
@@ -2148,6 +2272,13 @@ const bindEvents = () => {
   dom.layoutButtons.addEventListener("click", (event) => {
     const btn = event.target.closest("button[data-layout]");
     if (btn) setLayout(btn.dataset.layout);
+  });
+
+  dom.detailSelect?.addEventListener("change", () => {
+    const value = dom.detailSelect.value;
+    state.mapDetail = MAP_DETAILS.has(value) ? value : "auto";
+    renderGraph({ animate: true, fit: true });
+    syncLocation();
   });
 
   dom.groupSelect.addEventListener("change", () => {
