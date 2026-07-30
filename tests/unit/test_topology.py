@@ -7,6 +7,7 @@ import pytest
 from src.data.persistence import DataStore
 from src.data.topology import (
     build_topology,
+    site_from_hostname,
     describe_site,
     index_clusters,
     match_cluster,
@@ -127,6 +128,37 @@ class TestHelpers:
     def test_resolve_site_id_unassigned_when_unknown(self):
         assert resolve_site_id(None, "somebox") == "unassigned"
 
+    @pytest.mark.parametrize(
+        "hostname,expected",
+        [
+            ("crux.mhpcc.hpc.mil", "mhpcc"),
+            ("narwhal.navydsrc.hpc.mil", "navy"),
+            ("chessie.arl.hpc.mil", "arl"),
+            ("gaea54.ncrc.gov", "ornl"),
+            ("somebox.example.com", None),
+            ("pw://user/cluster", None),
+            ("", None),
+        ],
+    )
+    def test_site_from_hostname(self, hostname, expected):
+        assert site_from_hostname(hostname) == expected
+
+    def test_hostname_beats_a_generic_collector_label(self):
+        # PW reports type="existing", which says nothing; the login node does.
+        assert resolve_site_id("existing", "crux", "crux.mhpcc.hpc.mil") == "mhpcc"
+
+    def test_system_sites_override_wins_outright(self):
+        assert (
+            resolve_site_id("erdc", "janus", "janus.arl.hpc.mil", {"janus": "navy"})
+            == "navy"
+        )
+
+    def test_known_systems_fall_back_to_a_name_hint(self):
+        # Not on any status page, and a login hostname that gives nothing away.
+        assert resolve_site_id(None, "chessie", "chessie01") == "arl"
+        assert resolve_site_id(None, "janus", "") == "arl"
+        assert resolve_site_id(None, "crux", "") == "mhpcc"
+
     def test_describe_site_merges_overrides(self):
         site = describe_site("erdc", {"erdc": {"location": "Somewhere else"}})
         assert site["name"] == "ERDC DSRC"
@@ -182,6 +214,32 @@ class TestBuildTopology:
         assert carpenter["connected"] is False
         assert carpenter["capacity"] is None
         assert carpenter["status"] == "DEGRADED"
+
+    def test_pw_cluster_is_placed_by_its_login_hostname(self, fleet_payload):
+        """PW URIs carry no domain; the login node's own name does."""
+        clusters = [
+            {
+                "cluster_metadata": {
+                    "name": "crux",
+                    "uri": "pw://user/crux",
+                    "status": "on",
+                    "hostname": "crux.mhpcc.hpc.mil",
+                },
+            }
+        ]
+        graph = build_topology(fleet_payload, clusters)
+        crux = next(n for n in graph["nodes"] if n.get("slug") == "crux")
+        assert crux["hostname"] == "crux.mhpcc.hpc.mil"
+        assert crux["site"] == "mhpcc"
+        assert crux["site_label"] == "MHPCC DSRC"
+
+    def test_system_sites_config_places_stragglers(self, fleet_payload):
+        clusters = [
+            {"cluster_metadata": {"name": "oddbox", "uri": "pw://user/oddbox"}}
+        ]
+        graph = build_topology(fleet_payload, clusters, system_sites={"oddbox": "erdc"})
+        node = next(n for n in graph["nodes"] if n.get("slug") == "oddbox")
+        assert node["site"] == "erdc"
 
     def test_pw_only_cluster_becomes_its_own_node(self, fleet_payload, cluster_payload):
         graph = build_topology(fleet_payload, cluster_payload)

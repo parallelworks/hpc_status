@@ -71,3 +71,9 @@ topology:
   # Extend or override the built-in site catalog (name/organization/
   # location/lat/lon), keyed by the site id the collector reports.
   sites: {}
+  # Place systems nothing else can identify — not on a status page, and a
+  # login hostname with no site in it. Keyed by system name (slugified).
+  #   system_sites:
+  #     chessie: arl
+  #     crux: mhpcc
+  system_sites: {}

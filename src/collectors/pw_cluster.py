@@ -68,13 +68,54 @@ class PWClusterCollector(BaseCollector):
         cmd.extend(args)
         return cmd
 
+    # Ask for the fully-qualified name and fall back to the short one. The
+    # FQDN is what says where a cluster physically lives —
+    # ``crux.mhpcc.hpc.mil`` identifies the DSRC that ``pw://user/crux``
+    # cannot — so it is worth asking for even though many sites only
+    # answer with a short name.
+    _HOSTNAME_COMMAND = "hostname -f 2>/dev/null || hostname"
+
+    def probe_login(self, cluster_uri: str) -> Tuple[Optional[int], Optional[str]]:
+        """Time one round trip and learn the login node's name in the same call.
+
+        Returns ``(latency_ms, hostname)``. Both are None when the probe
+        fails; a failed probe is not an outage signal on its own, so callers
+        should treat it as "unknown".
+
+        The latency measures the whole control-plane path — ``pw`` CLI
+        start-up, auth, and the SSH round trip — not a network ping. It is
+        the number that predicts how long a collection sweep will take,
+        which is what the topology view wants, but it must never be
+        presented as raw network latency.
+        """
+        try:
+            started = time.monotonic()
+            result = subprocess.run(
+                self._pw("ssh", cluster_uri, self._HOSTNAME_COMMAND),
+                capture_output=True,
+                text=True,
+                timeout=min(30, self.ssh_timeout),
+            )
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            if result.returncode != 0:
+                return None, None
+            lines = (result.stdout or "").strip().splitlines()
+            host = lines[0].strip() if lines else None
+            if host:
+                self._hostname_cache[cluster_uri] = (host, datetime.utcnow())
+            return elapsed_ms, host or None
+        except Exception as e:
+            _log(f"[pw_cluster] login probe failed for {cluster_uri}: {e}")
+            return None, None
+
     def get_login_hostname(self, cluster_uri: str) -> Optional[str]:
         """Return the actual hostname the SSH session lands on, cached.
 
         The PW URI (``pw://user/clustername``) is not a real DNS name — it
         resolves to whichever login / front-end node the PW agent routes
-        to. Surfacing that hostname (``hfe02``, ``gaea54``, etc.) makes the
-        Fleet table's "Login node" column actually useful.
+        to. Surfacing that hostname (``hfe02``, ``crux.mhpcc.hpc.mil``)
+        makes the Fleet table's "Login node" column actually useful, and
+        gives the topology view a way to tell which site a cluster is at.
 
         Cached for the same 10-minute TTL as capability probes since the
         active login is stable across refreshes.
@@ -82,51 +123,11 @@ class PWClusterCollector(BaseCollector):
         cached = self._hostname_cache.get(cluster_uri)
         if cached and datetime.utcnow() - cached[1] < _CAPABILITY_TTL:
             return cached[0]
-        try:
-            cmd = self._pw("ssh", cluster_uri, "hostname")
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=15,
-            )
-            if result.returncode != 0:
-                return None
-            host = (result.stdout or "").strip().splitlines()[0] if result.stdout else None
-            if host:
-                self._hostname_cache[cluster_uri] = (host, datetime.utcnow())
-            return host
-        except Exception as e:
-            _log(f"[pw_cluster] hostname lookup failed for {cluster_uri}: {e}")
-            return None
+        return self.probe_login(cluster_uri)[1]
 
     def measure_latency(self, cluster_uri: str) -> Optional[int]:
-        """Time one no-op round trip to a cluster, in milliseconds.
-
-        This measures the whole control-plane path — ``pw`` CLI startup,
-        auth, and the SSH round trip — not a network ping. It is the number
-        that actually predicts how long a collection sweep will take, which
-        is what the topology view cares about, but it should never be
-        presented as raw network latency.
-
-        Returns None when the probe fails; a failed probe is not an outage
-        signal on its own, so callers should treat it as "unknown".
-        """
-        try:
-            started = time.monotonic()
-            result = subprocess.run(
-                self._pw("ssh", cluster_uri, "true"),
-                capture_output=True,
-                text=True,
-                timeout=min(30, self.ssh_timeout),
-            )
-            elapsed_ms = int((time.monotonic() - started) * 1000)
-            if result.returncode != 0:
-                return None
-            return elapsed_ms
-        except Exception as e:
-            _log(f"[pw_cluster] latency probe failed for {cluster_uri}: {e}")
-            return None
+        """Time one control-plane round trip, in milliseconds."""
+        return self.probe_login(cluster_uri)[0]
 
     @property
     def name(self) -> str:
@@ -342,7 +343,8 @@ class PWClusterCollector(BaseCollector):
           - ``df``-only path for analysis/data-mover nodes
         """
         cluster_name = cluster["uri"].split("/")[-1]
-        latency_ms = self.measure_latency(cluster["uri"])
+        # One probe, two answers: round-trip time and the login node's name.
+        latency_ms, login_hostname = self.probe_login(cluster["uri"])
         caps = self._get_capabilities(cluster["uri"])
 
         usage_data = self._get_cluster_usage(cluster["uri"], caps, cluster_name)
@@ -373,6 +375,7 @@ class PWClusterCollector(BaseCollector):
                 "has_scheduler": has_scheduler,
                 "capabilities": caps,
                 "latency_ms": latency_ms,
+                "hostname": login_hostname,
             },
             "usage_data": usage_data or {},
             "queue_data": queue_data or {},

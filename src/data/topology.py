@@ -99,11 +99,18 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
 # Matched on a slug substring so renamed clusters (``gaea-c5``) still land at
 # the right facility.
 SYSTEM_SITE_HINTS: Tuple[Tuple[str, str], ...] = (
+    # NOAA RDHPCS
     ("hera", "nessc"),
     ("niagara", "nessc"),
     ("gaea", "ornl"),
     ("ppan", "gfdl"),
     ("gfdl", "gfdl"),
+    # HPCMP systems that are not on the public status page, so nothing else
+    # in the pipeline knows where they live. Override per deployment with
+    # ``topology.system_sites``.
+    ("chessie", "arl"),
+    ("janus", "arl"),
+    ("crux", "mhpcc"),
 )
 
 # Domain labels → catalog site id. A login node's own name says where it
@@ -214,13 +221,30 @@ def site_from_hostname(hostname: Any) -> Optional[str]:
     return None
 
 
-def resolve_site_id(raw_site: Any, system_name: Any = "", hostname: Any = "") -> str:
-    """Map a collector's site label to a catalog id.
+def resolve_site_id(
+    raw_site: Any,
+    system_name: Any = "",
+    hostname: Any = "",
+    system_sites: Optional[Dict[str, str]] = None,
+) -> str:
+    """Map a system to a catalog site id.
 
-    Falls back, in order, to the login hostname's domain and then to a
-    system-name hint, so a machine only lands in "Unassigned" when nothing
-    about it says where it runs.
+    Precedence, most authoritative first:
+
+    1. ``topology.system_sites`` — an operator saying so outright.
+    2. The site the collector reported.
+    3. The login hostname's domain (``crux.mhpcc.hpc.mil`` → MHPCC).
+    4. A built-in system-name hint.
+
+    So a machine only lands in "Unassigned" when nothing about it says
+    where it runs.
     """
+    system_slug = slugify(system_name)
+    if system_sites:
+        explicit = system_sites.get(system_slug)
+        if explicit:
+            return slugify(explicit) or UNASSIGNED_SITE_ID
+
     site_slug = slugify(raw_site)
     if site_slug and site_slug not in GENERIC_SITE_IDS:
         # "ERDC DSRC" and "erdc" should collapse to the same facility.
@@ -233,7 +257,6 @@ def resolve_site_id(raw_site: Any, system_name: Any = "", hostname: Any = "") ->
     if from_host:
         return from_host
 
-    system_slug = slugify(system_name)
     for needle, site_id in SYSTEM_SITE_HINTS:
         if needle in system_slug:
             return site_id
@@ -423,6 +446,7 @@ def build_topology(
     connection_stats: Optional[Dict[str, Dict[str, Any]]] = None,
     address_lookup: Optional[Callable[[str], Optional[str]]] = None,
     site_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+    system_sites: Optional[Dict[str, str]] = None,
     insights: Optional[List[Dict[str, Any]]] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
@@ -438,6 +462,8 @@ def build_topology(
         address_lookup: callable resolving a hostname to an IP. Must not
             block — return None when the answer isn't cached yet.
         site_overrides: per-deployment site metadata overrides.
+        system_sites: explicit ``system slug -> site id`` assignments, which
+            beat everything the collectors infer.
         insights: ``generate_fleet_insights()`` output, attached to the
             nodes each insight is about.
         now: injectable clock for deterministic tests.
@@ -452,6 +478,9 @@ def build_topology(
 
     cluster_index = index_clusters(clusters)
     insight_index = index_insights(insights)
+    system_site_map = {
+        slugify(key): value for key, value in (system_sites or {}).items() if value
+    }
     claimed: set = set()
 
     nodes: List[Dict[str, Any]] = []
@@ -486,6 +515,7 @@ def build_topology(
                 address_lookup=address_lookup,
                 reference_now=reference_now,
                 insight_index=insight_index,
+                system_sites=system_site_map,
             )
         )
 
@@ -514,6 +544,7 @@ def build_topology(
                 address_lookup=address_lookup,
                 reference_now=reference_now,
                 insight_index=insight_index,
+                system_sites=system_site_map,
                 origin="pw",
             )
         )
@@ -599,6 +630,7 @@ def _build_system_node(
     address_lookup: Optional[Callable[[str], Optional[str]]],
     reference_now: datetime,
     insight_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+    system_sites: Optional[Dict[str, str]] = None,
     origin: str = "fleet",
 ) -> Dict[str, Any]:
     """Merge a fleet status row with any matching cluster telemetry."""
@@ -608,11 +640,16 @@ def _build_system_node(
     scheduler = (row.get("scheduler") or "").upper() or None
 
     # A hostname only counts as resolvable if it looks like DNS — PW URIs
-    # (``pw://user/cluster``) never do.
+    # (``pw://user/cluster``) never do. For those, the collector records the
+    # login node's own name, which is the thing that actually says where the
+    # cluster lives (``crux.mhpcc.hpc.mil``).
     hostname = login if login and "://" not in str(login) else None
     system_info = (cluster or {}).get("system_info") or {}
-    if not hostname and system_info.get("hostname") not in (None, "", "unknown"):
-        hostname = system_info.get("hostname")
+    for candidate in (meta.get("hostname"), system_info.get("hostname")):
+        if hostname:
+            break
+        if candidate and str(candidate).strip().lower() not in {"", "unknown"}:
+            hostname = str(candidate).strip()
     address = address_lookup(hostname) if (address_lookup and hostname) else None
 
     system_stats = stats.get(f"system:{slug}") or {}
@@ -647,7 +684,7 @@ def _build_system_node(
     queues = _cluster_queues(cluster) if cluster else None
     allocation = _cluster_allocation(cluster) if cluster else None
 
-    site_id = resolve_site_id(row.get("dsrc"), name, hostname)
+    site_id = resolve_site_id(row.get("dsrc"), name, hostname, system_sites)
     node_insights, alert = _attach_insights(slug, insight_index or {})
 
     return {

@@ -204,8 +204,25 @@ topology:
       lon: -90.87
 ```
 
-Sites without coordinates still render — they land in a tray below the map
-in the geographic layout. Set `resolve_addresses: false` on networks where
+Sites without coordinates still render — they land in a "no location
+reported" tray below the map in the geographic layout. Sites outside the
+continental US get their own framed inset, so a single machine in Hawaii
+does not turn the map into an ocean.
+
+**Placing systems the collectors cannot.** A machine that is not on a
+status page and whose login hostname gives no domain away can be assigned
+outright:
+
+```yaml
+topology:
+  system_sites:
+    chessie: arl
+    crux: mhpcc
+```
+
+This beats everything else. Otherwise the site is taken from the
+collector's own label, then the login hostname's domain
+(`crux.mhpcc.hpc.mil` → MHPCC), then a built-in system-name hint. Set `resolve_addresses: false` on networks where
 outbound DNS lookups for site hostnames are undesirable.
 
 ### Rate Limits Section

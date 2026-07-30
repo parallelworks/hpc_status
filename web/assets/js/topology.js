@@ -49,6 +49,9 @@ const state = {
   targets: new Map(), // id -> {x, y} — where the layout wants them
   velocities: new Map(), // id -> {vx, vy} — force layout only
   pinned: new Map(), // id -> {x, y} — nodes the user dragged
+  geoAnchors: new Map(), // group id -> true projected position (geo layout)
+  basemap: null, // bundled state outlines, loaded on first use of the map
+  basemapBounds: null,
   transform: { x: 0, y: 0, k: 1 },
   elements: new Map(),
   animation: { handle: null, start: 0, duration: 620, from: new Map() },
@@ -217,9 +220,14 @@ const buildView = () => {
     label: "Status Monitor",
   };
 
-  const nodes = [monitor, ...groupList, ...systems];
+  // The geographic layout is a map, not a graph: one pin per site, with the
+  // systems behind it reachable from the inspector. Drawing every system on
+  // a country-scale map turns it into confetti.
+  const mapMode = state.layout === "geo";
+  const nodes = mapMode ? [...groupList] : [monitor, ...groupList, ...systems];
   const edges = [];
   groupList.forEach((group) => {
+    if (mapMode) return; // a map wants pins on land, not a tree over it
     edges.push({
       id: `${monitor.id}->${group.id}`,
       source: monitor.id,
@@ -396,50 +404,53 @@ const layoutLanes = (view) => {
   return positions;
 };
 
-// Equirectangular projection. The latitude factor is deliberately below 1:
-// sites in this domain spread much further in longitude than latitude, and
-// squaring the aspect up keeps the whole map legible in a wide panel.
-const GEO_SCALE = 66; // pixels per degree of longitude
-const GEO_LAT_FACTOR = 0.95;
+// Equirectangular projection with a standard parallel, so the country is
+// the shape people expect rather than a stretched rectangle. Longitude
+// degrees shrink by cos(latitude) as you leave the equator; using the
+// middle of the domain (38°N) keeps the continental US honest.
+const GEO_SCALE = 30; // pixels per degree of latitude
+const GEO_STANDARD_PARALLEL = (38 * Math.PI) / 180;
+const GEO_LON_FACTOR = Math.cos(GEO_STANDARD_PARALLEL);
 const projectGeo = (lat, lon) => ({
-  x: lon * GEO_SCALE,
-  y: -lat * GEO_SCALE * GEO_LAT_FACTOR,
+  x: lon * GEO_SCALE * GEO_LON_FACTOR,
+  y: -lat * GEO_SCALE,
 });
+
+// Sites this far apart on screen (or closer) get nudged apart, and a leader
+// line back to the true position keeps the map honest about it.
+const GEO_LEADER_THRESHOLD = 8;
 
 const layoutGeo = (view) => {
   const positions = new Map();
-  const placed = view.groups.filter(
-    (g) => Number.isFinite(g.lat) && Number.isFinite(g.lon)
-  );
-  const unplaced = view.groups.filter(
-    (g) => !Number.isFinite(g.lat) || !Number.isFinite(g.lon)
-  );
+  state.geoAnchors = new Map();
 
-  // Project, then relax overlapping site clusters apart (Dorling-style):
-  // ERDC and Navy DSRC are 100 miles apart, which at any scale that keeps
-  // the whole map on screen would draw them on top of each other.
-  // Members sit in a small grid below their site marker (a ring collides
-  // with the site's own label at any radius that keeps the map compact).
-  const COL = 96;
-  const ROW = 74;
-  const HEAD = 112; // clearance for the site marker + its two label lines
-  const gridOf = (group) => {
-    const count = group.members.length;
-    const perRow = count <= 3 ? Math.max(1, count) : Math.min(4, Math.ceil(Math.sqrt(count)));
-    return { perRow, rows: Math.ceil(count / perRow) };
-  };
-  const clusterRadius = (group) => {
-    const { perRow, rows } = gridOf(group);
-    return Math.max((perRow * COL) / 2, (HEAD + rows * ROW) / 2) + 18;
-  };
-  const points = placed.map((group) => ({ group, ...projectGeo(group.lat, group.lon) }));
-  for (let pass = 0; pass < 90; pass += 1) {
+  // Pin radius plus room for the two label lines underneath it.
+  const pinRadius = (group) => nodeRadius(group) + 40;
+  const hasCoords = (g) => Number.isFinite(g.lat) && Number.isFinite(g.lon);
+  const inConus = (g) =>
+    g.lon >= CONUS_BOUNDS.west &&
+    g.lon <= CONUS_BOUNDS.east &&
+    g.lat >= CONUS_BOUNDS.south &&
+    g.lat <= CONUS_BOUNDS.north;
+
+  const located = view.groups.filter(hasCoords);
+  const mainland = located.filter(inConus);
+  const remote = located.filter((g) => !inConus(g));
+  const unplaced = view.groups.filter((g) => !hasCoords(g));
+
+  // --- mainland pins, relaxed apart where they collide
+  const points = mainland.map((group) => {
+    const anchor = projectGeo(group.lat, group.lon);
+    state.geoAnchors.set(group.id, anchor);
+    return { group, ...anchor };
+  });
+  for (let pass = 0; pass < 120; pass += 1) {
     let moved = false;
     for (let i = 0; i < points.length; i += 1) {
       for (let j = i + 1; j < points.length; j += 1) {
         const a = points[i];
         const b = points[j];
-        const minDist = clusterRadius(a.group) + clusterRadius(b.group);
+        const minDist = pinRadius(a.group) + pinRadius(b.group);
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         let dist = Math.hypot(dx, dy);
@@ -459,41 +470,95 @@ const layoutGeo = (view) => {
     }
     if (!moved) break;
   }
+  points.forEach(({ group, x, y }) => positions.set(group.id, { x, y }));
 
-  points.forEach(({ group, x, y }) => {
-    positions.set(group.id, { x, y });
-    const { perRow } = gridOf(group);
-    group.members.forEach((member, idx) => {
-      const row = Math.floor(idx / perRow);
-      const inRow = Math.min(perRow, group.members.length - row * perRow);
-      const offset = (idx % perRow) - (inRow - 1) / 2;
-      positions.set(member.id, { x: x + offset * COL, y: y + HEAD + row * ROW });
+  // --- insets for anything off the mainland
+  //
+  // Hawaii is 2,500 miles from the nearest DSRC. Drawn to scale it turns
+  // most of the canvas into empty Pacific, so it gets the treatment every
+  // printed US map uses: its own framed box below the mainland.
+  const mainBox = {
+    minX: projectGeo(CONUS_BOUNDS.north, CONUS_BOUNDS.west).x,
+    minY: projectGeo(CONUS_BOUNDS.north, CONUS_BOUNDS.west).y,
+    maxX: projectGeo(CONUS_BOUNDS.south, CONUS_BOUNDS.east).x,
+    maxY: projectGeo(CONUS_BOUNDS.south, CONUS_BOUNDS.east).y,
+  };
+
+  const insets = [];
+  const clusters = [];
+  remote.forEach((group) => {
+    // Sites within ~12 degrees of each other share one inset.
+    const near = clusters.find((cluster) =>
+      cluster.groups.some(
+        (other) =>
+          Math.abs(other.lat - group.lat) < 12 && Math.abs(other.lon - group.lon) < 12
+      )
+    );
+    if (near) near.groups.push(group);
+    else clusters.push({ groups: [group] });
+  });
+
+  let cursorX = mainBox.minX;
+  const insetTop = mainBox.maxY + GEO_INSET.gap;
+
+  clusters.forEach((cluster) => {
+    const lats = cluster.groups.map((g) => g.lat);
+    const lons = cluster.groups.map((g) => g.lon);
+    const window_ = {
+      west: Math.min(...lons) - GEO_INSET.pad,
+      east: Math.max(...lons) + GEO_INSET.pad,
+      south: Math.min(...lats) - GEO_INSET.pad,
+      north: Math.max(...lats) + GEO_INSET.pad,
+    };
+    const box = {
+      x: cursorX,
+      y: insetTop,
+      width: GEO_INSET.width,
+      height: GEO_INSET.height,
+    };
+    // Uniform scale inside the box so the inset is not a funhouse mirror,
+    // and centred so the site is not pinned against a frame edge.
+    const spanX = (window_.east - window_.west) * GEO_LON_FACTOR;
+    const spanY = window_.north - window_.south;
+    const scale = Math.min(box.width / spanX, (box.height - 18) / spanY);
+    const offsetX = (box.width - spanX * scale) / 2;
+    const offsetY = (box.height - 18 - spanY * scale) / 2;
+    const project = (lat, lon) => ({
+      x: box.x + offsetX + (lon - window_.west) * GEO_LON_FACTOR * scale,
+      y: box.y + offsetY + (window_.north - lat) * scale,
     });
-  });
-
-  // Sites with no coordinates get a tray below the map rather than being
-  // silently dropped — an unlocated cluster is still part of the fleet.
-  const drawn = [...positions.values()];
-  const anchorY = drawn.length ? Math.max(...drawn.map((p) => p.y)) + 150 : 0;
-  let trayX = drawn.length ? Math.min(...drawn.map((p) => p.x)) : 0;
-  unplaced.forEach((group) => {
-    const { perRow } = gridOf(group);
-    positions.set(group.id, { x: trayX, y: anchorY });
-    group.members.forEach((member, idx) => {
-      const row = Math.floor(idx / perRow);
-      const inRow = Math.min(perRow, group.members.length - row * perRow);
-      const offset = (idx % perRow) - (inRow - 1) / 2;
-      positions.set(member.id, { x: trayX + offset * COL, y: anchorY + HEAD + row * ROW });
+    cluster.groups.forEach((group) => {
+      const point = project(group.lat, group.lon);
+      positions.set(group.id, point);
+      state.geoAnchors.set(group.id, point);
     });
-    trayX += clusterRadius(group) * 2 + 60;
+    const label =
+      cluster.groups.length === 1
+        ? cluster.groups[0].location || cluster.groups[0].label
+        : `${cluster.groups.length} sites`;
+    insets.push({ box, window: window_, project, label });
+    cursorX += box.width + GEO_INSET.gap;
   });
 
-  const xs = [...positions.values()].map((p) => p.x);
-  const ys = [...positions.values()].map((p) => p.y);
-  positions.set(view.monitor.id, {
-    x: xs.length ? (Math.min(...xs) + Math.max(...xs)) / 2 : 0,
-    y: ys.length ? Math.min(...ys) - 150 : 0,
-  });
+  // --- sites with no coordinates at all
+  const trays = [];
+  if (unplaced.length) {
+    const box = {
+      x: cursorX,
+      y: insetTop,
+      width: Math.max(GEO_INSET.width, unplaced.length * 150),
+      height: GEO_INSET.height,
+    };
+    unplaced.forEach((group, index) => {
+      positions.set(group.id, {
+        x: box.x + (box.width / (unplaced.length + 1)) * (index + 1),
+        y: box.y + box.height / 2 - 14,
+      });
+    });
+    trays.push({ box, label: "No location reported" });
+  }
+
+  state.geoPlan = { mainBox, insets, trays };
   return positions;
 };
 
@@ -776,8 +841,9 @@ const renderGraph = ({ animate = true, fit = false } = {}) => {
   state.view = view;
 
   // A lone monitor node is not a graph — either nothing has been collected
-  // yet, or the filters excluded everything.
-  const hasSystems = view.nodes.some((node) => node.kind === "system");
+  // yet, or the filters excluded everything. Count members rather than drawn
+  // nodes: the map draws one pin per site and no system nodes at all.
+  const hasSystems = view.groups.some((group) => group.members.length);
   if (!hasSystems) {
     const filtered = Boolean(
       state.filters.search || state.filters.status || state.filters.connectedOnly
@@ -874,8 +940,13 @@ const renderGraph = ({ animate = true, fit = false } = {}) => {
     stopForce();
     state.targets = computeLayout(view);
     // Fit only once the nodes have arrived: fitting mid-flight measures a
-    // half-collapsed graph and zooms in far too tight.
-    animateTo(animate, fit ? () => fitToView({ animate: true }) : undefined);
+    // half-collapsed graph and zooms in far too tight. Decorations are
+    // redrawn at the same moment because leader lines are anchored to where
+    // the pins finally settled.
+    animateTo(animate, () => {
+      renderDecorations(view);
+      if (fit) fitToView({ animate: true });
+    });
   }
   renderDecorations(view);
   drawFrame();
@@ -885,7 +956,9 @@ const renderGraph = ({ animate = true, fit = false } = {}) => {
 const renderDecorations = (view) => {
   dom.laneLayer.innerHTML = "";
   if (state.layout === "geo") {
+    state.basemapBounds = renderBasemap();
     renderGraticule(view);
+    renderGeoLeaders(view);
     return;
   }
   if (state.layout !== "lanes") return;
@@ -913,6 +986,183 @@ const renderDecorations = (view) => {
         height: bottom - top,
         rx: 20,
       })
+    );
+  });
+};
+
+/**
+ * Load the bundled state outlines. Deliberately a local file, not a tile
+ * server: these deployments are frequently air-gapped, and a basemap that
+ * only works with internet access is a basemap that fails when it matters.
+ */
+const loadBasemap = async () => {
+  if (state.basemap !== null) return state.basemap;
+  state.basemap = false; // in-flight sentinel: never request twice
+  try {
+    const response = await fetch(buildDataUrl("assets/data/us-states.json"), {
+      cache: "force-cache",
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    state.basemap = await response.json();
+  } catch (err) {
+    console.warn("Basemap unavailable; drawing the graticule only", err);
+    state.basemap = false;
+  }
+  return state.basemap;
+};
+
+// Continental US, always drawn so the map is recognizable even when the
+// fleet sits in one corner of it.
+const CONUS_BOUNDS = { west: -125, east: -66, south: 24, north: 50 };
+
+// Framed box for anything off the mainland (Hawaii, and the tray of sites
+// with no coordinates at all).
+const GEO_INSET = { width: 230, height: 165, gap: 28, pad: 1.6 };
+
+const ringBounds = (ring) => {
+  let west = Infinity;
+  let east = -Infinity;
+  let south = Infinity;
+  let north = -Infinity;
+  ring.forEach(([lon, lat]) => {
+    west = Math.min(west, lon);
+    east = Math.max(east, lon);
+    south = Math.min(south, lat);
+    north = Math.max(north, lat);
+  });
+  return { west, east, south, north };
+};
+
+const overlaps = (ring, window_) => {
+  const b = ringBounds(ring);
+  return (
+    b.east >= window_.west &&
+    b.west <= window_.east &&
+    b.north >= window_.south &&
+    b.south <= window_.north
+  );
+};
+
+const ringPath = (ring, project) =>
+  ring
+    .map(([lon, lat], index) => {
+      const point = project(lat, lon);
+      return `${index === 0 ? "M" : "L"}${point.x.toFixed(1)},${point.y.toFixed(1)}`;
+    })
+    .join("") + "Z";
+
+/** Land behind the pins: state outlines projected the same way the pins are. */
+const renderBasemap = () => {
+  const basemap = state.basemap;
+  const plan = state.geoPlan;
+  if (!basemap || !basemap.states || !plan) return null;
+
+  const drawLand = (window_, project, parent) => {
+    basemap.states.forEach((entry) => {
+      entry.r.forEach((ring) => {
+        if (!overlaps(ring, window_)) return;
+        const path = svgEl("path", { class: "topo-land", d: ringPath(ring, project) });
+        const title = svgEl("title");
+        title.textContent = entry.n;
+        path.append(title);
+        parent.append(path);
+      });
+    });
+  };
+
+  // Mainland
+  drawLand(CONUS_BOUNDS, projectGeo, dom.laneLayer);
+
+  const bounds = { ...plan.mainBox };
+  const stretch = (box) => {
+    bounds.minX = Math.min(bounds.minX, box.x);
+    bounds.minY = Math.min(bounds.minY, box.y);
+    bounds.maxX = Math.max(bounds.maxX, box.x + box.width);
+    bounds.maxY = Math.max(bounds.maxY, box.y + box.height);
+  };
+
+  // Insets: land clipped to the frame, so an island never spills out.
+  plan.insets.forEach((inset, index) => {
+    const clipId = `topo-inset-clip-${index}`;
+    const clip = svgEl("clipPath", { id: clipId });
+    clip.append(
+      svgEl("rect", {
+        x: inset.box.x,
+        y: inset.box.y,
+        width: inset.box.width,
+        height: inset.box.height,
+        rx: 10,
+      })
+    );
+    dom.laneLayer.append(clip);
+
+    const frame = svgEl("g", { "clip-path": `url(#${clipId})` });
+    frame.append(
+      svgEl("rect", {
+        class: "topo-inset-fill",
+        x: inset.box.x,
+        y: inset.box.y,
+        width: inset.box.width,
+        height: inset.box.height,
+      })
+    );
+    drawLand(inset.window, inset.project, frame);
+    dom.laneLayer.append(frame);
+    dom.laneLayer.append(renderInsetFrame(inset.box, inset.label, "inset"));
+    stretch(inset.box);
+  });
+
+  plan.trays.forEach((tray) => {
+    dom.laneLayer.append(renderInsetFrame(tray.box, tray.label, "tray"));
+    stretch(tray.box);
+  });
+
+  return bounds;
+};
+
+/** Frame and caption around an inset or the no-location tray. */
+const renderInsetFrame = (box, label, variant) => {
+  const group = svgEl("g", { class: `topo-inset topo-inset--${variant}` });
+  group.append(
+    svgEl("rect", {
+      class: "topo-inset-frame",
+      x: box.x,
+      y: box.y,
+      width: box.width,
+      height: box.height,
+      rx: 10,
+    })
+  );
+  const caption = svgEl("text", {
+    class: "topo-inset-label",
+    x: box.x + 10,
+    y: box.y + 15,
+  });
+  caption.textContent = label;
+  group.append(caption);
+  return group;
+};
+
+/** Dashed connector from a displaced pin back to where the site really is. */
+const renderGeoLeaders = (view) => {
+  view.groups.forEach((group) => {
+    const anchor = state.geoAnchors.get(group.id);
+    const point = state.positions.get(group.id);
+    if (!anchor || !point) return;
+    if (Math.hypot(point.x - anchor.x, point.y - anchor.y) < GEO_LEADER_THRESHOLD) {
+      return;
+    }
+    dom.laneLayer.append(
+      svgEl("line", {
+        class: "topo-leader",
+        x1: anchor.x,
+        y1: anchor.y,
+        x2: point.x,
+        y2: point.y,
+      })
+    );
+    dom.laneLayer.append(
+      svgEl("circle", { class: "topo-leader-anchor", cx: anchor.x, cy: anchor.y, r: 3 })
     );
   });
 };
@@ -1072,9 +1322,25 @@ const graphBounds = () => {
 };
 
 const fitToView = ({ animate = true } = {}) => {
-  const bounds = graphBounds();
+  let bounds = graphBounds();
   const rect = dom.canvas.getBoundingClientRect();
   if (!bounds || !rect.width) return;
+  // On the map, frame the country rather than just the pins — a fleet
+  // clustered in one region should still be shown in its national context.
+  if (state.layout === "geo" && state.basemapBounds) {
+    const map = state.basemapBounds;
+    const pad = 26; // keep the inset frames off the canvas edge
+    bounds = {
+      minX: Math.min(bounds.minX, map.minX) - pad,
+      minY: Math.min(bounds.minY, map.minY) - pad,
+      maxX: Math.max(bounds.maxX, map.maxX) + pad,
+      maxY: Math.max(bounds.maxY, map.maxY) + pad,
+      width: 0,
+      height: 0,
+    };
+    bounds.width = bounds.maxX - bounds.minX;
+    bounds.height = bounds.maxY - bounds.minY;
+  }
   const k = Math.max(0.25, Math.min(1.6, Math.min(rect.width / bounds.width, rect.height / bounds.height)));
   const target = {
     k,
@@ -1120,7 +1386,12 @@ const zoomBy = (factor, origin) => {
 // Interaction
 // ---------------------------------------------------------------------------
 
-const nodeById = (id) => state.view.nodes.find((n) => n.id === id);
+const nodeById = (id) =>
+  state.view.nodes.find((n) => n.id === id) ||
+  state.view.groups?.find((g) => g.id === id) ||
+  // The geographic layout hides system nodes; the inspector can still
+  // select them from a site's member list.
+  (state.graph?.nodes || []).find((n) => n.id === id);
 
 const openQueueHealth = (node) => {
   if (!node || node.kind !== "system") return;
@@ -1801,6 +2072,13 @@ const setLayout = (layout) => {
   applyControlsFromState();
   renderGraph({ animate: true, fit: true });
   syncLocation();
+  if (layout === "geo") {
+    loadBasemap().then(() => {
+      if (state.layout !== "geo") return;
+      renderDecorations(state.view);
+      fitToView({ animate: true });
+    });
+  }
 };
 
 const bindEvents = () => {
@@ -2056,6 +2334,9 @@ const bootstrap = async () => {
   applyControlsFromState();
   ensureScaffold();
   bindEvents();
+
+  // Deep links and the configured default can open straight into the map.
+  if (state.layout === "geo") await loadBasemap();
 
   const pendingSelection = state.selectedId;
   state.selectedId = null;
