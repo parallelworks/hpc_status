@@ -77,3 +77,7 @@ topology:
   #     chessie: arl
   #     crux: mhpcc
   system_sites: {}
+  # Every HPCMP cloud resource lives in AWS GovCloud (US-West), so cloud
+  # clusters whose hostname does not name a region are placed there rather
+  # than on a provider pin with no coordinates.
+  cloud_region_default: usgovwest1

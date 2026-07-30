@@ -1047,7 +1047,7 @@ const applyConfigBranding = () => {
   document.title = `Quota Usage | ${title}`;
 };
 
-document.addEventListener("DOMContentLoaded", () => {
+const bootstrap = () => {
   cacheElements();
   initThemeToggle();
   initHelpPanel();
@@ -1066,4 +1066,20 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   bindEvents();
   loadData();
-});
+};
+
+// Run once, whenever this module happens to execute: a module script
+// normally runs before DOMContentLoaded, but waiting for an event that may
+// already have fired means never booting at all.
+let booted = false;
+const bootOnce = () => {
+  if (booted) return;
+  booted = true;
+  bootstrap();
+};
+
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", bootOnce, { once: true });
+} else {
+  bootOnce();
+}

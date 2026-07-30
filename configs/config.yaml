@@ -72,3 +72,6 @@ topology:
   #     chessie: arl
   #     crux: mhpcc
   system_sites: {}
+  # Region to assume for cloud clusters whose hostname does not name one,
+  # e.g. usgovwest1 for a fleet that runs entirely in AWS GovCloud West.
+  cloud_region_default: ""

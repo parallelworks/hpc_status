@@ -102,7 +102,7 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
     "usgovwest1": {
         "name": "AWS GovCloud (US-West)",
         "organization": "Amazon Web Services · us-gov-west-1",
-        "location": "Oregon (approx.)",
+        "location": "Eastern Oregon (approx.)",
         "lat": 45.84,
         "lon": -119.70,
         "cloud": True,
@@ -319,6 +319,7 @@ def resolve_site_id(
     system_name: Any = "",
     hostname: Any = "",
     system_sites: Optional[Dict[str, str]] = None,
+    cloud_region_default: Optional[str] = None,
 ) -> str:
     """Map a system to a catalog site id.
 
@@ -328,6 +329,8 @@ def resolve_site_id(
     2. The site the collector reported.
     3. The login hostname's domain (``crux.mhpcc.hpc.mil`` → MHPCC).
     4. A built-in system-name hint.
+    5. ``topology.cloud_region_default``, for fleets that run all their
+       cloud in one region and whose hostnames do not say so.
 
     So a machine only lands in "Unassigned" when nothing about it says
     where it runs.
@@ -357,6 +360,12 @@ def resolve_site_id(
     if from_host:
         return from_host
     if provider_fallback:
+        # A deployment that runs all its cloud in one region can say so
+        # rather than watching every instance land on a provider pin with
+        # no coordinates.
+        default = slugify(cloud_region_default)
+        if default and default in SITE_CATALOG:
+            return default
         return provider_fallback
 
     for needle, site_id in SYSTEM_SITE_HINTS:
@@ -550,6 +559,7 @@ def build_topology(
     address_lookup: Optional[Callable[[str], Optional[str]]] = None,
     site_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
     system_sites: Optional[Dict[str, str]] = None,
+    cloud_region_default: Optional[str] = None,
     insights: Optional[List[Dict[str, Any]]] = None,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
@@ -567,6 +577,8 @@ def build_topology(
         site_overrides: per-deployment site metadata overrides.
         system_sites: explicit ``system slug -> site id`` assignments, which
             beat everything the collectors infer.
+        cloud_region_default: region id to assume for cloud clusters whose
+            hostname does not name one (e.g. ``usgovwest1``).
         insights: ``generate_fleet_insights()`` output, attached to the
             nodes each insight is about.
         now: injectable clock for deterministic tests.
@@ -619,6 +631,7 @@ def build_topology(
                 reference_now=reference_now,
                 insight_index=insight_index,
                 system_sites=system_site_map,
+                cloud_region_default=cloud_region_default,
             )
         )
 
@@ -648,6 +661,7 @@ def build_topology(
                 reference_now=reference_now,
                 insight_index=insight_index,
                 system_sites=system_site_map,
+                cloud_region_default=cloud_region_default,
                 origin="pw",
             )
         )
@@ -735,6 +749,7 @@ def _build_system_node(
     reference_now: datetime,
     insight_index: Optional[Dict[str, List[Dict[str, Any]]]] = None,
     system_sites: Optional[Dict[str, str]] = None,
+    cloud_region_default: Optional[str] = None,
     origin: str = "fleet",
 ) -> Dict[str, Any]:
     """Merge a fleet status row with any matching cluster telemetry."""
@@ -788,7 +803,9 @@ def _build_system_node(
     queues = _cluster_queues(cluster) if cluster else None
     allocation = _cluster_allocation(cluster) if cluster else None
 
-    site_id = resolve_site_id(row.get("dsrc"), name, hostname, system_sites)
+    site_id = resolve_site_id(
+        row.get("dsrc"), name, hostname, system_sites, cloud_region_default
+    )
     node_insights, alert = _attach_insights(slug, insight_index or {})
 
     return {

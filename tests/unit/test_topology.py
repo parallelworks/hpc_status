@@ -170,6 +170,19 @@ class TestHelpers:
         assert resolve_site_id("aws", "c1", "") == "aws"
         assert resolve_site_id("Amazon", "c1", "") == "aws"
 
+    def test_cloud_region_default_places_regionless_cloud_clusters(self):
+        """A fleet that runs all its cloud in one region can just say so."""
+        assert resolve_site_id("aws", "c1", "", None, "usgovwest1") == "usgovwest1"
+        # A hostname that names a region is still more specific than a default.
+        assert (
+            resolve_site_id("aws", "c1", "ip-1.us-east-2.compute.internal", None, "usgovwest1")
+            == "useast2"
+        )
+        # An unknown default is ignored rather than inventing a site.
+        assert resolve_site_id("aws", "c1", "", None, "not-a-region") == "aws"
+        # And it never overrides a physical site.
+        assert resolve_site_id("erdc", "c1", "", None, "usgovwest1") == "erdc"
+
     def test_a_real_site_still_beats_a_region_hostname(self):
         assert (
             resolve_site_id("erdc", "c1", "ip-10-1-2-3.us-gov-west-1.compute.internal")
