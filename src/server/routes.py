@@ -199,6 +199,11 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 },
                 "features": {
                     "cluster_pages": self.cluster_pages_enabled,
+                    # Lets an operator confirm the map data is deployed
+                    # without opening a browser console.
+                    "basemap": (
+                        self.web_dir / "assets" / "data" / "us-states.json"
+                    ).exists(),
                 },
                 "topology": config_data.get("topology", {}),
             }

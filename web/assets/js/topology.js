@@ -51,6 +51,7 @@ const state = {
   pinned: new Map(), // id -> {x, y} — nodes the user dragged
   geoAnchors: new Map(), // group id -> true projected position (geo layout)
   basemap: null, // bundled state outlines, loaded on first use of the map
+  basemapPending: null,
   basemapBounds: null,
   transform: { x: 0, y: 0, k: 1 },
   elements: new Map(),
@@ -999,27 +1000,51 @@ const renderDecorations = (view) => {
  * server: these deployments are frequently air-gapped, and a basemap that
  * only works with internet access is a basemap that fails when it matters.
  */
-const loadBasemap = async () => {
-  if (state.basemap !== null) return state.basemap;
-  state.basemap = false; // in-flight sentinel: never request twice
-  try {
-    const response = await fetch(buildDataUrl("assets/data/us-states.json"), {
-      cache: "force-cache",
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    state.basemap = await response.json();
-  } catch (err) {
-    // Say so out loud. A silently absent basemap looks identical to a
-    // broken page, and "I see no map" is not a diagnosable bug report.
-    console.warn("Basemap unavailable; drawing the graticule only", err);
-    state.basemap = false;
-    setStatus(
-      "Map outline could not be loaded (assets/data/us-states.json) — " +
-        "showing coordinates on a grid instead.",
-      "error"
-    );
-  }
-  return state.basemap;
+const BASEMAP_PATH = "assets/data/us-states.json";
+
+const fetchBasemap = async (options) => {
+  const url = buildDataUrl(BASEMAP_PATH).toString();
+  const response = await fetch(url, options);
+  if (!response.ok) throw new Error(`HTTP ${response.status} · ${url}`);
+  return response.json();
+};
+
+const loadBasemap = async ({ force = false } = {}) => {
+  if (state.basemap && !force) return state.basemap;
+  // Track the in-flight promise rather than poisoning state.basemap: a
+  // failure used to be permanent for the session, so one bad moment during
+  // a deploy meant no map until reload.
+  if (state.basemapPending && !force) return state.basemapPending;
+
+  state.basemapPending = (async () => {
+    try {
+      state.basemap = await fetchBasemap();
+      setStatus("");
+      return state.basemap;
+    } catch (first) {
+      // Bypass the HTTP cache once before giving up. A 404 cached from a
+      // page load that raced the deploy would otherwise be replayed for as
+      // long as the entry lives — which is what "force-cache" here caused.
+      try {
+        state.basemap = await fetchBasemap({ cache: "reload" });
+        setStatus("");
+        return state.basemap;
+      } catch (err) {
+        console.warn("Basemap unavailable; drawing the graticule only", err);
+        state.basemap = null; // leave the door open for a later attempt
+        setStatus(
+          `Map outline could not be loaded (${err.message}). Showing ` +
+            "coordinates on a grid instead — press Refresh to retry.",
+          "error"
+        );
+        return null;
+      }
+    } finally {
+      state.basemapPending = null;
+    }
+  })();
+
+  return state.basemapPending;
 };
 
 // Continental US, always drawn so the map is recognizable even when the
@@ -2103,7 +2128,16 @@ const setLayout = (layout) => {
 };
 
 const bindEvents = () => {
-  document.getElementById("refresh-btn")?.addEventListener("click", () => loadData());
+  document.getElementById("refresh-btn")?.addEventListener("click", () => {
+    loadData();
+    if (state.layout === "geo" && !state.basemap) {
+      loadBasemap({ force: true }).then((basemap) => {
+        if (!basemap || state.layout !== "geo") return;
+        renderDecorations(state.view);
+        fitToView({ animate: true });
+      });
+    }
+  });
   document.getElementById("topo-fit")?.addEventListener("click", () => fitToView());
   document.getElementById("topo-zoom-in")?.addEventListener("click", () => zoomBy(1.25));
   document.getElementById("topo-zoom-out")?.addEventListener("click", () => zoomBy(0.8));
