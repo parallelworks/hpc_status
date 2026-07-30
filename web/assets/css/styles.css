@@ -202,7 +202,10 @@ select:focus-visible {
    6. Page Layout
    ---------------------------------------------------------------- */
 .page {
-  max-width: 1120px;
+  /* 1120px left the tables, the topology canvas, and the queue grid
+     cramped on a normal laptop, never mind a wide monitor. Capped rather
+     than fluid so prose columns stay readable. */
+  max-width: min(1560px, 96vw);
   margin: 0 auto;
   padding: var(--space-8) var(--space-6) var(--space-16);
 }
@@ -3131,7 +3134,7 @@ th[data-sortable][data-sort-dir="desc"]::after {
 
 .topo-shell {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 22rem;
+  grid-template-columns: minmax(0, 1fr) minmax(22rem, 26rem);
   gap: var(--space-4);
   align-items: stretch;
 }
@@ -3139,7 +3142,7 @@ th[data-sortable][data-sort-dir="desc"]::after {
 .topo-canvas {
   position: relative;
   min-height: 34rem;
-  height: clamp(30rem, 62vh, 46rem);
+  height: clamp(32rem, 70vh, 54rem);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background-color: var(--panel);
@@ -3207,20 +3210,46 @@ th[data-sortable][data-sort-dir="desc"]::after {
   opacity: 0.5;
 }
 
-/* --- geographic basemap */
+/* --- geographic basemap
+   The map gets its own small palette rather than reusing panel colours:
+   land the same tone as a panel on a canvas the same tone as a panel is
+   not a map, it is a rumour. */
+:root[data-theme="dark"] {
+  --map-ocean: #0c1521;
+  --map-land: #1e2b3d;
+  --map-coast: #4b6280;
+  --map-border: #33445c;
+}
+
+:root[data-theme="light"] {
+  --map-ocean: #d9e6f2;
+  --map-land: #fbfcfe;
+  --map-coast: #8aa2bb;
+  --map-border: #c6d2e0;
+}
+
+/* Ocean, and no dot grid competing with the coastline. */
+.topo-canvas.is-map {
+  background-color: var(--map-ocean);
+  background-image: none;
+}
+
 .topo-land {
-  fill: var(--panel-alt);
-  stroke: var(--border);
-  stroke-width: 1;
+  fill: var(--map-land);
+  stroke: var(--map-coast);
+  stroke-width: 1.4;
   stroke-linejoin: round;
 }
 
-:root[data-theme="light"] .topo-land {
-  fill: #e6e9f2;
+.topo-state {
+  fill: none;
+  stroke: var(--map-border);
+  stroke-width: 0.8;
+  stroke-linejoin: round;
 }
 
 .topo-inset-fill {
-  fill: var(--bg-secondary);
+  fill: var(--map-ocean);
 }
 
 .topo-inset-frame {
@@ -3255,9 +3284,9 @@ th[data-sortable][data-sort-dir="desc"]::after {
 }
 
 .topo-graticule {
-  stroke: var(--border);
+  stroke: var(--map-coast);
   stroke-width: 1;
-  opacity: 0.45;
+  opacity: 0.28;
 }
 
 .topo-graticule-label {
@@ -3703,7 +3732,7 @@ th[data-sortable][data-sort-dir="desc"]::after {
   background: var(--panel);
   box-shadow: var(--shadow-sm);
   overflow-y: auto;
-  max-height: clamp(30rem, 62vh, 46rem);
+  max-height: clamp(32rem, 70vh, 54rem);
 }
 
 .topo-inspector-empty {
