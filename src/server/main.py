@@ -201,6 +201,18 @@ def run_server(args) -> None:
     # Determine web directory
     web_dir = WEB_DIR if WEB_DIR.exists() else PUBLIC_DIR
 
+    # The topology map needs a bundled data file. Say so here rather than
+    # letting the browser be the first to find out: a deploy that copies
+    # only .html/.js/.css silently loses the map.
+    basemap = web_dir / "assets" / "data" / "us-states.json"
+    if basemap.exists():
+        _log(f"[dashboard] Map outline: {basemap} ({basemap.stat().st_size // 1024} KB)")
+    else:
+        _log(
+            f"[dashboard] WARNING: map outline missing at {basemap} — the "
+            f"topology page will fall back to a plain coordinate grid"
+        )
+
     # Create the payload generator
     generate_fn = create_generate_payload_fn(config, store)
 
