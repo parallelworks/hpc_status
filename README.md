@@ -24,6 +24,16 @@ commands to decide where to submit.
 (UP / DEGRADED / MAINTENANCE / DOWN), its login node, its scheduler, and
 when it was last checked. Click a system for the full details page.
 
+**Topology.** An interactive map of the fleet — every site, every system,
+and which ones the monitor actually holds a live session to. Group by site
+(DSRC), scheduler, status, or connection; switch between hierarchy, radial,
+force, lane, and geographic layouts. Node color is status, size is core
+count, and the outer ring is how busy it is. Nodes with an open insight
+carry a warning badge, links animate at the speed of their measured round
+trip, and each system shows its status timeline for the last 24 hours.
+Click a system to inspect it — click again to jump straight to its queue
+health, or shift-click several to compare them side by side.
+
 **Queue health.** For each system, live queue depth, node availability,
 and core demand — so you can pick the queue that isn't backed up.
 

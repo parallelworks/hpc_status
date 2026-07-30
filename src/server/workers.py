@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 from ..data.persistence import DataStore
+from ..data.topology import slugify
 
 
 def _log(msg: str) -> None:
@@ -86,6 +87,7 @@ class DashboardState:
             self.store.save_cache(self.source_name, payload)
             # Save snapshot to DB for history
             self.store.save_snapshot(self.source_name, payload)
+            self._record_transitions(systems)
             with self._payload_lock:
                 self._payload = payload
                 self._last_error = None
@@ -98,6 +100,37 @@ class DashboardState:
             return False, f"Refresh failed: {exc}"
         finally:
             self._refresh_lock.release()
+
+    def _record_transitions(self, systems: list) -> None:
+        """Log status changes so the topology view can show uptime history.
+
+        Entities are namespaced (``system:<slug>``) because PW cluster
+        reachability is tracked separately under ``cluster:<slug>`` — the
+        two are different signals for what may be the same machine.
+        """
+        try:
+            entries = []
+            for row in systems or []:
+                name = (row.get("system") or "").strip()
+                if not name:
+                    continue
+                entries.append(
+                    (
+                        f"system:{slugify(name)}",
+                        row.get("status") or "UNKNOWN",
+                        {
+                            "name": name,
+                            "dsrc": row.get("dsrc"),
+                            "scheduler": row.get("scheduler"),
+                            "login": row.get("login"),
+                        },
+                    )
+                )
+            recorded = self.store.record_system_statuses(entries)
+            if recorded:
+                _log(f"[{self.source_name}] Recorded {recorded} status transition(s)")
+        except Exception as exc:
+            _log(f"[{self.source_name}] Unable to record status history: {exc}")
 
     def snapshot(self) -> Tuple[Optional[Dict], Optional[str], Optional[float]]:
         """Get current state snapshot.
@@ -294,6 +327,34 @@ class ClusterMonitorWorker(threading.Thread):
             except Exception as exc:
                 _log(f"[cluster-monitor] Incremental cache save failed: {exc}")
 
+    def _record_cluster_transitions(self, clusters: list) -> None:
+        """Log reachability changes for PW clusters (``cluster:<slug>``).
+
+        This is the signal behind "connected for 3h 12m" on the topology
+        page: a cluster is recorded as connected whenever a sweep produced
+        telemetry for it, and DOWN when the sweep reached it but the
+        control plane reports it off.
+        """
+        try:
+            entries = []
+            for cluster in clusters or []:
+                meta = cluster.get("cluster_metadata") or {}
+                name = meta.get("name") or str(meta.get("uri") or "").rsplit("/", 1)[-1]
+                if not name:
+                    continue
+                entries.append(
+                    (
+                        f"cluster:{slugify(name)}",
+                        meta.get("status") or "UNKNOWN",
+                        {"name": name, "uri": meta.get("uri")},
+                    )
+                )
+            recorded = self.store.record_system_statuses(entries)
+            if recorded:
+                _log(f"[cluster-monitor] Recorded {recorded} connection transition(s)")
+        except Exception as exc:
+            _log(f"[cluster-monitor] Unable to record connection history: {exc}")
+
     def _check_auth_or_expire(self) -> bool:
         """Check authentication; set _auth_expired if token is gone.
 
@@ -366,6 +427,7 @@ class ClusterMonitorWorker(threading.Thread):
             self._consecutive_failures = 0
             self.store.save_cache("cluster_usage", clusters)
             self.store.save_snapshot("pw_cluster", data)
+            self._record_cluster_transitions(clusters)
             self._progress_update(
                 phase="ready",
                 first_sweep_complete=True,

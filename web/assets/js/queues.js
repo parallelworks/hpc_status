@@ -23,6 +23,43 @@ const getElement = (id) => document.getElementById(id);
 const getClusterIdentifier = (cluster) =>
   (cluster?.cluster_metadata?.uri || cluster?.cluster_metadata?.name || "").toString();
 
+// --- Deep linking -----------------------------------------------------
+// Other pages (notably the topology graph) link straight to a system with
+// ?cluster=<slug>. Slugs are the dashboard-wide "lowercase alphanumerics
+// only" form of the cluster name.
+const slugify = (value) => String(value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+
+const getClusterSlug = (cluster) => {
+  const meta = cluster?.cluster_metadata || {};
+  const name = meta.name || String(meta.uri || "").split("/").pop() || "";
+  return slugify(name);
+};
+
+const getRequestedClusterSlug = () =>
+  slugify(new URLSearchParams(window.location.search).get("cluster") || "");
+
+/** Index of the cluster matching a slug: exact first, then containment. */
+const findClusterIndexBySlug = (slug) => {
+  if (!slug) return -1;
+  const slugs = state.clusters.map(getClusterSlug);
+  const exact = slugs.indexOf(slug);
+  if (exact >= 0) return exact;
+  if (slug.length < 4) return -1;
+  return slugs.findIndex((candidate) => candidate.length >= 4 && (candidate.includes(slug) || slug.includes(candidate)));
+};
+
+const syncClusterInLocation = () => {
+  const cluster = state.clusters[state.selectedIndex];
+  const slug = getClusterSlug(cluster);
+  const url = new URL(window.location.href);
+  if (slug) {
+    url.searchParams.set("cluster", slug);
+  } else {
+    url.searchParams.delete("cluster");
+  }
+  window.history.replaceState({}, "", url);
+};
+
 const toNumber = (value) => {
   if (value === null || value === undefined) return 0;
   const numeric = Number(String(value).replace(/,/g, ""));
@@ -346,6 +383,7 @@ const bindEvents = () => {
       });
       renderClusterDetail();
       renderAvailabilityRanking();
+      syncClusterInLocation();
     });
   }
   if (elements.availabilityRanking) {
@@ -358,6 +396,7 @@ const bindEvents = () => {
       renderClusterOptions();
       renderClusterDetail();
       renderAvailabilityRanking();
+      syncClusterInLocation();
       // Scroll to the cluster picker (not the cluster title below it) so
       // the quick-select buttons stay visible at the top of the viewport
       // — the user can jump to a different cluster without scrolling back.
@@ -1213,11 +1252,16 @@ const loadData = async ({ silent = true } = {}) => {
       state.clusters = [];
     }
     state.lastUpdated = Date.now();
+    const requestedSlug = getRequestedClusterSlug();
     if (previousIdentifier) {
       const idx = state.clusters.findIndex(
         (cluster) => getClusterIdentifier(cluster) === previousIdentifier
       );
       state.selectedIndex = idx >= 0 ? idx : 0;
+    } else if (requestedSlug && findClusterIndexBySlug(requestedSlug) >= 0) {
+      // Deep link from the topology graph (or a shared URL) wins over the
+      // "most available cluster" default.
+      state.selectedIndex = findClusterIndexBySlug(requestedSlug);
     } else {
       // Initial load: default to the most-available cluster (top of the
       // ranking) so the user lands on something useful instead of the
@@ -1231,6 +1275,14 @@ const loadData = async ({ silent = true } = {}) => {
     if (envelopeStatus === "partial") {
       setStatus(formatProgressStatus(payload.progress, false), "info");
       scheduleRetry();
+    } else if (requestedSlug && findClusterIndexBySlug(requestedSlug) < 0 && state.clusters.length) {
+      // Deep-linked from the topology page to a system this monitor has no
+      // session on — say so instead of silently showing another cluster.
+      setStatus(
+        `No live queue telemetry for "${requestedSlug}" — the monitor has no session to it. ` +
+          `Showing ${state.clusters[state.selectedIndex]?.cluster_metadata?.name || "another cluster"} instead.`,
+        "info"
+      );
     } else {
       setStatus(silent ? "" : "Queue data updated just now.");
       if (state.clusters.length) {
