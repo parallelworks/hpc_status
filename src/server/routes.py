@@ -114,6 +114,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return self._handle_events(parsed)
         if parsed.path == "/api/placement":
             return self._handle_placement(parsed)
+        if parsed.path == "/api/history":
+            return self._handle_history(parsed)
 
         # Fall back to static file serving
         return super().do_GET()
@@ -478,6 +480,39 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 "generated_at": datetime.utcnow().isoformat() + "Z",
             }
         )
+
+    def _handle_history(self, parsed):
+        """Replayable frames of fleet status and utilization.
+
+        Query params: window (hours), step (minutes).
+        """
+        from urllib.parse import parse_qs
+
+        from ..data.history import build_history
+
+        params = parse_qs(parsed.query or "")
+
+        def number(key: str, default: int, low: int, high: int) -> int:
+            try:
+                return max(low, min(high, int(params.get(key, [default])[0])))
+            except (TypeError, ValueError):
+                return default
+
+        if not self.data_store:
+            self._send_json({"frames": [], "systems": []})
+            return
+
+        try:
+            payload = build_history(
+                self.data_store,
+                window_hours=number("window", 24, 1, 24 * 7),
+                step_minutes=number("step", 15, 1, 240),
+            )
+        except Exception as exc:
+            print(f"[api] Unable to build history: {exc}", flush=True)
+            self._send_json({"frames": [], "systems": [], "error": str(exc)})
+            return
+        self._send_json(payload)
 
     def _handle_placement(self, parsed):
         """Rank (cluster, queue) pairs for a job shape.

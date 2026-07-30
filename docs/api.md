@@ -352,6 +352,48 @@ the 60 most recent transitions.
 (PW CLI start-up + auth + SSH), measured once per collection sweep. It
 predicts how slow collection will be; it is **not** a network ping.
 
+### History
+
+#### GET /api/history
+
+Replayable frames of fleet status and utilization, for the topology
+timeline. Two recorded series are combined: status transitions, carried
+forward across the gaps between them, and queue depth, bucketed onto the
+frame times.
+
+**Parameters:** `window` (hours, default 24), `step` (minutes, default 15).
+The step is widened automatically rather than returning thousands of
+frames.
+
+```json
+{
+  "window_hours": 24,
+  "step_minutes": 15,
+  "from": "2026-07-29T12:00:00Z",
+  "to": "2026-07-30T12:00:00Z",
+  "systems": ["carpenter", "narwhal"],
+  "frames": [
+    {
+      "at": "2026-07-30T11:45:00Z",
+      "systems": {
+        "narwhal": {
+          "status": "UP",
+          "cores_running": 176000,
+          "cores_pending": 38000,
+          "cores_total": 290000,
+          "utilization_percent": 60.7
+        }
+      }
+    }
+  ]
+}
+```
+
+A system missing from a frame had no recorded reading at that instant —
+the timeline shows it as unknown rather than implying the current status
+held back then. A gap between collection sweeps holds the previous
+reading, because a sweep that did not run is not a cluster at zero.
+
 ### Placement
 
 #### GET /api/placement

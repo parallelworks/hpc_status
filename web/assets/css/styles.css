@@ -3022,6 +3022,79 @@ th[data-sortable][data-sort-dir="desc"]::after {
   color: var(--muted);
 }
 
+/* --- replay bar */
+.topo-playback {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+}
+
+.topo-play {
+  width: 2.4rem;
+  height: 2.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--panel-alt);
+  color: var(--text);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+
+.topo-play:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.topo-play.is-playing {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--brand-on, #fff);
+}
+
+.topo-playback-track {
+  flex: 1;
+  min-width: 0;
+}
+
+.topo-playback-track input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.topo-playback-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+#topo-playback-time {
+  font-weight: 600;
+}
+
+.topo-field--tight select {
+  min-width: 7rem;
+}
+
+/* A node whose status or load changed on the last refresh, so a live
+   update is something you can see rather than something you must diff. */
+@keyframes topo-changed {
+  0% { stroke-width: 2; opacity: 1; }
+  60% { stroke-width: 10; opacity: 0; }
+  100% { stroke-width: 2; opacity: 0; }
+}
+
+.topo-node.is-changed .topo-node-halo {
+  animation: topo-changed 1.8s var(--ease-out);
+  stroke: var(--accent);
+}
+
 /* ----------------------------------------------------------------
    31b. Topology graph
    Encoding: node fill = status, node size = core count, ring = busy
@@ -3781,6 +3854,16 @@ th[data-sortable][data-sort-dir="desc"]::after {
   align-items: center;
   gap: var(--space-3);
   flex-wrap: wrap;
+}
+
+.topo-historical {
+  margin: var(--space-2) 0 0;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-text, var(--accent));
+  font-size: var(--text-xs);
+  font-weight: 600;
 }
 
 .topo-inspector-subhead {

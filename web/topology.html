@@ -150,6 +150,27 @@
         </div>
       </section>
 
+      <section class="topo-playback" id="topo-playback" hidden aria-label="Replay">
+        <button type="button" class="topo-play" id="topo-play" aria-label="Play the recorded history">▶</button>
+        <div class="topo-playback-track">
+          <input type="range" id="topo-scrub" min="0" max="0" value="0" step="1"
+            aria-label="Point in time" />
+          <div class="topo-playback-meta">
+            <span id="topo-playback-time">Live</span>
+            <span id="topo-playback-range" class="muted-text"></span>
+          </div>
+        </div>
+        <label class="topo-field topo-field--tight">
+          <span>Window</span>
+          <select id="topo-window">
+            <option value="6">Last 6h</option>
+            <option value="24" selected>Last 24h</option>
+            <option value="72">Last 3d</option>
+          </select>
+        </label>
+        <button type="button" class="ghost-btn ghost-btn--sm" id="topo-live" hidden>Return to live</button>
+      </section>
+
       <section class="topo-shell">
         <div class="topo-graph">
           <div class="topo-canvas" id="topo-canvas">
