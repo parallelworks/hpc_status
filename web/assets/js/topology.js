@@ -73,6 +73,12 @@ const state = {
   hoverId: null,
   compare: new Set(), // node ids pinned into the comparison panel
   compareMode: false,
+  history: null, // replay frames from /api/history
+  historyIndex: null, // null = live; otherwise the frame being shown
+  historyWindow: 24,
+  playing: false,
+  playTimer: null,
+  changed: new Set(), // nodes that moved on the last live refresh
   mapDetail: "auto", // auto | sites | systems — see mapShowsSystems()
   mapSystemsShown: false,
   geoLayoutZoom: 1, // zoom the current geo layout was measured at
@@ -236,7 +242,10 @@ const buildView = () => {
   const graph = state.graph;
   if (!graph) return { nodes: [], edges: [], groups: [] };
 
-  const systems = systemNodes().filter(matchesFilters);
+  const frame = currentFrame();
+  const systems = systemNodes()
+    .map((node) => (frame ? applyFrameToNode(node, frame) : node))
+    .filter(matchesFilters);
   const siteById = new Map((graph.sites || []).map((site) => [site.id, site]));
   const groups = new Map();
 
@@ -902,6 +911,7 @@ const updateNodeElement = (node, element) => {
       state.hoverId === node.id ? "is-hover" : "",
       state.compare.has(node.id) ? "is-compared" : "",
       node.cloud ? "is-cloud" : "",
+      state.changed.has(node.id) ? "is-changed" : "",
     ]
       .filter(Boolean)
       .join(" ")
@@ -1898,6 +1908,11 @@ const renderInspector = (node) => {
       <p class="muted-text">${escapeHtml(node.site_label || node.site || "")}${
         node.note ? ` · ${escapeHtml(node.note)}` : ""
       }</p>
+      ${node.historical
+        ? `<p class="topo-historical">Showing ${escapeHtml(
+            new Date(currentFrame().at).toLocaleString()
+          )} — not live</p>`
+        : ""}
     </header>
 
     <div class="topo-actions">
@@ -2215,6 +2230,11 @@ const loadData = async ({ silent = false } = {}) => {
     const response = await fetch(`${DATA_URL}?t=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const graph = await response.json();
+    const previousSystems = new Map(
+      (state.graph?.nodes || [])
+        .filter((node) => node.kind === "system")
+        .map((node) => [node.id, node])
+    );
     state.graph = graph;
     state.lastUpdated = Date.now();
 
@@ -2230,6 +2250,7 @@ const loadData = async ({ silent = false } = {}) => {
       setStatus("");
     }
 
+    markChangedSystems(previousSystems);
     renderSummary();
     const firstRender = !state.positions.size;
     renderGraph({ animate: !firstRender });
@@ -2247,6 +2268,161 @@ const loadData = async ({ silent = false } = {}) => {
   } finally {
     state.loading = false;
   }
+};
+
+/**
+ * Mark systems whose status or load moved on this refresh, so a live update
+ * is visible rather than something you have to spot by diffing numbers.
+ */
+const markChangedSystems = (previous) => {
+  state.changed.clear();
+  if (!previous?.size) return;
+  systemNodes().forEach((node) => {
+    const before = previous.get(node.id);
+    if (!before) return;
+    const wasBusy = Number(before.capacity?.utilization_percent);
+    const nowBusy = Number(node.capacity?.utilization_percent);
+    const loadMoved =
+      Number.isFinite(wasBusy) && Number.isFinite(nowBusy)
+        ? Math.abs(nowBusy - wasBusy) >= 5
+        : false;
+    if (before.status !== node.status || before.connected !== node.connected || loadMoved) {
+      state.changed.add(node.id);
+    }
+  });
+  if (state.changed.size) {
+    // The class drives a one-shot animation; drop it again so the next
+    // change can re-trigger it.
+    setTimeout(() => {
+      state.changed.forEach((id) => state.elements.get(id)?.classList.remove("is-changed"));
+      state.changed.clear();
+    }, 2000);
+  }
+};
+
+// ---------------------------------------------------------------------------
+// Replay
+// ---------------------------------------------------------------------------
+
+const HISTORY_URL = buildApiUrl("api/history").toString();
+const PLAY_INTERVAL_MS = 550;
+
+const currentFrame = () =>
+  state.historyIndex === null ? null : state.history?.frames?.[state.historyIndex] || null;
+
+/** Fetch the recorded history for the selected window. */
+const loadHistory = async () => {
+  try {
+    const url = `${HISTORY_URL}?window=${state.historyWindow}&t=${Date.now()}`;
+    const response = await fetch(url, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    state.history = payload?.frames?.length >= 2 ? payload : null;
+  } catch (err) {
+    console.warn("History unavailable; replay disabled", err);
+    state.history = null;
+  }
+  renderPlayback();
+};
+
+/** Show a recorded instant, or null for live. */
+const showFrame = (index) => {
+  const frames = state.history?.frames || [];
+  if (index === null || !frames.length) {
+    state.historyIndex = null;
+  } else {
+    state.historyIndex = Math.max(0, Math.min(frames.length - 1, index));
+  }
+  renderPlayback();
+  renderGraph({ animate: false });
+  if (state.selectedId) renderPanel();
+};
+
+const stopPlayback = () => {
+  clearInterval(state.playTimer);
+  state.playTimer = null;
+  state.playing = false;
+};
+
+const togglePlayback = () => {
+  if (state.playing) {
+    stopPlayback();
+    renderPlayback();
+    return;
+  }
+  const frames = state.history?.frames || [];
+  if (frames.length < 2) return;
+  // Starting from live (or from the end) replays the whole window.
+  if (state.historyIndex === null || state.historyIndex >= frames.length - 1) {
+    state.historyIndex = 0;
+  }
+  state.playing = true;
+  state.playTimer = setInterval(() => {
+    const total = state.history?.frames?.length || 0;
+    if (state.historyIndex === null || state.historyIndex + 1 >= total) {
+      stopPlayback();
+      showFrame(null); // land on live at the end of the run
+      return;
+    }
+    showFrame(state.historyIndex + 1);
+  }, PLAY_INTERVAL_MS);
+  renderPlayback();
+};
+
+const renderPlayback = () => {
+  const bar = dom.playback;
+  if (!bar) return;
+  const frames = state.history?.frames || [];
+  bar.hidden = frames.length < 2;
+  if (bar.hidden) return;
+
+  dom.scrub.max = String(frames.length - 1);
+  dom.scrub.value = String(
+    state.historyIndex === null ? frames.length - 1 : state.historyIndex
+  );
+  dom.play.classList.toggle("is-playing", state.playing);
+  dom.play.textContent = state.playing ? "❚❚" : "▶";
+  dom.play.setAttribute(
+    "aria-label",
+    state.playing ? "Pause the replay" : "Play the recorded history"
+  );
+  dom.liveBtn.hidden = state.historyIndex === null;
+
+  const frame = currentFrame();
+  dom.playbackTime.textContent = frame
+    ? `${new Date(frame.at).toLocaleString()} · ${formatRelativeTime(frame.at)}`
+    : "Live";
+  dom.playbackRange.textContent = frames.length
+    ? `${frames.length} frames · every ${state.history.step_minutes} min`
+    : "";
+};
+
+/** Overlay a recorded instant onto a system node for display. */
+const applyFrameToNode = (node, frame) => {
+  const recorded = frame.systems?.[node.slug];
+  if (!recorded) {
+    // No reading at this instant: show it as unknown rather than implying
+    // the current status held back then.
+    return { ...node, status: "UNKNOWN", capacity: null, queues: null, historical: true };
+  }
+  const capacity =
+    recorded.cores_total !== undefined
+      ? {
+          cores_total: recorded.cores_total,
+          cores_running: recorded.cores_running,
+          cores_free: Math.max((recorded.cores_total || 0) - (recorded.cores_running || 0), 0),
+          utilization_percent: recorded.utilization_percent ?? null,
+        }
+      : null;
+  return {
+    ...node,
+    status: recorded.status || "UNKNOWN",
+    capacity: capacity || node.capacity,
+    queues: recorded.cores_pending !== undefined
+      ? { ...(node.queues || {}), pending_cores: recorded.cores_pending, count: node.queues?.count || 0 }
+      : node.queues,
+    historical: true,
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -2317,6 +2493,13 @@ const cacheDom = () => {
   dom.footer = document.getElementById("topo-footer");
   dom.compareToggle = document.getElementById("topo-compare");
   dom.detailSelect = document.getElementById("topo-detail");
+  dom.playback = document.getElementById("topo-playback");
+  dom.play = document.getElementById("topo-play");
+  dom.scrub = document.getElementById("topo-scrub");
+  dom.playbackTime = document.getElementById("topo-playback-time");
+  dom.playbackRange = document.getElementById("topo-playback-range");
+  dom.windowSelect = document.getElementById("topo-window");
+  dom.liveBtn = document.getElementById("topo-live");
   dom.detailField = document.getElementById("topo-detail-field");
 };
 
@@ -2370,6 +2553,23 @@ const bindEvents = () => {
   dom.layoutButtons.addEventListener("click", (event) => {
     const btn = event.target.closest("button[data-layout]");
     if (btn) setLayout(btn.dataset.layout);
+  });
+
+  dom.play?.addEventListener("click", togglePlayback);
+  dom.liveBtn?.addEventListener("click", () => {
+    stopPlayback();
+    showFrame(null);
+  });
+  dom.scrub?.addEventListener("input", () => {
+    stopPlayback();
+    showFrame(Number(dom.scrub.value));
+  });
+  dom.windowSelect?.addEventListener("change", async () => {
+    stopPlayback();
+    state.historyWindow = Number(dom.windowSelect.value) || 24;
+    state.historyIndex = null;
+    await loadHistory();
+    renderGraph({ animate: false });
   });
 
   dom.detailSelect?.addEventListener("change", () => {
@@ -2696,6 +2896,7 @@ const bootstrap = async () => {
   if (pendingSelection) selectNode(pendingSelection);
   else if (state.compare.size) renderPanel();
 
+  loadHistory();
   state.pollHandle = setInterval(() => loadData({ silent: true }), POLL_MS);
 };
 

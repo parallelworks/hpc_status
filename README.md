@@ -31,7 +31,10 @@ force, lane, and geographic layouts — the geographic one is a real map,
 with each site pinned at its actual coordinates and framed insets for
 anything off the mainland. Cloud clusters are placed too — an AWS GovCloud
 machine pins to its region. Zoom in (or set **Map detail**) and each site
-opens up into the individual systems behind it. Node color is status, size is core
+opens up into the individual systems behind it. A timeline under the
+controls replays the last 6 hours to 3 days from the monitor's own
+records — scrub or press play to watch status and load move — and systems
+that change on a live refresh pulse so you can see it happen. Node color is status, size is core
 count, and the outer ring is how busy it is. Nodes with an open insight
 carry a warning badge, links animate at the speed of their measured round
 trip, and each system shows its status timeline for the last 24 hours.
