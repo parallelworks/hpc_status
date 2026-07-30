@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from urllib.parse import urlparse, unquote
 
 if TYPE_CHECKING:
+    from .netinfo import HostResolver
     from .workers import ClusterMonitorWorker, DashboardState
     from ..data.persistence import DataStore
 
@@ -39,6 +40,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     cluster_pages_enabled: bool = True
     cluster_monitor_interval: int = 120
     config: Optional[Dict] = None
+    host_resolver: Optional["HostResolver"] = None
+    uptime_window_hours: int = 24
 
     def __init__(self, *args, directory=None, **kwargs):
         super().__init__(*args, directory=directory or str(self.web_dir), **kwargs)
@@ -79,6 +82,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return self._handle_insights()
         if parsed.path == "/api/storage":
             return self._handle_storage()
+        if parsed.path == "/api/topology":
+            return self._handle_topology()
 
         # Fall back to static file serving
         return super().do_GET()
@@ -150,11 +155,12 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     def _handle_config(self):
         """Return current configuration for frontend."""
         config_data = self.config or {}
+        deployment_cfg = config_data.get("deployment", {}) or {}
         self._send_json(
             {
                 "deployment": {
-                    "name": config_data.get("deployment_name", "HPC Status Monitor"),
-                    "platform": config_data.get("platform", "generic"),
+                    "name": deployment_cfg.get("name", "HPC Status Monitor"),
+                    "platform": deployment_cfg.get("platform", "generic"),
                 },
                 "ui": {
                     "home_page": config_data.get("ui", {}).get("home_page", "overview"),
@@ -164,6 +170,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 "features": {
                     "cluster_pages": self.cluster_pages_enabled,
                 },
+                "topology": config_data.get("topology", {}),
             }
         )
 
@@ -198,6 +205,12 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                     "title": title,
                     "eyebrow": eyebrow,
                     "platform": platform,
+                    "topologyLayout": (
+                        config_data.get("topology", {}) or {}
+                    ).get("default_layout", "hierarchy"),
+                    "uptimeWindowHours": (
+                        config_data.get("topology", {}) or {}
+                    ).get("uptime_window_hours", 24),
                 }
             )
             + ");"
@@ -321,6 +334,53 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
         self._send_json(payload)
 
+    def _handle_topology(self):
+        """Return the fleet topology graph (sites, systems, links).
+
+        Merges the fleet status payload with PW cluster telemetry and the
+        recorded connection history. Always answers 200 with whatever is
+        available — the graph is still useful with only one source, and the
+        page renders a warming-up state from ``meta.ready``.
+        """
+        from ..data.topology import build_topology
+        from ..insights.engine import generate_fleet_insights
+
+        payload = None
+        if self.server_state:
+            payload, _, _ = self.server_state.snapshot()
+
+        clusters = self._clusters_from_payload(self._load_cluster_usage_payload())
+
+        connection_stats = {}
+        if self.data_store:
+            try:
+                connection_stats = self.data_store.get_connection_stats(
+                    window_hours=self.uptime_window_hours
+                )
+            except Exception as exc:
+                print(f"[api] Unable to read connection history: {exc}", flush=True)
+
+        config_data = self.config or {}
+        topology_cfg = config_data.get("topology") or {}
+        deployment_cfg = config_data.get("deployment") or {}
+        graph = build_topology(
+            payload,
+            clusters,
+            platform=(deployment_cfg.get("platform") or "generic"),
+            monitor_label=deployment_cfg.get("name") or "Status Monitor",
+            connection_stats=connection_stats,
+            address_lookup=(
+                self.host_resolver.lookup if self.host_resolver else None
+            ),
+            site_overrides=topology_cfg.get("sites"),
+            insights=generate_fleet_insights(payload, clusters),
+        )
+
+        progress = self.cluster_worker.get_progress() if self.cluster_worker else None
+        graph["meta"]["ready"] = bool(graph.get("nodes"))
+        graph["meta"]["collection_progress"] = progress
+        self._send_json(graph)
+
     def _handle_cluster_usage_detail(self, slug_part: str):
         target_slug = self._normalize_cluster_slug(unquote(slug_part or ""))
         if not target_slug:
@@ -417,180 +477,16 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
 
     def _handle_insights(self):
         """Generate and return insights based on current data."""
-        from ..insights.recommendations import RecommendationEngine
+        from ..insights.engine import generate_fleet_insights
 
-        insights_list = []
-
-        # Get insights from HPCMP fleet status data
+        payload = None
         if self.server_state:
             payload, _, _ = self.server_state.snapshot()
-            if payload and payload.get("systems"):
-                systems_data = payload.get("systems", [])
-                engine = RecommendationEngine(systems_data)
-                for insight in engine.generate_insights():
-                    insights_list.append(
-                        {
-                            "type": insight.type,
-                            "message": insight.message,
-                            "priority": insight.priority,
-                            "metric": insight.related_metric,
-                            "cluster": insight.cluster,
-                            "queue": insight.queue,
-                            "action_description": insight.action_description,
-                        }
-                    )
-
-        # Get insights from cluster usage data
-        cluster_payload = self._load_cluster_usage_payload()
-        if cluster_payload:
-            clusters = (
-                cluster_payload
-                if isinstance(cluster_payload, list)
-                else cluster_payload.get("clusters", [])
-            )
-            for cluster in clusters:
-                metadata = cluster.get("cluster_metadata", {})
-                name = metadata.get("name", "Unknown")
-                status = metadata.get("status", "").upper()
-
-                # Check cluster status. Allowlist captures the names the
-                # different collectors emit for "operational" — PW returns
-                # ACTIVE, others use ON/UP/RUNNING/ONLINE.
-                if status and status not in (
-                    "ON",
-                    "UP",
-                    "RUNNING",
-                    "ONLINE",
-                    "ACTIVE",
-                ):
-                    insights_list.append(
-                        {
-                            "type": "warning",
-                            "message": f"{name}: Cluster status is {status}",
-                            "priority": 4,
-                            "metric": "status",
-                            "cluster": name,
-                            "queue": None,
-                            "action_description": "Use an alternative system",
-                        }
-                    )
-
-                # Check allocation usage
-                usage_data = cluster.get("usage_data", {})
-                for system in usage_data.get("systems", []):
-                    allocated = self._safe_number(system.get("hours_allocated", 0))
-                    remaining = self._safe_number(system.get("hours_remaining", 0))
-                    if allocated > 0:
-                        percent = (remaining / allocated) * 100
-                        if percent < 10:
-                            insights_list.append(
-                                {
-                                    "type": "warning",
-                                    "message": f"{name}: Allocation critically low ({percent:.0f}% remaining)",
-                                    "priority": 5,
-                                    "metric": "allocation",
-                                    "cluster": name,
-                                }
-                            )
-                        elif percent < 25:
-                            insights_list.append(
-                                {
-                                    "type": "warning",
-                                    "message": f"{name}: Allocation running low ({percent:.0f}% remaining)",
-                                    "priority": 3,
-                                    "metric": "allocation",
-                                    "cluster": name,
-                                }
-                            )
-
-                # Check queue depth — relative to cluster capacity when we
-                # know it. "100 pending" means very different things on a
-                # 60k-core machine vs a 50-core one. We use pending cores
-                # over running cores; absolute counts are kept as a fallback
-                # for clusters with no node inventory reported.
-                queue_data = cluster.get("queue_data", {})
-                cluster_total_cores = sum(
-                    self._safe_number(node.get("cores_available", 0))
-                    for node in queue_data.get("nodes", [])
-                )
-                for queue in queue_data.get("queues", []):
-                    queue_name = queue.get("queue_name", "Unknown")
-                    pending_jobs = self._safe_number(queue.get("jobs_pending", 0))
-                    pending_cores = self._safe_number(queue.get("cores_pending", 0))
-                    running_cores = self._safe_number(queue.get("cores_running", 0))
-
-                    severity = None
-                    if cluster_total_cores > 0 and pending_cores > 0:
-                        # Heavy backlog: pending demand is at least 25% of the
-                        # whole cluster's capacity — likely long waits.
-                        share = pending_cores / cluster_total_cores
-                        if share >= 0.25:
-                            severity = "warning"
-                            detail = (
-                                f"queue is holding {int(pending_cores):,} cores "
-                                f"({share*100:.0f}% of cluster capacity) of pending demand"
-                            )
-                        elif running_cores > 0 and pending_cores / running_cores >= 2:
-                            severity = "info"
-                            detail = (
-                                f"pending demand is {pending_cores/running_cores:.1f}× the running load"
-                            )
-                    elif pending_jobs > 100:
-                        severity = "warning"
-                        detail = f"{int(pending_jobs)} pending jobs"
-                    elif pending_jobs > 50:
-                        severity = "info"
-                        detail = f"{int(pending_jobs)} pending jobs"
-
-                    if severity:
-                        insights_list.append(
-                            {
-                                "type": severity,
-                                "message": f"{name}/{queue_name}: {detail}",
-                                "priority": 4 if severity == "warning" else 2,
-                                "metric": "queue_depth",
-                                "cluster": name,
-                                "queue": queue_name,
-                                "action_description": (
-                                    "Consider an alternative queue or cluster for new jobs"
-                                    if severity == "warning"
-                                    else None
-                                ),
-                            }
-                        )
-
-                # Check GPU utilization
-                gpu_data = cluster.get("gpu_data", {})
-                summary = gpu_data.get("summary", {})
-                if summary.get("gpu_count", 0) > 0:
-                    util = summary.get("avg_utilization_percent", 0)
-                    if util > 90:
-                        insights_list.append(
-                            {
-                                "type": "info",
-                                "message": f"{name}: High GPU utilization ({util}%)",
-                                "priority": 2,
-                                "metric": "gpu_utilization",
-                                "cluster": name,
-                            }
-                        )
-                    elif util < 10:
-                        insights_list.append(
-                            {
-                                "type": "info",
-                                "message": f"{name}: GPUs are mostly idle ({util}% utilization)",
-                                "priority": 1,
-                                "metric": "gpu_utilization",
-                                "cluster": name,
-                            }
-                        )
-
-        # Sort by priority
-        insights_list.sort(key=lambda x: x.get("priority", 0), reverse=True)
+        clusters = self._clusters_from_payload(self._load_cluster_usage_payload())
 
         self._send_json(
             {
-                "insights": insights_list,
+                "insights": generate_fleet_insights(payload, clusters),
                 "generated_at": datetime.utcnow().isoformat() + "Z",
             }
         )

@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 from .config import Config
+from .netinfo import HostResolver
 from .routes import DashboardRequestHandler
 from .workers import DashboardState, RefreshWorker, ClusterMonitorWorker, _log
 from ..data.persistence import DataStore, get_data_dir
@@ -238,6 +239,21 @@ def run_server(args) -> None:
     else:
         _log("[dashboard] Cluster monitor disabled")
 
+    # Background DNS resolution for the topology view's address column.
+    host_resolver = HostResolver(
+        enabled=config.topology.resolve_addresses,
+        ttl_seconds=config.topology.address_ttl_seconds,
+    )
+    # Warm the cache with what we already know so the first topology request
+    # can answer with addresses instead of nulls.
+    payload, _, _ = state.snapshot()
+    if payload:
+        host_resolver.prime(
+            row.get("login")
+            for row in (payload.get("systems") or [])
+            if row.get("login") and "://" not in str(row.get("login"))
+        )
+
     # Configure the request handler
     DashboardRequestHandler.server_state = state
     DashboardRequestHandler.cluster_worker = cluster_worker
@@ -248,6 +264,8 @@ def run_server(args) -> None:
     DashboardRequestHandler.cluster_pages_enabled = cluster_pages_enabled
     DashboardRequestHandler.cluster_monitor_interval = cluster_monitor_interval if cluster_monitor_enabled else 0
     DashboardRequestHandler.config = config.to_dict()
+    DashboardRequestHandler.host_resolver = host_resolver
+    DashboardRequestHandler.uptime_window_hours = config.topology.uptime_window_hours
 
     # Create and run the server
     handler = functools.partial(DashboardRequestHandler, directory=str(web_dir))
@@ -268,6 +286,7 @@ def run_server(args) -> None:
         if cluster_worker:
             cluster_worker.stop()
             cluster_worker.join(timeout=5)
+        host_resolver.shutdown()
         server.shutdown()
         server.server_close()
 

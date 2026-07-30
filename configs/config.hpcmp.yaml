@@ -27,6 +27,7 @@ ui:
   default_theme: "dark"
   tabs:
     fleet: true
+    topology: true
     queues: true
     quota: true
     storage: true
@@ -42,3 +43,16 @@ rate_limiting:
   circuit_breaker:
     failure_threshold: 3
     pause_duration: 300
+
+# Topology view (Topology tab)
+topology:
+  # Resolve login-node hostnames to IP addresses in the background.
+  resolve_addresses: true
+  address_ttl_seconds: 3600
+  # Window for the per-system uptime percentage shown in the inspector.
+  uptime_window_hours: 24
+  # hierarchy | radial | force | lanes | geo
+  default_layout: hierarchy
+  # Extend or override the built-in site catalog (name/organization/
+  # location/lat/lon), keyed by the site id the collector reports.
+  sites: {}

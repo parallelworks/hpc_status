@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Topology | HPC Status Dashboard</title>
+  <meta name="description" content="Interactive map of the connected HPC fleet: sites, systems, login nodes, schedulers, and live connection state.">
+  <script>
+    (function () {
+      var path = window.location.pathname || "/";
+      var base = document.createElement("base");
+      base.href = window.location.origin + path;
+      document.documentElement.setAttribute("data-base-path", path);
+      document.head.appendChild(base);
+    })();
+  </script>
+  <script src="app-config.js"></script>
+  <script>
+    (function () {
+      try {
+        const saved = window.localStorage.getItem("hpc-status-theme");
+        const fallback = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+        document.documentElement.dataset.theme = saved || fallback || "dark";
+      } catch (err) {
+        document.documentElement.dataset.theme = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+      }
+      document.documentElement.dataset.platform = (window.APP_CONFIG && window.APP_CONFIG.platform) || "generic";
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow" id="header-eyebrow">HPC STATUS</p>
+        <h1>Fleet topology</h1>
+        <p class="lede">
+          Every site, system, and live connection in one map. Click a system to inspect it,
+          click again to open its queue health.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <a class="ghost-btn" href="index.html">← Fleet dashboard</a>
+        <button id="refresh-btn" class="ghost-btn" title="Refresh topology data">
+          <span class="btn-icon" aria-hidden="true">↻</span>
+          <span>Refresh</span>
+        </button>
+        <button id="theme-toggle" class="theme-btn" aria-label="Toggle color theme">
+          <span class="theme-icon" aria-hidden="true">🌙</span>
+          <span class="theme-label">Dark</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="subnav" data-cluster-nav aria-label="Main navigation">
+      <a href="index.html">Fleet status</a>
+      <a href="topology.html" aria-current="page">Topology</a>
+      <a href="queues.html">Queue health</a>
+      <a href="quota.html">Quota usage</a>
+      <a href="storage.html">Storage</a>
+      <a href="insights.html">Insights</a>
+    </nav>
+
+    <p id="topo-status" class="status-banner" role="status" hidden></p>
+
+    <main id="main-content">
+      <section class="cards" aria-label="Topology summary">
+        <article class="card">
+          <p id="topo-site-label">Sites</p>
+          <h2 id="topo-sites" aria-live="polite">--</h2>
+          <span class="card-tooltip" title="Distinct data centers hosting the systems in this fleet">ⓘ</span>
+        </article>
+        <article class="card">
+          <p>Systems</p>
+          <h2 id="topo-systems" aria-live="polite">--</h2>
+          <span class="card-tooltip" title="Every system in the fleet, whether or not the monitor holds a live session to it">ⓘ</span>
+        </article>
+        <article class="card">
+          <p>Live connections</p>
+          <h2 id="topo-connected" aria-live="polite">--</h2>
+          <span class="card-tooltip" title="Systems the monitor is actively logged into and collecting queue, node, and allocation telemetry from">ⓘ</span>
+        </article>
+        <article class="card">
+          <p>Cores online</p>
+          <h2 id="topo-cores" aria-live="polite">--</h2>
+          <span class="card-tooltip" title="Total CPU cores visible across connected systems, and how many are currently busy">ⓘ</span>
+        </article>
+      </section>
+
+      <section class="topo-toolbar" aria-label="Graph controls">
+        <div class="topo-toolbar-group" role="group" aria-label="Layout">
+          <span class="topo-toolbar-label">Layout</span>
+          <div class="segmented" id="topo-layout" role="tablist">
+            <button type="button" role="tab" data-layout="hierarchy" title="Tiered tree: monitor → site → system">Hierarchy</button>
+            <button type="button" role="tab" data-layout="radial" title="Hub and spoke: the monitor at the center, sites on a ring">Radial</button>
+            <button type="button" role="tab" data-layout="force" title="Physics simulation — drag nodes to rearrange">Force</button>
+            <button type="button" role="tab" data-layout="lanes" title="One column per group, systems packed inside">Lanes</button>
+            <button type="button" role="tab" data-layout="geo" title="Approximate geographic positions from site coordinates">Geographic</button>
+          </div>
+        </div>
+
+        <label class="topo-field">
+          <span>Group by</span>
+          <select id="topo-group">
+            <option value="site">Site</option>
+            <option value="scheduler">Scheduler</option>
+            <option value="status">Status</option>
+            <option value="connection">Connection</option>
+          </select>
+        </label>
+
+        <label class="topo-field">
+          <span>Status</span>
+          <select id="topo-status-filter">
+            <option value="">All</option>
+          </select>
+        </label>
+
+        <label class="topo-field topo-field--grow">
+          <span>Search</span>
+          <input type="search" id="topo-search" placeholder="System, login node, or IP" aria-label="Filter systems" />
+        </label>
+
+        <label class="topo-toggle">
+          <input type="checkbox" id="topo-connected-only" />
+          <span>Live connections only</span>
+        </label>
+
+        <div class="topo-toolbar-actions">
+          <button type="button" class="ghost-btn ghost-btn--sm" id="topo-compare" aria-pressed="false"
+            title="Click systems to stack them side by side (or shift-click any system at any time)">Compare</button>
+          <button type="button" class="ghost-btn ghost-btn--sm" id="topo-fit" title="Fit the graph to the viewport">Fit</button>
+          <button type="button" class="ghost-btn ghost-btn--sm" id="topo-export" title="Download the current view as an SVG file">Export SVG</button>
+        </div>
+      </section>
+
+      <section class="topo-shell">
+        <div class="topo-canvas" id="topo-canvas">
+          <svg id="topo-svg" role="img" aria-label="Fleet topology graph"></svg>
+          <div class="topo-tooltip" id="topo-tooltip" hidden></div>
+          <div class="topo-empty" id="topo-empty" hidden></div>
+          <div class="topo-zoom" role="group" aria-label="Zoom">
+            <button type="button" id="topo-zoom-in" aria-label="Zoom in">+</button>
+            <button type="button" id="topo-zoom-out" aria-label="Zoom out">−</button>
+            <button type="button" id="topo-zoom-reset" aria-label="Reset zoom">⤢</button>
+          </div>
+          <ul class="topo-legend" aria-label="Legend">
+            <li><span class="topo-swatch topo-swatch--up"></span>Up</li>
+            <li><span class="topo-swatch topo-swatch--degraded"></span>Degraded / maintenance</li>
+            <li><span class="topo-swatch topo-swatch--down"></span>Down</li>
+            <li><span class="topo-swatch topo-swatch--unknown"></span>Unknown</li>
+            <li><span class="topo-swatch topo-swatch--live"></span>Live telemetry</li>
+            <li><span class="topo-swatch topo-swatch--reported"></span>Status page only</li>
+            <li><span class="topo-swatch topo-swatch--alert">!</span>Open insight</li>
+          </ul>
+        </div>
+
+        <aside class="topo-inspector" id="topo-inspector" aria-label="Selected system details">
+          <div class="topo-inspector-empty" id="topo-inspector-empty">
+            <p class="topo-inspector-icon" aria-hidden="true">🛰️</p>
+            <h3>Nothing selected</h3>
+            <p class="muted-text">
+              Click any node to inspect it. Click a selected system again — or press Enter —
+              to jump to its queue health. Shift-click systems to stack them side by side.
+            </p>
+          </div>
+          <div class="topo-inspector-body" id="topo-inspector-body" hidden></div>
+        </aside>
+      </section>
+    </main>
+
+    <footer class="footer" role="contentinfo">
+      <small id="topo-footer">Topology assembled from fleet status and live cluster telemetry</small>
+      <small>HPC Status Monitor v2.1</small>
+    </footer>
+  </div>
+
+  <script type="module" src="assets/js/topology.js"></script>
+</body>
+
+</html>

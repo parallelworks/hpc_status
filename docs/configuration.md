@@ -141,6 +141,7 @@ ui:
   default_theme: "dark"       # dark or light
   tabs:
     overview: true            # Show fleet overview tab
+    topology: true            # Show topology graph tab
     queues: true              # Show queue health tab
     quota: true               # Show quota usage tab
     storage: true             # Show storage tab
@@ -148,6 +149,38 @@ ui:
     title: "HPC Status"       # Page title
     logo: ""                  # Optional logo URL
 ```
+
+### Topology Section
+
+Controls the topology graph (`/topology.html`, `GET /api/topology`).
+
+```yaml
+topology:
+  resolve_addresses: true     # Resolve login hostnames to IPs (background, cached)
+  address_ttl_seconds: 3600   # How long a resolved address is trusted
+  uptime_window_hours: 24     # Window for the per-system uptime percentage
+  default_layout: hierarchy   # hierarchy | radial | force | lanes | geo
+  sites: {}                   # Site metadata overrides (see below)
+```
+
+**Site overrides.** The builder ships with a catalog of known facilities
+(HPCMP DSRCs, NOAA RDHPCS sites). Any site id your collector reports can be
+named, described, and placed on the map:
+
+```yaml
+topology:
+  sites:
+    erdc:
+      name: "ERDC DSRC"
+      organization: "Engineer Research and Development Center"
+      location: "Vicksburg, MS"
+      lat: 32.30
+      lon: -90.87
+```
+
+Sites without coordinates still render — they land in a tray below the map
+in the geographic layout. Set `resolve_addresses: false` on networks where
+outbound DNS lookups for site hostnames are undesirable.
 
 ### Rate Limits Section
 

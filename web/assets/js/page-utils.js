@@ -313,6 +313,15 @@ const QUICK_TIPS = {
       "Check the <strong>Queue Health</strong> page before submitting large jobs"
     ],
   },
+  "topology.html": {
+    title: "Topology Tips",
+    tips: [
+      "Click a system to inspect it — click again (or press Enter) to open its <strong>queue health</strong>",
+      "Node size is the system's core count; the outer ring is how much of it is busy",
+      "A <strong>solid</strong> halo means the monitor holds a live session; a dashed halo means the data comes from the site's status page only",
+      "Switch <strong>Layout</strong> and <strong>Group by</strong> to re-read the same fleet by site, scheduler, or status",
+    ],
+  },
   "queues.html": {
     title: "Queue Health Tips",
     tips: [

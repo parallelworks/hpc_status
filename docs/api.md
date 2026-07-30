@@ -188,6 +188,136 @@ Returns data for a specific cluster.
 }
 ```
 
+### Topology
+
+#### GET /api/topology
+
+Returns the fleet as a graph: a monitor node, one node per site (DSRC or
+data center), and one node per system. System nodes merge what the site
+*reports* (status, scheduler, login node) with what the monitor *observes*
+by connecting (cores, queues, GPUs, allocation, connection age).
+
+Always answers `200`. When no collection has completed yet the graph
+contains only the monitor node and `meta.ready` is `false`.
+
+**Response**
+
+```json
+{
+  "meta": {
+    "generated_at": "2026-07-29T18:47:56Z",
+    "platform": "hpcmp",
+    "site_label": "DSRC",
+    "fleet_observed_at": "2026-07-29T18:47:45Z",
+    "telemetry_clusters": 3,
+    "ready": true,
+    "collection_progress": null
+  },
+  "summary": {
+    "sites": 4,
+    "systems": 12,
+    "connected": 2,
+    "alerts": 2,
+    "up": 12,
+    "uptime_ratio": 1.0,
+    "status_counts": {"UP": 12},
+    "scheduler_counts": {"SLURM": 7, "PBS": 5},
+    "queues": 6,
+    "capacity": {
+      "cores_total": 470288,
+      "cores_running": 328032,
+      "cores_free": 142256,
+      "nodes_total": 160,
+      "gpus_total": 132,
+      "utilization_percent": 69.8
+    }
+  },
+  "sites": [
+    {
+      "id": "navy",
+      "name": "Navy DSRC",
+      "organization": "Naval Meteorology and Oceanography Command",
+      "location": "Stennis Space Center, MS",
+      "lat": 30.36,
+      "lon": -89.6,
+      "systems": 3,
+      "connected": 1,
+      "status": "UP",
+      "capacity": {"cores_total": 290000, "cores_running": 176000},
+      "members": ["blueback", "narwhal", "nautilus"],
+      "node_id": "site:navy"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "sys:narwhal",
+      "kind": "system",
+      "label": "Narwhal",
+      "slug": "narwhal",
+      "site": "navy",
+      "site_label": "Navy DSRC",
+      "status": "UP",
+      "scheduler": "SLURM",
+      "login": "narwhal.navydsrc.hpc.mil",
+      "address": "140.32.36.136",
+      "origin": "both",
+      "connected": true,
+      "connection": {
+        "source": "pw",
+        "uri": "pw://user/narwhal",
+        "capabilities": ["sinfo", "squeue"],
+        "connected_since": "2026-07-29T09:00:00Z",
+        "connected_for_seconds": 35100,
+        "uptime_ratio": 0.987,
+        "uptime_window_hours": 24,
+        "transitions": 0,
+        "latency_ms": 212,
+        "window_start": "2026-07-28T18:47:00Z",
+        "window_end": "2026-07-29T18:47:00Z",
+        "spans": [
+          {"status": "UP", "from": "2026-07-28T18:47:00Z", "to": "2026-07-29T18:47:00Z", "seconds": 86400}
+        ]
+      },
+      "capacity": {"cores_total": 290000, "cores_running": 176000, "utilization_percent": 60.7},
+      "queues": {"count": 3, "running_jobs": 199, "pending_jobs": 49},
+      "allocation": {"hours_remaining": 495000, "percent_remaining": 20.6},
+      "alert": "warning",
+      "insights": [
+        {"type": "warning", "message": "narwhal/standard: ...", "priority": 4, "metric": "queue_depth"}
+      ],
+      "links": {"queues": "queues.html?cluster=narwhal"}
+    }
+  ],
+  "edges": [
+    {"id": "monitor->site:navy", "source": "monitor", "target": "site:navy", "kind": "site", "connected": true}
+  ]
+}
+```
+
+**Node kinds**
+
+| Kind | Meaning |
+|------|---------|
+| `monitor` | The dashboard itself — the graph root |
+| `site` | A DSRC / data center, with rolled-up status and capacity |
+| `system` | One HPC system |
+
+**`origin`** tells you where a system node came from: `fleet` (site status
+page only), `pw` (a connected cluster the status page never mentioned), or
+`both` (matched and merged).
+
+**`insights`** are the same objects `/api/insights` returns, filtered to the
+ones filed against that system; **`alert`** is the worst severity among them
+(`critical`, `warning`, `info`, or `null`).
+
+**`connection.spans`** is the recorded status timeline inside the uptime
+window — enough to draw a strip chart without a second request. Capped at
+the 60 most recent transitions.
+
+**`connection.latency_ms`** is one no-op round trip over the control plane
+(PW CLI start-up + auth + SSH), measured once per collection sweep. It
+predicts how slow collection will be; it is **not** a network ping.
+
 ### Data Refresh
 
 #### POST /api/refresh

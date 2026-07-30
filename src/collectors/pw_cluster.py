@@ -100,6 +100,34 @@ class PWClusterCollector(BaseCollector):
             _log(f"[pw_cluster] hostname lookup failed for {cluster_uri}: {e}")
             return None
 
+    def measure_latency(self, cluster_uri: str) -> Optional[int]:
+        """Time one no-op round trip to a cluster, in milliseconds.
+
+        This measures the whole control-plane path — ``pw`` CLI startup,
+        auth, and the SSH round trip — not a network ping. It is the number
+        that actually predicts how long a collection sweep will take, which
+        is what the topology view cares about, but it should never be
+        presented as raw network latency.
+
+        Returns None when the probe fails; a failed probe is not an outage
+        signal on its own, so callers should treat it as "unknown".
+        """
+        try:
+            started = time.monotonic()
+            result = subprocess.run(
+                self._pw("ssh", cluster_uri, "true"),
+                capture_output=True,
+                text=True,
+                timeout=min(30, self.ssh_timeout),
+            )
+            elapsed_ms = int((time.monotonic() - started) * 1000)
+            if result.returncode != 0:
+                return None
+            return elapsed_ms
+        except Exception as e:
+            _log(f"[pw_cluster] latency probe failed for {cluster_uri}: {e}")
+            return None
+
     @property
     def name(self) -> str:
         return "pw_cluster"
@@ -314,6 +342,7 @@ class PWClusterCollector(BaseCollector):
           - ``df``-only path for analysis/data-mover nodes
         """
         cluster_name = cluster["uri"].split("/")[-1]
+        latency_ms = self.measure_latency(cluster["uri"])
         caps = self._get_capabilities(cluster["uri"])
 
         usage_data = self._get_cluster_usage(cluster["uri"], caps, cluster_name)
@@ -343,6 +372,7 @@ class PWClusterCollector(BaseCollector):
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "has_scheduler": has_scheduler,
                 "capabilities": caps,
+                "latency_ms": latency_ms,
             },
             "usage_data": usage_data or {},
             "queue_data": queue_data or {},

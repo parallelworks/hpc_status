@@ -47,12 +47,31 @@ class UIConfig:
         default_factory=lambda: {
             "overview": True,
             "fleet": True,
+            "topology": True,
             "queues": True,
             "quota": True,
             "storage": True,
         }
     )
     default_theme: str = "dark"
+
+
+@dataclass
+class TopologyConfig:
+    """Topology view configuration."""
+
+    # Resolve login-node hostnames to IP addresses for the topology cards.
+    # Lookups happen on a background pool and are cached; turn this off on
+    # networks where outbound DNS for site hostnames is undesirable.
+    resolve_addresses: bool = True
+    address_ttl_seconds: int = 3600
+    # Window used for the per-system uptime percentage.
+    uptime_window_hours: int = 24
+    default_layout: str = "hierarchy"
+    # Per-deployment site metadata, merged over the built-in catalog:
+    #   sites:
+    #     erdc: {name: "ERDC DSRC", location: "Vicksburg, MS", lat: 32.3, lon: -90.87}
+    sites: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 
 @dataclass
@@ -74,6 +93,7 @@ class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     ui: UIConfig = field(default_factory=UIConfig)
     rate_limiting: RateLimitConfig = field(default_factory=RateLimitConfig)
+    topology: TopologyConfig = field(default_factory=TopologyConfig)
 
     collectors: Dict[str, CollectorConfig] = field(default_factory=dict)
 
@@ -120,6 +140,16 @@ class Config:
             ),
         )
 
+        # Parse topology config
+        topo_data = data.get("topology", {}) or {}
+        topology = TopologyConfig(
+            resolve_addresses=topo_data.get("resolve_addresses", True),
+            address_ttl_seconds=topo_data.get("address_ttl_seconds", 3600),
+            uptime_window_hours=topo_data.get("uptime_window_hours", 24),
+            default_layout=topo_data.get("default_layout", "hierarchy"),
+            sites=topo_data.get("sites", {}) or {},
+        )
+
         # Parse collector configs
         collectors_data = data.get("collectors", {})
         collectors = {}
@@ -142,6 +172,7 @@ class Config:
             server=server,
             ui=ui,
             rate_limiting=rate_limiting,
+            topology=topology,
             collectors=collectors,
             data_dir=data.get("data_dir"),
         )
@@ -219,6 +250,13 @@ class Config:
             "rate_limiting": {
                 "max_concurrent_ssh": self.rate_limiting.max_concurrent_ssh,
                 "ssh_timeout": self.rate_limiting.ssh_timeout,
+            },
+            "topology": {
+                "resolve_addresses": self.topology.resolve_addresses,
+                "address_ttl_seconds": self.topology.address_ttl_seconds,
+                "uptime_window_hours": self.topology.uptime_window_hours,
+                "default_layout": self.topology.default_layout,
+                "sites": self.topology.sites,
             },
             "collectors": {
                 name: {
