@@ -259,6 +259,42 @@ class TestBuildTopology:
         assert narwhal["allocation"]["percent_remaining"] == 40.0
         assert narwhal["connection"]["capabilities"] == ["sinfo", "squeue"]
 
+    def test_a_live_session_is_evidence_a_system_is_up(self, cluster_payload):
+        """Nothing on a status page covers these, but we are logged in."""
+        graph = build_topology(None, cluster_payload)
+        narwhal = next(n for n in graph["nodes"] if n.get("slug") == "narwhal")
+        assert narwhal["status"] == "UP"
+        assert narwhal["status_source"] == "live session"
+
+    def test_a_live_session_fills_in_an_unknown_status(self, cluster_payload):
+        fleet = {
+            "systems": [
+                {"system": "Narwhal", "status": "", "dsrc": "navy", "login": "n.navydsrc.hpc.mil"}
+            ]
+        }
+        graph = build_topology(fleet, cluster_payload)
+        narwhal = next(n for n in graph["nodes"] if n.get("slug") == "narwhal")
+        assert narwhal["status"] == "UP"
+        assert narwhal["status_source"] == "live session"
+
+    def test_a_live_session_does_not_overrule_the_site(self, cluster_payload):
+        """The site knows about maintenance that a login node cannot show."""
+        fleet = {"systems": [{"system": "Narwhal", "status": "MAINTENANCE", "dsrc": "navy"}]}
+        graph = build_topology(fleet, cluster_payload)
+        narwhal = next(n for n in graph["nodes"] if n.get("slug") == "narwhal")
+        assert narwhal["status"] == "MAINTENANCE"
+        assert narwhal["status_source"] == "status page"
+        assert narwhal["reported_status"] == "MAINTENANCE"
+
+    def test_an_unreachable_pw_cluster_is_not_called_up(self):
+        graph = build_topology(
+            None,
+            [{"cluster_metadata": {"name": "gone", "uri": "pw://u/gone", "status": "off"}}],
+        )
+        node = next(n for n in graph["nodes"] if n.get("slug") == "gone")
+        assert node["status"] == "DOWN"
+        assert node["connected"] is False
+
     def test_unmatched_systems_have_no_telemetry(self, fleet_payload, cluster_payload):
         graph = build_topology(fleet_payload, cluster_payload)
         carpenter = next(n for n in graph["nodes"] if n.get("slug") == "carpenter")

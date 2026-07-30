@@ -3359,6 +3359,29 @@ th[data-sortable][data-sort-dir="desc"]::after {
   opacity: 0.9;
 }
 
+/* --- load layout axis */
+.topo-axis-line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.topo-axis-line--band {
+  stroke-dasharray: 5 4;
+}
+
+.topo-axis-label {
+  fill: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.topo-axis-caption {
+  fill: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .topo-graticule {
   stroke: var(--map-coast);
   stroke-width: 1;
@@ -3389,7 +3412,9 @@ th[data-sortable][data-sort-dir="desc"]::after {
   fill: var(--muted);
   stroke: var(--panel);
   stroke-width: 2;
-  transition: fill 0.25s var(--ease-out), r 0.25s var(--ease-out);
+  /* The disc is scaled by load, so the transition is what makes a change in
+     utilization something you watch rather than something you notice later. */
+  transition: fill 0.3s var(--ease-out), transform 0.35s var(--ease-out);
 }
 
 .topo-node--up .topo-node-core { fill: var(--success); }

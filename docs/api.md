@@ -326,6 +326,14 @@ contains only the monitor node and `meta.ready` is `false`.
 | `site` | A DSRC / data center, with rolled-up status and capacity |
 | `system` | One HPC system |
 
+**`status_source`** says where a system's status came from: `status page`,
+`live session` (we are logged in and collecting, which is direct evidence
+it is up), or `control plane`. `reported_status` keeps whatever the status
+page said, so a disagreement stays visible. A live session fills in an
+unknown status and is the whole story for systems no status page covers,
+but it never overrules a site that says its own machine is down or in
+maintenance.
+
 **`site_source`** on a system node says how its site was decided:
 `config` (`topology.system_sites`), `collector` (the collector's own
 label), `hostname` (the login hostname's domain), `cloud-default`
