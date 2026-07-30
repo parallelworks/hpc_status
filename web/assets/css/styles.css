@@ -3141,6 +3141,9 @@ th[data-sortable][data-sort-dir="desc"]::after {
 
 .topo-canvas {
   position: relative;
+  /* Panning the graph dragged a text selection across every label. */
+  user-select: none;
+  -webkit-user-select: none;
   min-height: 34rem;
   height: clamp(32rem, 70vh, 54rem);
   border: 1px solid var(--border);
