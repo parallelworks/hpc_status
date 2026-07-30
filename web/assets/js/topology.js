@@ -12,6 +12,7 @@
 
 import {
   buildApiUrl,
+  buildDataUrl,
   clampPercent,
   clusterPagesEnabled,
   initThemeToggle,

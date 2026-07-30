@@ -1,12 +1,10 @@
 import {
-  buildDataUrl,
   clampPercent,
   clusterPagesEnabled,
   initThemeToggle,
   buildApiUrl,
   initHelpPanel,
   initBrand,
-  formatRelativeTime,
   initQuickTips,
   initNav,
 } from "./page-utils.js";
