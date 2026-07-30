@@ -47,6 +47,20 @@ every system, with purge-window reminders for scratch.
 **Insights.** Automatic recommendations — "this queue is draining, try
 that one", "you're at 92% of your allocation", "scratch is filling up".
 
+**Where should I run this?** Describe a job — cores, walltime, GPUs — and
+the Insights page ranks every queue that can actually run it, using idle
+cores, measured backlog, estimated time-to-start, and how much allocation
+you have left. Queues that *can't* run it say why instead of ranking last.
+
+**Wait estimates.** Queue depth is recorded over time, so the queue page
+can turn a backlog into an estimated start time — derived from observed
+core turnover, and labelled with the confidence behind it. A queue with no
+observed turnover says so rather than inventing a number.
+
+**Alerts.** Point `alerts.webhook_url` at Slack, Teams, or your own
+receiver and the monitor notifies you when a system goes down or comes
+back, with a per-system cooldown so a flapping machine doesn't spam you.
+
 ## Quick start
 
 ```bash

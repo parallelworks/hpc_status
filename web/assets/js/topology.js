@@ -19,6 +19,7 @@ import {
   initBrand,
   formatRelativeTime,
   initQuickTips,
+  initNav,
 } from "./page-utils.js";
 
 const DATA_URL = buildApiUrl("api/topology").toString();
@@ -2049,6 +2050,7 @@ const bootstrap = async () => {
   initHelpPanel();
   initQuickTips();
   initBrand();
+  initNav();
   applyConfigBranding();
   readLocation();
   applyControlsFromState();

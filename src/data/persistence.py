@@ -84,7 +84,17 @@ class DataStore:
             self.logs_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
+        self._queue_history = None
         self._init_db()
+
+    @property
+    def queue_history(self):
+        """Queue depth time series (lazily created, shares the same DB)."""
+        if self._queue_history is None:
+            from .queue_history import QueueHistoryStore
+
+            self._queue_history = QueueHistoryStore(self.db_path)
+        return self._queue_history
 
     # --- JSON Cache (fast reads) ---
 
@@ -346,7 +356,7 @@ class DataStore:
 
     def record_system_statuses(
         self, entries: Iterable[Tuple[str, str, Optional[Dict]]]
-    ) -> int:
+    ) -> List[Tuple[str, Optional[str], str, Optional[Dict]]]:
         """Record status transitions for a batch of systems.
 
         A row is written only when a system's status differs from the last
@@ -359,7 +369,9 @@ class DataStore:
             entries: (system_name, status, details) tuples.
 
         Returns:
-            Number of transitions recorded.
+            The transitions recorded, as (name, previous_status, status,
+            details). ``previous_status`` is None the first time a system is
+            seen, which callers use to avoid alerting on discovery.
         """
         rows = [
             (str(name).strip(), (status or "UNKNOWN").upper(), details)
@@ -367,24 +379,27 @@ class DataStore:
             if str(name or "").strip()
         ]
         if not rows:
-            return 0
+            return []
 
         last = self.get_last_statuses()
         now = datetime.utcnow().isoformat()
-        changed = [
-            (name, status, now, json.dumps(details) if details else None)
+        transitions = [
+            (name, last.get(name, {}).get("status"), status, details)
             for name, status, details in rows
             if last.get(name, {}).get("status") != status
         ]
-        if not changed:
-            return 0
+        if not transitions:
+            return []
         with self._get_connection() as conn:
             conn.executemany(
                 "INSERT INTO system_history (system_name, status, timestamp, details) "
                 "VALUES (?, ?, ?, ?)",
-                changed,
+                [
+                    (name, status, now, json.dumps(details) if details else None)
+                    for name, _, status, details in transitions
+                ],
             )
-        return len(changed)
+        return transitions
 
     def get_last_statuses(self) -> Dict[str, Dict[str, Any]]:
         """Return the most recent recorded status for every known system."""
@@ -529,4 +544,10 @@ class DataStore:
                 (cutoff,),
             )
             deleted += cursor.rowcount
+        # Queue samples are the highest-volume table (one row per queue per
+        # sweep), so they get their own shorter retention.
+        try:
+            deleted += self.queue_history.prune()
+        except Exception:
+            pass
         return deleted

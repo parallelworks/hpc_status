@@ -183,6 +183,19 @@ noaa_systems:
       - "Right-sized GPU clusters that don't exist on-prem"
       - "Quick reproducibility runs against a fresh image"
 
+# Alerting on system state changes (UP -> DOWN, recoveries, ...).
+# Disabled by default; any endpoint accepting a JSON POST works, including
+# Slack and Teams incoming webhooks.
+alerts:
+  enabled: false
+  webhook_url: ""
+  # info | warning | critical
+  min_severity: warning
+  # Per-system quiet period so a flapping machine alerts once, not sixty times.
+  cooldown_seconds: 900
+  # Optional link included in the alert text.
+  dashboard_url: ""
+
 # Topology view (Topology tab)
 topology:
   # Resolve login-node hostnames to IP addresses in the background.
@@ -192,6 +205,8 @@ topology:
   uptime_window_hours: 24
   # hierarchy | radial | force | lanes | geo
   default_layout: hierarchy
+  # Trailing window used to measure queue turnover for wait estimates.
+  wait_estimate_window_hours: 6
   # Extend or override the built-in site catalog (name/organization/
   # location/lat/lon), keyed by the site id the collector reports.
   sites: {}

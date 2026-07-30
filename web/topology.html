@@ -142,14 +142,16 @@
       </section>
 
       <section class="topo-shell">
-        <div class="topo-canvas" id="topo-canvas">
-          <svg id="topo-svg" role="img" aria-label="Fleet topology graph"></svg>
-          <div class="topo-tooltip" id="topo-tooltip" hidden></div>
-          <div class="topo-empty" id="topo-empty" hidden></div>
-          <div class="topo-zoom" role="group" aria-label="Zoom">
-            <button type="button" id="topo-zoom-in" aria-label="Zoom in">+</button>
-            <button type="button" id="topo-zoom-out" aria-label="Zoom out">−</button>
-            <button type="button" id="topo-zoom-reset" aria-label="Reset zoom">⤢</button>
+        <div class="topo-graph">
+          <div class="topo-canvas" id="topo-canvas">
+            <svg id="topo-svg" role="img" aria-label="Fleet topology graph"></svg>
+            <div class="topo-tooltip" id="topo-tooltip" hidden></div>
+            <div class="topo-empty" id="topo-empty" hidden></div>
+            <div class="topo-zoom" role="group" aria-label="Zoom">
+              <button type="button" id="topo-zoom-in" aria-label="Zoom in">+</button>
+              <button type="button" id="topo-zoom-out" aria-label="Zoom out">−</button>
+              <button type="button" id="topo-zoom-reset" aria-label="Reset zoom">⤢</button>
+            </div>
           </div>
           <ul class="topo-legend" aria-label="Legend">
             <li><span class="topo-swatch topo-swatch--up"></span>Up</li>

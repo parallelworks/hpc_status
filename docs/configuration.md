@@ -150,6 +150,31 @@ ui:
     logo: ""                  # Optional logo URL
 ```
 
+### Alerts Section
+
+Notifies when a system changes state (UP → DOWN, recovery, and so on).
+Delivery is a JSON POST, which covers Slack and Teams incoming webhooks as
+well as your own receiver.
+
+```yaml
+alerts:
+  enabled: false
+  webhook_url: ""             # any endpoint accepting a JSON POST
+  min_severity: warning       # info | warning | critical
+  cooldown_seconds: 900       # per-system quiet period
+  dashboard_url: ""           # optional link included in the alert text
+```
+
+The payload carries both a human-readable `text` field and the structured
+`event`. Severity is derived from the transition: leaving a healthy state
+for DOWN is `critical`, other departures from healthy are `warning`, and
+recoveries are `info`. The first sighting of a system never alerts, so a
+fresh install does not page you for every machine it discovers.
+
+Recent transitions are always available at `GET /api/events`, whether or
+not a webhook is configured. `webhook_url` is never exposed by
+`/api/config` — it is treated as a credential.
+
 ### Topology Section
 
 Controls the topology graph (`/topology.html`, `GET /api/topology`).
@@ -160,6 +185,7 @@ topology:
   address_ttl_seconds: 3600   # How long a resolved address is trusted
   uptime_window_hours: 24     # Window for the per-system uptime percentage
   default_layout: hierarchy   # hierarchy | radial | force | lanes | geo
+  wait_estimate_window_hours: 6  # trailing window for queue turnover
   sites: {}                   # Site metadata overrides (see below)
 ```
 

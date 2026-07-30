@@ -43,6 +43,9 @@ DSRC_CANON = {
     "arl": "arl",
     "army": "arl",
     "arl dsrc": "arl",
+    "mhpcc": "mhpcc",
+    "maui": "mhpcc",
+    "mhpcc dsrc": "mhpcc",
 }
 
 DSRC_DOMAIN = {
@@ -50,6 +53,7 @@ DSRC_DOMAIN = {
     "navy": "navydsrc.hpc.mil",
     "erdc": "erdc.hpc.mil",
     "arl": "arl.hpc.mil",
+    "mhpcc": "mhpcc.hpc.mil",
 }
 
 SCHEDULER_KEYWORDS = {
@@ -84,6 +88,55 @@ class HPCMPCollector(BaseCollector):
         # Disable warnings once at init if not verifying SSL
         if self._verify is False:
             urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    # Status phrases, most severe first. Whole-word patterns only: substring
+    # matching used to read "unavailable" as UP because it contains
+    # "available", and "upgrading" as UP because it contains "up".
+    _STATUS_PATTERNS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+        (
+            "DOWN",
+            (
+                r"\bunavailable\b",
+                r"\bnot\s+available\b",
+                r"\bdown\b",
+                r"\boffline\b",
+                r"\bout\s+of\s+service\b",
+                r"\bunreachable\b",
+            ),
+        ),
+        (
+            "MAINTENANCE",
+            (
+                r"\bmaint(?:enance)?\b",
+                r"\bupgrad(?:e|es|ed|ing)\b",
+                r"\boutage\s+window\b",
+                r"\bscheduled\s+(?:downtime|outage)\b",
+                r"\bpreventive\b",
+            ),
+        ),
+        (
+            "DEGRADED",
+            (
+                r"\bdegrad\w*\b",
+                r"\blimited\b",
+                r"\bpartial\w*\b",
+                r"\bimpact\w*\b",
+                r"\breduced\b",
+                r"\bintermittent\b",
+            ),
+        ),
+        (
+            "UP",
+            (
+                r"\bup\b",
+                r"\bavailable\b",
+                r"\boperational\b",
+                r"\bonline\b",
+                r"\bnormal\b",
+                r"\bhealthy\b",
+            ),
+        ),
+    )
 
     @property
     def name(self) -> str:
@@ -249,15 +302,22 @@ class HPCMPCollector(BaseCollector):
     # Status parsing helpers
 
     def _normalize_status(self, text: str) -> str:
+        """Map a status phrase to a normalized status.
+
+        Two rules keep this honest, both learned the hard way:
+
+        1. Match whole words. Plain substring matching read "unavailable"
+           as UP (it contains "available") and "upgrading" as UP (it
+           contains "up") — reporting a dead system as healthy.
+        2. Check the bad news first. "Down for scheduled maintenance" is
+           DOWN; a system that is merely undergoing maintenance is not.
+        """
         t = (text or "").strip().lower()
-        if any(w in t for w in ["up", "available", "operational", "online"]):
-            return "UP"
-        if any(w in t for w in ["down", "offline", "unavailable"]):
-            return "DOWN"
-        if any(w in t for w in ["degrad", "limited", "partial", "impact"]):
-            return "DEGRADED"
-        if any(w in t for w in ["maint", "maintenance", "outage window"]):
-            return "MAINTENANCE"
+        if not t:
+            return "UNKNOWN"
+        for status, patterns in self._STATUS_PATTERNS:
+            if any(re.search(pattern, t) for pattern in patterns):
+                return status
         return "UNKNOWN"
 
     def _guess_from_src(self, src: str) -> Optional[str]:

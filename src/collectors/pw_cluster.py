@@ -936,6 +936,65 @@ class PWClusterCollector(BaseCollector):
 
         return usage_data
 
+    # show_queues header labels → the field names we emit. Labels are
+    # matched after lowercasing; anything unrecognized is kept but ignored.
+    _QUEUE_COLUMN_ALIASES: Dict[str, str] = {
+        "queue": "queue_name",
+        "queuename": "queue_name",
+        "name": "queue_name",
+        "maxtime": "max_walltime",
+        "maxwalltime": "max_walltime",
+        "walltime": "max_walltime",
+        "maxjobs": "max_jobs",
+        "maxcores": "max_cores",
+        "maxcoresperjob": "max_cores_per_job",
+        "maxcores/job": "max_cores_per_job",
+        "cores/job": "max_cores_per_job",
+        "running": "jobs_running",
+        "jobsrunning": "jobs_running",
+        "run": "jobs_running",
+        "pending": "jobs_pending",
+        "jobspending": "jobs_pending",
+        "pend": "jobs_pending",
+        "coresrun": "cores_running",
+        "coresrunning": "cores_running",
+        "corespend": "cores_pending",
+        "corespending": "cores_pending",
+        "type": "queue_type",
+        "queuetype": "queue_type",
+    }
+
+    def _map_queue_columns(self, header: str) -> Optional[List[str]]:
+        """Map a show_queues header row to output field names, by position.
+
+        Header labels are multi-word ("Queue Name", "Cores Run") while data
+        rows are whitespace-split, so tokens are matched longest-run-first:
+        "Queue Name" has to beat a bare "Queue", and "Max Cores Per Job" has
+        to beat "Max Cores".
+
+        Returns None when any label is unrecognizable, which sends the
+        caller back to the fixed-position fallback rather than risk lining
+        values up against the wrong fields.
+        """
+        tokens = header.split()
+        fields: List[str] = []
+        index = 0
+        while index < len(tokens):
+            matched = None
+            for span in range(min(4, len(tokens) - index), 0, -1):
+                key = re.sub(r"[^a-z0-9/]", "", "".join(tokens[index : index + span]).lower())
+                field = self._QUEUE_COLUMN_ALIASES.get(key)
+                if field:
+                    matched = (field, span)
+                    break
+            if not matched:
+                return None
+            fields.append(matched[0])
+            index += matched[1]
+        if "queue_name" not in fields or len(fields) < 6:
+            return None
+        return fields
+
     def _parse_queue_output(self, queue_output: str) -> Dict[str, Any]:
         """Parse the queue output from SSH command."""
         queue_data = {
@@ -947,11 +1006,17 @@ class PWClusterCollector(BaseCollector):
 
         in_queue_section = False
         in_node_section = False
+        queue_columns: Optional[List[str]] = None
 
         for line in lines:
             if "QUEUE INFORMATION:" in line or "Queue Name" in line:
                 in_queue_section = True
                 in_node_section = False
+                # Remember the column layout: sites publish show_queues with
+                # and without the "max cores per job" column, and positional
+                # indexes alone silently drop every row on the shorter form.
+                if "Queue Name" in line:
+                    queue_columns = self._map_queue_columns(line)
                 continue
 
             if "NODE INFORMATION:" in line or "Node Type" in line:
@@ -970,23 +1035,28 @@ class PWClusterCollector(BaseCollector):
 
                 if "Queue Name" not in line and line.strip():
                     parts = line.split()
-                    if len(parts) >= 10:
-                        try:
-                            queue_info = {
-                                "queue_name": parts[0].strip(),
-                                "max_walltime": parts[1].strip(),
-                                "max_jobs": parts[2].strip(),
-                                "max_cores": parts[3].strip(),
-                                "max_cores_per_job": parts[4].strip(),
-                                "jobs_running": parts[5].strip(),
-                                "jobs_pending": parts[6].strip(),
-                                "cores_running": parts[7].strip(),
-                                "cores_pending": parts[8].strip(),
-                                "queue_type": parts[9].strip(),
-                            }
-                            queue_data["queues"].append(queue_info)
-                        except (ValueError, IndexError):
-                            continue
+                    queue_info = None
+                    if queue_columns and len(parts) == len(queue_columns):
+                        queue_info = {
+                            field: parts[idx].strip()
+                            for idx, field in enumerate(queue_columns)
+                            if field
+                        }
+                    elif len(parts) >= 10:
+                        queue_info = {
+                            "queue_name": parts[0].strip(),
+                            "max_walltime": parts[1].strip(),
+                            "max_jobs": parts[2].strip(),
+                            "max_cores": parts[3].strip(),
+                            "max_cores_per_job": parts[4].strip(),
+                            "jobs_running": parts[5].strip(),
+                            "jobs_pending": parts[6].strip(),
+                            "cores_running": parts[7].strip(),
+                            "cores_pending": parts[8].strip(),
+                            "queue_type": parts[9].strip(),
+                        }
+                    if queue_info and queue_info.get("queue_name"):
+                        queue_data["queues"].append(queue_info)
 
             if in_node_section:
                 if (

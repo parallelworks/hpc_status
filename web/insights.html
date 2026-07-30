@@ -94,6 +94,34 @@
       </article>
     </section>
 
+    <section class="panel" id="planner-panel">
+      <div class="panel-head">
+        <div>
+          <p class="eyebrow">Job placement</p>
+          <h3>Where should I run this? <span class="panel-help" title="Ranks every queue that can actually run your job, using idle cores, measured backlog, time-to-start, and how much allocation you have left">ⓘ</span></h3>
+          <p class="muted-text">Describe the job; the fleet is ranked for it.</p>
+        </div>
+      </div>
+      <form class="planner-form" id="planner-form">
+        <label>
+          <span>Cores</span>
+          <input type="number" id="planner-cores" min="1" step="1" value="128" inputmode="numeric" />
+        </label>
+        <label>
+          <span>Walltime (hours)</span>
+          <input type="number" id="planner-hours" min="0.1" step="0.5" value="6" inputmode="decimal" />
+        </label>
+        <label>
+          <span>GPUs</span>
+          <input type="number" id="planner-gpus" min="0" step="1" value="0" inputmode="numeric" />
+        </label>
+        <button type="submit" class="ghost-btn">Rank queues</button>
+      </form>
+      <div id="planner-results" class="planner-results">
+        <p class="muted-text">Enter a job shape to see where it fits.</p>
+      </div>
+    </section>
+
     <section class="panel">
       <div class="panel-head">
         <div>

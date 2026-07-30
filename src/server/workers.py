@@ -30,10 +30,17 @@ class DashboardState:
     then refreshes from live sources in the background.
     """
 
-    def __init__(self, store: DataStore, generate_fn, source_name: str = "fleet_status"):
+    def __init__(
+        self,
+        store: DataStore,
+        generate_fn,
+        source_name: str = "fleet_status",
+        alert_dispatcher=None,
+    ):
         self.store = store
         self.generate_fn = generate_fn
         self.source_name = source_name
+        self.alert_dispatcher = alert_dispatcher
         self._payload: Optional[Dict] = None
         self._last_error: Optional[str] = None
         self._last_refresh_ts: Optional[float] = None
@@ -126,9 +133,16 @@ class DashboardState:
                         },
                     )
                 )
-            recorded = self.store.record_system_statuses(entries)
-            if recorded:
-                _log(f"[{self.source_name}] Recorded {recorded} status transition(s)")
+            transitions = self.store.record_system_statuses(entries)
+            if transitions:
+                _log(
+                    f"[{self.source_name}] Recorded {len(transitions)} "
+                    f"status transition(s)"
+                )
+            if transitions and self.alert_dispatcher:
+                sent = self.alert_dispatcher.record_transitions(transitions)
+                if sent:
+                    _log(f"[{self.source_name}] Dispatched {len(sent)} alert(s)")
         except Exception as exc:
             _log(f"[{self.source_name}] Unable to record status history: {exc}")
 
@@ -194,9 +208,11 @@ class ClusterMonitorWorker(threading.Thread):
         failure_threshold: int = 3,
         pause_duration: int = 300,
         pw_context: Optional[str] = None,
+        alert_dispatcher=None,
     ):
         super().__init__(name="cluster-monitor-worker")
         self.store = store
+        self.alert_dispatcher = alert_dispatcher
         self.interval = max(60, interval_seconds)
         self.python_executable = python_executable or sys.executable
         self._stop_event = threading.Event()
@@ -349,11 +365,27 @@ class ClusterMonitorWorker(threading.Thread):
                         {"name": name, "uri": meta.get("uri")},
                     )
                 )
-            recorded = self.store.record_system_statuses(entries)
-            if recorded:
-                _log(f"[cluster-monitor] Recorded {recorded} connection transition(s)")
+            transitions = self.store.record_system_statuses(entries)
+            if transitions:
+                _log(
+                    f"[cluster-monitor] Recorded {len(transitions)} "
+                    f"connection transition(s)"
+                )
+            if transitions and self.alert_dispatcher:
+                sent = self.alert_dispatcher.record_transitions(transitions)
+                if sent:
+                    _log(f"[cluster-monitor] Dispatched {len(sent)} alert(s)")
         except Exception as exc:
             _log(f"[cluster-monitor] Unable to record connection history: {exc}")
+
+    def _record_queue_samples(self, clusters: list) -> None:
+        """Persist queue depth so wait estimates have something to learn from."""
+        try:
+            recorded = self.store.queue_history.record_clusters(clusters)
+            if recorded:
+                _log(f"[cluster-monitor] Recorded {recorded} queue sample(s)")
+        except Exception as exc:
+            _log(f"[cluster-monitor] Unable to record queue samples: {exc}")
 
     def _check_auth_or_expire(self) -> bool:
         """Check authentication; set _auth_expired if token is gone.
@@ -428,6 +460,7 @@ class ClusterMonitorWorker(threading.Thread):
             self.store.save_cache("cluster_usage", clusters)
             self.store.save_snapshot("pw_cluster", data)
             self._record_cluster_transitions(clusters)
+            self._record_queue_samples(clusters)
             self._progress_update(
                 phase="ready",
                 first_sweep_complete=True,
