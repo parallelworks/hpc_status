@@ -38,6 +38,11 @@ const MAP_SYSTEM_ZOOM = 1.5;
 const LABEL_BASE_PX = 12;
 const LABEL_MIN_PX = 9.5;
 const LABEL_MAX_PX = 13.5;
+// Wheel zoom feel: how much zoom one pixel of scroll buys, and the most a
+// single frame may change it by.
+const WHEEL_SENSITIVITY = 0.0011;
+const WHEEL_STEP_MAX = 1.22;
+
 // How far the map is allowed to drift from drawing pins at their authored
 // size, when the zoom goes to extremes.
 const NODE_SCALE_MIN = 0.22;
@@ -201,6 +206,7 @@ const mapShowsSystems = () => {
  * renderer mid-frame would recurse.
  */
 let mapDetailScheduled = false;
+let mapDetailTimer = null;
 const maybeRefreshMapDetail = () => {
   if (state.layout !== "geo" || mapDetailScheduled) return;
   const zoomDrift =
@@ -208,12 +214,21 @@ const maybeRefreshMapDetail = () => {
       ? Math.abs(state.transform.k / state.geoLayoutZoom - 1)
       : 0;
   if (mapShowsSystems() === state.mapSystemsShown && zoomDrift < 0.25) return;
+  const crossedThreshold = mapShowsSystems() !== state.mapSystemsShown;
   mapDetailScheduled = true;
-  requestAnimationFrame(() => {
+  const run = () => {
     mapDetailScheduled = false;
     // No fit: re-fitting on every zoom step would fight the user's zoom.
     if (state.layout === "geo") renderGraph({ animate: false });
-  });
+  };
+  if (crossedThreshold) {
+    requestAnimationFrame(run);
+    return;
+  }
+  // Pure zoom drift: re-space the fan once the gesture has settled, so the
+  // pins are not shuffling under the cursor mid-scroll.
+  clearTimeout(mapDetailTimer);
+  mapDetailTimer = setTimeout(run, 200);
 };
 
 /** Collapse the raw graph into what is actually drawn for the current filters. */
@@ -2347,8 +2362,8 @@ const bindEvents = () => {
     }
   });
   document.getElementById("topo-fit")?.addEventListener("click", () => fitToView());
-  document.getElementById("topo-zoom-in")?.addEventListener("click", () => zoomBy(1.25));
-  document.getElementById("topo-zoom-out")?.addEventListener("click", () => zoomBy(0.8));
+  document.getElementById("topo-zoom-in")?.addEventListener("click", () => zoomBy(1.3));
+  document.getElementById("topo-zoom-out")?.addEventListener("click", () => zoomBy(1 / 1.3));
   document.getElementById("topo-zoom-reset")?.addEventListener("click", () => fitToView());
   document.getElementById("topo-export")?.addEventListener("click", exportSvg);
 
@@ -2486,11 +2501,37 @@ const bindEvents = () => {
   });
 
   // --- zoom & pan
+  // Wheel zoom.
+  //
+  // The old handler applied a fixed 12% per event and ignored how far the
+  // wheel actually moved, so a trackpad — which fires a stream of small
+  // events — rocketed through the zoom range while a mouse wheel crawled.
+  // Now the step is proportional to the real delta, normalized across the
+  // three deltaMode units, clamped so no single gesture can leap, and
+  // batched to one application per frame.
+  let wheelDelta = 0;
+  let wheelOrigin = null;
+  let wheelFrame = null;
+
+  const normalizeWheel = (event) => {
+    if (event.deltaMode === 1) return event.deltaY * 16; // lines
+    if (event.deltaMode === 2) return event.deltaY * 400; // pages
+    return event.deltaY; // pixels
+  };
+
   dom.canvas.addEventListener(
     "wheel",
     (event) => {
       event.preventDefault();
-      zoomBy(event.deltaY < 0 ? 1.12 : 0.89, { x: event.clientX, y: event.clientY });
+      wheelDelta += normalizeWheel(event);
+      wheelOrigin = { x: event.clientX, y: event.clientY };
+      if (wheelFrame) return;
+      wheelFrame = requestAnimationFrame(() => {
+        wheelFrame = null;
+        const raw = Math.exp(-wheelDelta * WHEEL_SENSITIVITY);
+        wheelDelta = 0;
+        zoomBy(Math.min(WHEEL_STEP_MAX, Math.max(1 / WHEEL_STEP_MAX, raw)), wheelOrigin);
+      });
     },
     { passive: false }
   );
