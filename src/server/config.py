@@ -91,6 +91,10 @@ class TopologyConfig:
     #   sites:
     #     erdc: {name: "ERDC DSRC", location: "Vicksburg, MS", lat: 32.3, lon: -90.87}
     sites: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    # Explicit system -> site assignments for machines nothing else can
+    # place (not on a status page, and a login hostname that gives no
+    # domain away):  system_sites: {chessie: arl, crux: mhpcc}
+    system_sites: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -169,6 +173,7 @@ class Config:
             default_layout=topo_data.get("default_layout", "hierarchy"),
             wait_estimate_window_hours=topo_data.get("wait_estimate_window_hours", 6),
             sites=topo_data.get("sites", {}) or {},
+            system_sites=topo_data.get("system_sites", {}) or {},
         )
 
         # Parse alerting config
@@ -298,6 +303,7 @@ class Config:
                 "default_layout": self.topology.default_layout,
                 "wait_estimate_window_hours": self.topology.wait_estimate_window_hours,
                 "sites": self.topology.sites,
+                "system_sites": self.topology.system_sites,
             },
             "collectors": {
                 name: {

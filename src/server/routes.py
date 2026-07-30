@@ -435,6 +435,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 self.host_resolver.lookup if self.host_resolver else None
             ),
             site_overrides=topology_cfg.get("sites"),
+            system_sites=topology_cfg.get("system_sites"),
             insights=generate_fleet_insights(payload, clusters),
         )
 

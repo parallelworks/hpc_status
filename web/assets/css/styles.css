@@ -3207,6 +3207,53 @@ th[data-sortable][data-sort-dir="desc"]::after {
   opacity: 0.5;
 }
 
+/* --- geographic basemap */
+.topo-land {
+  fill: var(--panel-alt);
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-linejoin: round;
+}
+
+:root[data-theme="light"] .topo-land {
+  fill: #e6e9f2;
+}
+
+.topo-inset-fill {
+  fill: var(--bg-secondary);
+}
+
+.topo-inset-frame {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.topo-inset-label {
+  fill: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.topo-inset--tray .topo-inset-frame {
+  stroke-dasharray: 5 4;
+}
+
+/* Connector from a pin nudged aside for legibility back to the site's real
+   coordinates, so the map never quietly lies about where something is. */
+.topo-leader {
+  stroke: var(--muted);
+  stroke-width: 1.25;
+  stroke-dasharray: 3 3;
+  opacity: 0.8;
+}
+
+.topo-leader-anchor {
+  fill: var(--muted);
+  opacity: 0.9;
+}
+
 .topo-graticule {
   stroke: var(--border);
   stroke-width: 1;
@@ -3425,6 +3472,11 @@ th[data-sortable][data-sort-dir="desc"]::after {
 .topo-swatch--reported {
   background: transparent;
   border: 2px dashed var(--border);
+}
+
+.topo-legend-note {
+  color: var(--muted);
+  font-style: italic;
 }
 
 .topo-swatch--alert {

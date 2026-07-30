@@ -360,6 +360,7 @@ const QUICK_TIPS = {
       "Node size is the system's core count; the outer ring is how much of it is busy",
       "A <strong>solid</strong> halo means the monitor holds a live session; a dashed halo means the data comes from the site's status page only",
       "Switch <strong>Layout</strong> and <strong>Group by</strong> to re-read the same fleet by site, scheduler, or status",
+      "<strong>Geographic</strong> is a real map — one pin per site, with insets for sites off the mainland",
     ],
   },
   "queues.html": {

@@ -27,7 +27,9 @@ when it was last checked. Click a system for the full details page.
 **Topology.** An interactive map of the fleet — every site, every system,
 and which ones the monitor actually holds a live session to. Group by site
 (DSRC), scheduler, status, or connection; switch between hierarchy, radial,
-force, lane, and geographic layouts. Node color is status, size is core
+force, lane, and geographic layouts — the geographic one is a real map,
+with each site pinned at its actual coordinates and framed insets for
+anything off the mainland. Node color is status, size is core
 count, and the outer ring is how busy it is. Nodes with an open insight
 carry a warning badge, links animate at the speed of their measured round
 trip, and each system shows its status timeline for the last 24 hours.
