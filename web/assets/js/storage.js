@@ -2,7 +2,14 @@
  * Storage page - Filesystem capacity monitoring
  */
 
-import { initThemeToggle, initHelpPanel, initBrand, formatRelativeTime, initQuickTips } from "./page-utils.js";
+import {
+  initThemeToggle,
+  initHelpPanel,
+  initBrand,
+  formatRelativeTime,
+  initQuickTips,
+  initNav,
+} from "./page-utils.js";
 
 const defaultApiBase = (() => {
   const basePath = document.documentElement.dataset.basePath || "/";
@@ -481,6 +488,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initQuickTips();
   applyConfigBranding();
   initBrand();
+  initNav();
 
   const nav = document.querySelector("[data-cluster-nav]");
   if (!state.features.clusterPages) {

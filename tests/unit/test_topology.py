@@ -326,9 +326,13 @@ class TestConnectionHistory:
     def test_records_only_transitions(self, temp_data_dir):
         store = DataStore(temp_data_dir)
 
-        assert store.record_system_statuses([("system:a", "UP", None)]) == 1
-        assert store.record_system_statuses([("system:a", "UP", None)]) == 0
-        assert store.record_system_statuses([("system:a", "DOWN", None)]) == 1
+        # Returns the transitions themselves: (name, previous, current, details)
+        first = store.record_system_statuses([("system:a", "UP", None)])
+        assert first == [("system:a", None, "UP", None)]
+        assert store.record_system_statuses([("system:a", "UP", None)]) == []
+        assert store.record_system_statuses([("system:a", "DOWN", None)]) == [
+            ("system:a", "UP", "DOWN", None)
+        ]
 
         history = store.get_system_history("system:a")
         assert [row["status"] for row in history] == ["DOWN", "UP"]

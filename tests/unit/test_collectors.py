@@ -33,6 +33,43 @@ class TestHPCMPCollector:
         assert collector._normalize_status("offline") == "DOWN"
         assert collector._normalize_status("unavailable") == "DOWN"
 
+    @pytest.mark.parametrize(
+        "phrase,expected",
+        [
+            # The bug this guards: substring matching read "unavailable" as
+            # UP ("available") and "upgrading" as UP ("up"), so a dead
+            # system was reported healthy.
+            ("unavailable", "DOWN"),
+            ("Currently unavailable", "DOWN"),
+            ("not available", "DOWN"),
+            ("upgrading", "MAINTENANCE"),
+            ("undergoing an upgrade", "MAINTENANCE"),
+            ("backup in progress", "UNKNOWN"),
+            ("supported", "UNKNOWN"),
+            # Bad news wins: a machine down for maintenance is still down.
+            ("Down for scheduled maintenance", "DOWN"),
+            ("intermittent", "DEGRADED"),
+            ("healthy", "UP"),
+        ],
+    )
+    def test_normalize_status_matches_whole_words(self, phrase, expected):
+        collector = HPCMPCollector()
+        assert collector._normalize_status(phrase) == expected
+
+    @pytest.mark.parametrize(
+        "alt,expected",
+        [
+            ("Nautilus is currently Up.", "UP"),
+            ("Raider is currently Down.", "DOWN"),
+            ("Warhawk is currently Degraded.", "DEGRADED"),
+            ("Jean is currently unavailable.", "DOWN"),
+            ("Ruth is currently in Maintenance.", "MAINTENANCE"),
+        ],
+    )
+    def test_parse_status_from_alt_text(self, alt, expected):
+        collector = HPCMPCollector()
+        assert collector._parse_status_from_alt(alt) == expected
+
     def test_normalize_status_degraded(self):
         collector = HPCMPCollector()
         assert collector._normalize_status("Degraded") == "DEGRADED"
@@ -117,6 +154,45 @@ class TestPWClusterCollector:
         assert usage["systems"][0]["system"] == "nautilus"
         assert usage["systems"][0]["hours_allocated"] == 250000
         assert usage["systems"][0]["percent_remaining"] == 100.0
+
+    def test_parse_queue_output_handles_both_column_layouts(self):
+        """show_queues ships with and without the per-job cores column.
+
+        Fixed positional indexes silently dropped every row on the shorter
+        layout, so the parser reads the header when it recognizes it.
+        """
+        collector = PWClusterCollector()
+        nine_column = """QUEUE INFORMATION:
+Queue Name   Max Time    Max Jobs  Max Cores  Running  Pending  Cores Run  Cores Pend  Type
+=========================================================================================
+standard     24:00:00    -         -          4        0        384        0           Exe
+gpu          12:00:00    -         -          1        2        64         128         GPU
+"""
+        ten_column = """QUEUE INFORMATION:
+Queue Name  Max Time  Max Jobs  Max Cores  Max Cores Per Job  Running  Pending  Cores Run  Cores Pend  Type
+==========================================================================================================
+standard    24:00:00  -         -          1024               4        0        384        0           Exe
+"""
+        nine = collector._parse_queue_output(nine_column)["queues"]
+        ten = collector._parse_queue_output(ten_column)["queues"]
+
+        assert [q["queue_name"] for q in nine] == ["standard", "gpu"]
+        assert nine[0]["cores_running"] == "384"
+        assert nine[1]["cores_pending"] == "128"
+        assert nine[0]["queue_type"] == "Exe"
+
+        assert ten[0]["max_cores_per_job"] == "1024"
+        assert ten[0]["cores_running"] == "384"
+
+    def test_parse_queue_output_skips_unrecognized_headers(self):
+        """An unknown layout yields nothing rather than misaligned fields."""
+        collector = PWClusterCollector()
+        output = """QUEUE INFORMATION:
+Queue Name   Frobnicator   Running
+==================================
+standard     x             4
+"""
+        assert collector._parse_queue_output(output)["queues"] == []
 
     def test_parse_queue_output(self, sample_queue_output):
         collector = PWClusterCollector()

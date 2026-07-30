@@ -106,6 +106,22 @@ SYSTEM_SITE_HINTS: Tuple[Tuple[str, str], ...] = (
     ("gfdl", "gfdl"),
 )
 
+# Domain labels → catalog site id. A login node's own name says where it
+# lives: crux.mhpcc.hpc.mil is MHPCC whether or not the collector managed to
+# label it. Matched against every label of the hostname.
+DOMAIN_SITE_HINTS: Dict[str, str] = {
+    "afrl": "afrl",
+    "arl": "arl",
+    "erdc": "erdc",
+    "navy": "navy",
+    "navydsrc": "navy",
+    "mhpcc": "mhpcc",
+    "gfdl": "gfdl",
+    "ncrc": "ornl",
+    "ornl": "ornl",
+    "nessc": "nessc",
+}
+
 # Site ids that mean "we don't know where this runs" and should not be
 # treated as a real facility.
 GENERIC_SITE_IDS = frozenset({"", "unknown", "existing", "pw", "none", "null"})
@@ -182,8 +198,29 @@ def _seconds_since(value: Any, *, now: Optional[datetime] = None) -> Optional[in
 # ---------------------------------------------------------------------------
 
 
-def resolve_site_id(raw_site: Any, system_name: Any = "") -> str:
-    """Map a collector's site label (or a system name) to a catalog id."""
+def site_from_hostname(hostname: Any) -> Optional[str]:
+    """Infer a site from a login hostname's domain.
+
+    ``crux.mhpcc.hpc.mil`` is an MHPCC machine no matter what the collector
+    managed to scrape, so the hostname is a better signal than nothing.
+    """
+    text = str(hostname or "").strip().lower()
+    if not text or "://" in text:
+        return None
+    for label in text.split("."):
+        site = DOMAIN_SITE_HINTS.get(re.sub(r"[^a-z0-9]", "", label))
+        if site:
+            return site
+    return None
+
+
+def resolve_site_id(raw_site: Any, system_name: Any = "", hostname: Any = "") -> str:
+    """Map a collector's site label to a catalog id.
+
+    Falls back, in order, to the login hostname's domain and then to a
+    system-name hint, so a machine only lands in "Unassigned" when nothing
+    about it says where it runs.
+    """
     site_slug = slugify(raw_site)
     if site_slug and site_slug not in GENERIC_SITE_IDS:
         # "ERDC DSRC" and "erdc" should collapse to the same facility.
@@ -191,6 +228,10 @@ def resolve_site_id(raw_site: Any, system_name: Any = "") -> str:
         if trimmed in SITE_CATALOG:
             return trimmed
         return site_slug
+
+    from_host = site_from_hostname(hostname)
+    if from_host:
+        return from_host
 
     system_slug = slugify(system_name)
     for needle, site_id in SYSTEM_SITE_HINTS:
@@ -606,7 +647,7 @@ def _build_system_node(
     queues = _cluster_queues(cluster) if cluster else None
     allocation = _cluster_allocation(cluster) if cluster else None
 
-    site_id = resolve_site_id(row.get("dsrc"), name)
+    site_id = resolve_site_id(row.get("dsrc"), name, hostname)
     node_insights, alert = _attach_insights(slug, insight_index or {})
 
     return {

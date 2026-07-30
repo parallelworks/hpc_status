@@ -15,6 +15,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from urllib.parse import urlparse, unquote
 
 if TYPE_CHECKING:
+    from .alerts import AlertDispatcher
     from .netinfo import HostResolver
     from .workers import ClusterMonitorWorker, DashboardState
     from ..data.persistence import DataStore
@@ -42,9 +43,34 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     config: Optional[Dict] = None
     host_resolver: Optional["HostResolver"] = None
     uptime_window_hours: int = 24
+    wait_estimate_window_hours: int = 6
+    alert_dispatcher: Optional["AlertDispatcher"] = None
 
     def __init__(self, *args, directory=None, **kwargs):
+        self._cache_control_sent = False
         super().__init__(*args, directory=directory or str(self.web_dir), **kwargs)
+
+    # --- Cache control ---
+    #
+    # Static assets are served from stable URLs (assets/css/styles.css), so
+    # without an explicit header browsers apply heuristic caching and keep
+    # serving yesterday's CSS after a deploy — the page renders unstyled and
+    # looks broken. "no-cache" still allows conditional requests, so the
+    # common case stays a cheap 304.
+
+    def send_response(self, *args, **kwargs):
+        self._cache_control_sent = False
+        super().send_response(*args, **kwargs)
+
+    def send_header(self, keyword, value):
+        if keyword.lower() == "cache-control":
+            self._cache_control_sent = True
+        super().send_header(keyword, value)
+
+    def end_headers(self):
+        if not self._cache_control_sent:
+            self.send_header("Cache-Control", "no-cache, must-revalidate")
+        super().end_headers()
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -84,6 +110,10 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return self._handle_storage()
         if parsed.path == "/api/topology":
             return self._handle_topology()
+        if parsed.path == "/api/events":
+            return self._handle_events(parsed)
+        if parsed.path == "/api/placement":
+            return self._handle_placement(parsed)
 
         # Fall back to static file serving
         return super().do_GET()
@@ -205,6 +235,9 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                     "title": title,
                     "eyebrow": eyebrow,
                     "platform": platform,
+                    "tabs": (
+                        ui_config.get("tabs", {}) if isinstance(ui_config, dict) else {}
+                    ),
                     "topologyLayout": (
                         config_data.get("topology", {}) or {}
                     ).get("default_layout", "hierarchy"),
@@ -243,6 +276,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             self.cluster_worker.get_progress() if self.cluster_worker else None
         )
         clusters_list = self._clusters_from_payload(payload)
+        self._attach_wait_estimates(clusters_list)
 
         # No cache at all — return a 200 envelope so the UI can render
         # "collecting from N clusters" instead of treating it as an outage.
@@ -281,6 +315,34 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         # Steady state — preserve the existing raw-list response so older
         # consumers (storage page, cluster detail, insights) keep working.
         self._send_json(payload)
+
+    def _attach_wait_estimates(self, clusters: list) -> None:
+        """Annotate each queue with an estimated time-to-start, in place.
+
+        Derived from recorded queue depth, so it only appears once there is
+        enough history to justify it — the field is simply absent otherwise
+        rather than carrying a made-up number.
+        """
+        if not clusters or not self.data_store:
+            return
+        try:
+            estimates = self.data_store.queue_history.estimate_waits(
+                window_hours=self.wait_estimate_window_hours
+            )
+        except Exception as exc:
+            print(f"[api] Unable to compute wait estimates: {exc}", flush=True)
+            return
+        if not estimates:
+            return
+
+        for cluster in clusters:
+            meta = cluster.get("cluster_metadata") or {}
+            name = meta.get("name") or str(meta.get("uri") or "").rsplit("/", 1)[-1]
+            slug = self._normalize_cluster_slug(name)
+            for queue in (cluster.get("queue_data") or {}).get("queues") or []:
+                estimate = estimates.get((slug, str(queue.get("queue_name") or "")))
+                if estimate:
+                    queue["wait_estimate"] = estimate
 
     @staticmethod
     def _clusters_from_payload(payload) -> list:
@@ -380,6 +442,67 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         graph["meta"]["ready"] = bool(graph.get("nodes"))
         graph["meta"]["collection_progress"] = progress
         self._send_json(graph)
+
+    def _handle_events(self, parsed):
+        """Return recent system state changes (newest first).
+
+        This is the audit trail behind alerting: it is populated whether or
+        not a webhook is configured, so you can see what changed even
+        without an integration.
+        """
+        from urllib.parse import parse_qs
+
+        limit = 50
+        try:
+            raw = parse_qs(parsed.query).get("limit", ["50"])[0]
+            limit = max(1, min(200, int(raw)))
+        except (TypeError, ValueError):
+            pass
+
+        events = (
+            self.alert_dispatcher.recent_events(limit) if self.alert_dispatcher else []
+        )
+        self._send_json(
+            {
+                "events": events,
+                "alerting_enabled": bool(
+                    self.alert_dispatcher and self.alert_dispatcher.enabled
+                ),
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+
+    def _handle_placement(self, parsed):
+        """Rank (cluster, queue) pairs for a job shape.
+
+        Query params: cores, hours, gpus, queue_type, limit.
+        """
+        from urllib.parse import parse_qs
+
+        from ..insights.placement import PlacementRequest, rank_placements
+
+        params = parse_qs(parsed.query or "")
+        request = PlacementRequest.from_params(params)
+        try:
+            limit = max(1, min(20, int(params.get("limit", ["5"])[0])))
+        except (TypeError, ValueError):
+            limit = 5
+
+        clusters = self._clusters_from_payload(self._load_cluster_usage_payload())
+        estimates = {}
+        if self.data_store:
+            try:
+                estimates = self.data_store.queue_history.estimate_waits(
+                    window_hours=self.wait_estimate_window_hours
+                )
+            except Exception as exc:
+                print(f"[api] Placement wait estimates unavailable: {exc}", flush=True)
+
+        result = rank_placements(
+            clusters, request, wait_estimates=estimates, limit=limit
+        )
+        result["generated_at"] = datetime.utcnow().isoformat() + "Z"
+        self._send_json(result)
 
     def _handle_cluster_usage_detail(self, slug_part: str):
         target_slug = self._normalize_cluster_slug(unquote(slug_part or ""))

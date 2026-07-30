@@ -104,6 +104,29 @@ Returns a condensed fleet overview optimized for automation.
 
 Returns queue and quota data for all monitored clusters.
 
+Each queue also carries a `wait_estimate` once there is enough recorded
+history to derive one:
+
+```json
+{
+  "wait_estimate": {
+    "wait_seconds": 12600,
+    "wait_display": "~3.5 hours",
+    "pending_cores": 38000,
+    "drain_rate_cores_per_hour": 10962,
+    "samples": 12,
+    "window_hours": 6,
+    "confidence": "medium",
+    "basis": "38,000 cores waiting ÷ 10,962 cores/h observed turnover over 3.7h"
+  }
+}
+```
+
+The estimate is backlog ÷ observed core turnover over a trailing window. A
+queue with no observed turnover reports `wait_seconds: null` and
+`confidence: "none"` rather than an invented number, and the `basis` string
+always explains where the figure came from.
+
 **Response**
 
 ```json
@@ -317,6 +340,91 @@ the 60 most recent transitions.
 **`connection.latency_ms`** is one no-op round trip over the control plane
 (PW CLI start-up + auth + SSH), measured once per collection sweep. It
 predicts how slow collection will be; it is **not** a network ping.
+
+### Placement
+
+#### GET /api/placement
+
+Ranks `(cluster, queue)` pairs for a specific job shape.
+
+**Parameters**
+
+| Name | Default | Meaning |
+|------|---------|---------|
+| `cores` | 1 | Cores the job needs |
+| `hours` | 1 | Walltime in hours |
+| `gpus` | 0 | GPUs the job needs |
+| `queue_type` | — | Restrict to a queue type or name |
+| `limit` | 5 | Maximum candidates returned |
+
+**Response**
+
+```json
+{
+  "request": {"cores": 1024, "hours": 6, "gpus": 0, "core_hours": 6144},
+  "candidates": [
+    {
+      "cluster": "narwhal",
+      "queue": "standard",
+      "score": 88.7,
+      "components": {"capacity": 40, "wait": 21.3, "backlog": 17.4, "allocation": 10},
+      "cores_free": 114000,
+      "cores_pending": 38000,
+      "max_walltime": "24:00:00",
+      "allocation_hours_remaining": 495000,
+      "wait_hours": 3.47,
+      "wait_estimate": {"wait_display": "~3.5 hours", "confidence": "medium"},
+      "reasons": [
+        "114,000 cores idle now — enough to start immediately",
+        "estimated start ~3.5 hours"
+      ],
+      "links": {"queues": "queues.html?cluster=narwhal"}
+    }
+  ],
+  "blocked": [
+    {
+      "cluster": "narwhal",
+      "queue": "debug",
+      "blockers": ["walltime limit is 1h, job needs 6h"]
+    }
+  ],
+  "considered": 6
+}
+```
+
+Scoring is out of 100: idle capacity (40), measured time-to-start (30),
+backlog relative to cluster size (20), and allocation headroom (10). A queue
+that *cannot* run the job — walltime too short, per-queue core cap too low,
+cluster down, allocation exhausted — is returned under `blocked` with the
+reason rather than ranked last.
+
+### Events
+
+#### GET /api/events
+
+Recent system state changes, newest first. Populated whether or not
+alerting is configured.
+
+```json
+{
+  "events": [
+    {
+      "entity": "system:narwhal",
+      "name": "Narwhal",
+      "previous": "UP",
+      "status": "DOWN",
+      "kind": "degraded",
+      "severity": "critical",
+      "at": "2026-07-30T14:02:11Z"
+    }
+  ],
+  "alerting_enabled": true
+}
+```
+
+`kind` is one of `degraded`, `recovered`, or `changed`. The first sighting
+of a system is not an event — otherwise a fresh install would report every
+system as new.
 
 ### Data Refresh
 

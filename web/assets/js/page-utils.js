@@ -115,6 +115,46 @@ export const initBrand = () => {
   icon.href = iconHref;
 };
 
+// Which config tab keys control each nav destination. A page is hidden
+// only when every key that could enable it is explicitly false — deployments
+// disagree about whether the landing page is called "fleet" or "overview",
+// and an unset key must never hide anything.
+const NAV_TAB_KEYS = {
+  "index.html": ["fleet", "overview"],
+  "topology.html": ["topology"],
+  "queues.html": ["queues"],
+  "quota.html": ["quota"],
+  "storage.html": ["storage"],
+  "insights.html": ["insights"],
+};
+
+/**
+ * Apply ui.tabs from the deployment config to the sub-navigation.
+ *
+ * The nav is static markup so it still works without JavaScript; this
+ * removes the links a deployment has switched off. The current page's own
+ * link always survives — stranding someone on a page with no way back is
+ * worse than showing one extra tab.
+ */
+export const initNav = () => {
+  const tabs = (window.APP_CONFIG && window.APP_CONFIG.tabs) || null;
+  if (!tabs) return;
+
+  const path = window.location.pathname;
+  const currentPage = path.substring(path.lastIndexOf("/") + 1) || "index.html";
+
+  document.querySelectorAll("[data-cluster-nav] a").forEach((link) => {
+    const href = (link.getAttribute("href") || "").split("?")[0];
+    if (!href || href === currentPage) return;
+    const keys = NAV_TAB_KEYS[href];
+    if (!keys) return;
+    const known = keys.filter((key) => key in tabs);
+    if (known.length && known.every((key) => tabs[key] === false)) {
+      link.remove();
+    }
+  });
+};
+
 export const clampPercent = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {

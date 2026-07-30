@@ -2859,6 +2859,167 @@ th[data-sortable][data-sort-dir="desc"]::after {
 }
 
 /* ----------------------------------------------------------------
+   31. Job placement planner
+   ---------------------------------------------------------------- */
+.planner-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-3);
+  margin: var(--space-4) 0;
+}
+
+.planner-form label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.planner-form input {
+  width: 9rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel-alt);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-transform: none;
+  letter-spacing: normal;
+}
+
+.planner-list {
+  display: grid;
+  gap: var(--space-3);
+  margin: var(--space-3) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.planner-card {
+  padding: var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--panel-alt);
+}
+
+.planner-card.is-blocked {
+  opacity: 0.75;
+}
+
+.planner-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.planner-card h4 {
+  margin: 0;
+  font-size: var(--text-lg);
+}
+
+.planner-card h4 span {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.planner-score {
+  display: grid;
+  place-items: center;
+  min-width: 3rem;
+  height: 3rem;
+  border-radius: var(--radius-full);
+  background: var(--accent-soft);
+  color: var(--accent-text, var(--accent));
+  font-size: var(--text-lg);
+  font-weight: 700;
+}
+
+.planner-wait {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-sm);
+}
+
+.planner-wait small {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.planner-reasons {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.planner-link {
+  display: inline-block;
+  margin-top: var(--space-3);
+  color: var(--accent-text, var(--accent));
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.planner-blocked {
+  margin-top: var(--space-4);
+}
+
+.planner-blocked summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+/* ----------------------------------------------------------------
+   31a. Queue wait estimates
+   ---------------------------------------------------------------- */
+.queue-wait {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 0;
+  padding: var(--space-2) var(--space-3);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  background: var(--panel-alt);
+  font-size: var(--text-sm);
+}
+
+.queue-wait strong {
+  font-size: var(--text-base);
+}
+
+.queue-wait small {
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+
+.queue-wait-label {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.queue-wait--low { border-left-color: var(--muted); }
+.queue-wait--medium { border-left-color: var(--accent); }
+.queue-wait--high { border-left-color: var(--success); }
+
+.queue-wait--unknown {
+  border-left-color: var(--border);
+  color: var(--muted);
+}
+
+/* ----------------------------------------------------------------
    31b. Topology graph
    Encoding: node fill = status, node size = core count, ring = busy
    share, solid halo = live session, dashed halo = status page only.
@@ -3215,20 +3376,25 @@ th[data-sortable][data-sort-dir="desc"]::after {
   background: var(--accent-soft);
 }
 
+/* The legend sits under the canvas rather than floating inside it — as an
+   overlay it covered whichever nodes happened to land bottom-left. */
+.topo-graph {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
 .topo-legend {
-  position: absolute;
-  left: var(--space-3);
-  bottom: var(--space-3);
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
+  gap: var(--space-1) var(--space-4);
   margin: 0;
   padding: var(--space-2) var(--space-3);
   list-style: none;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
-  background: var(--placeholder-bg);
-  backdrop-filter: blur(4px);
+  background: var(--panel);
   font-size: var(--text-xs);
   color: var(--muted);
 }
@@ -3683,11 +3849,6 @@ th[data-sortable][data-sort-dir="desc"]::after {
 
   .topo-toolbar-actions {
     margin-left: 0;
-  }
-
-  .topo-legend {
-    position: static;
-    margin: var(--space-2);
   }
 }
 

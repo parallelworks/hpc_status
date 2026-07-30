@@ -1,4 +1,15 @@
-import { buildDataUrl, clampPercent, clusterPagesEnabled, initThemeToggle, buildApiUrl, initHelpPanel, initBrand, formatRelativeTime, initQuickTips } from "./page-utils.js";
+import {
+  buildDataUrl,
+  clampPercent,
+  clusterPagesEnabled,
+  initThemeToggle,
+  buildApiUrl,
+  initHelpPanel,
+  initBrand,
+  formatRelativeTime,
+  initQuickTips,
+  initNav,
+} from "./page-utils.js";
 
 const DATA_URL = buildApiUrl("api/cluster-usage").toString();
 const numberFormatter = new Intl.NumberFormat("en-US");
@@ -664,6 +675,34 @@ const classifyQueueBacklog = (runningCores, pendingCores) => {
   };
 };
 
+/**
+ * Estimated time-to-start, when the server has enough history to derive one.
+ *
+ * Renders nothing rather than a placeholder when there is no estimate: a
+ * blank is honest, "unknown" everywhere is just noise. The basis is always
+ * on the element so the number can be audited.
+ */
+const renderWaitEstimate = (estimate) => {
+  if (!estimate) return "";
+  const { wait_display: display, confidence, basis, samples } = estimate;
+  if (!display) {
+    return `<p class="queue-wait queue-wait--unknown" title="${escapeAttr(basis || "")}">
+      Start time unknown <small>no turnover observed yet</small>
+    </p>`;
+  }
+  const tone = confidence === "high" ? "high" : confidence === "medium" ? "medium" : "low";
+  return `<p class="queue-wait queue-wait--${tone}" title="${escapeAttr(basis || "")}">
+    <span class="queue-wait-label">Est. start</span>
+    <strong>${escapeAttr(display)}</strong>
+    <small>${tone} confidence · ${formatNumber(samples)} samples</small>
+  </p>`;
+};
+
+const escapeAttr = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (ch) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]
+  );
+
 const renderQueueGrid = (queues, clusterCoresTotal = 0) => {
   if (!elements.queueGrid) return;
   if (!queues.length) {
@@ -726,6 +765,7 @@ const renderQueueGrid = (queues, clusterCoresTotal = 0) => {
             </div>
             <small>${footprintLabel}</small>
           </div>
+          ${renderWaitEstimate(queue.wait_estimate)}
           <p class="queue-backlog-note muted-text">${backlog.detail}</p>
         </article>`;
     })
@@ -1321,6 +1361,7 @@ const bootstrap = () => {
   initQuickTips();
   applyConfigBranding();
   initBrand();
+  initNav();
   const nav = document.querySelector("[data-cluster-nav]");
   if (!state.features.clusterPages) {
     if (nav) nav.remove();

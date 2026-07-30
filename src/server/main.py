@@ -14,6 +14,7 @@ from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
 
+from .alerts import AlertDispatcher
 from .config import Config
 from .netinfo import HostResolver
 from .routes import DashboardRequestHandler
@@ -203,8 +204,30 @@ def run_server(args) -> None:
     # Create the payload generator
     generate_fn = create_generate_payload_fn(config, store)
 
+    # Alerting on state changes (no-op unless a webhook is configured)
+    alert_dispatcher = AlertDispatcher(
+        enabled=config.alerts.enabled,
+        webhook_url=config.alerts.webhook_url,
+        min_severity=config.alerts.min_severity,
+        cooldown_seconds=config.alerts.cooldown_seconds,
+        timeout=config.alerts.timeout,
+        deployment_name=config.deployment_name,
+        dashboard_url=config.alerts.dashboard_url,
+        log=_log,
+    )
+    if alert_dispatcher.enabled:
+        _log(
+            f"[alerts] Enabled (min_severity={config.alerts.min_severity}, "
+            f"cooldown={config.alerts.cooldown_seconds}s)"
+        )
+
     # Initialize dashboard state
-    state = DashboardState(store, generate_fn, source_name="fleet_status")
+    state = DashboardState(
+        store,
+        generate_fn,
+        source_name="fleet_status",
+        alert_dispatcher=alert_dispatcher,
+    )
 
     # Do initial refresh
     _log("[dashboard] Loading initial data...")
@@ -234,6 +257,7 @@ def run_server(args) -> None:
             failure_threshold=config.rate_limiting.failure_threshold,
             pause_duration=config.rate_limiting.pause_duration,
             pw_context=config.get_collector_config("pw_cluster").extra.get("pw_context"),
+            alert_dispatcher=alert_dispatcher,
         )
         cluster_worker.start()
     else:
@@ -266,6 +290,10 @@ def run_server(args) -> None:
     DashboardRequestHandler.config = config.to_dict()
     DashboardRequestHandler.host_resolver = host_resolver
     DashboardRequestHandler.uptime_window_hours = config.topology.uptime_window_hours
+    DashboardRequestHandler.alert_dispatcher = alert_dispatcher
+    DashboardRequestHandler.wait_estimate_window_hours = (
+        config.topology.wait_estimate_window_hours
+    )
 
     # Create and run the server
     handler = functools.partial(DashboardRequestHandler, directory=str(web_dir))

@@ -3,7 +3,13 @@
  * Displays recommendations and alerts based on fleet status and cluster data
  */
 
-import { initHelpPanel, initBrand, formatRelativeTime, initQuickTips } from "./page-utils.js";
+import {
+  initHelpPanel,
+  initBrand,
+  formatRelativeTime,
+  initQuickTips,
+  initNav,
+} from "./page-utils.js";
 
 const THEME_STORAGE_KEY = "hpc-status-theme";
 
@@ -295,7 +301,100 @@ async function triggerRefresh() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Job placement planner
+// ---------------------------------------------------------------------------
+
+const PLACEMENT_URL = new URL("api/placement", apiBase).toString();
+
+const formatScore = (score) => `${Math.round(Number(score) || 0)}`;
+
+function renderPlacement(result) {
+  const container = document.getElementById("planner-results");
+  if (!container) return;
+
+  const { candidates = [], blocked = [], considered = 0, request = {} } = result || {};
+
+  if (!candidates.length && !blocked.length) {
+    container.innerHTML = `<p class="muted-text">
+      No queue data yet — the cluster monitor has not reported any queues to rank.
+    </p>`;
+    return;
+  }
+
+  const jobLabel = `${Number(request.cores || 0).toLocaleString()} cores × ${request.hours}h`;
+
+  const card = (entry, isBlocked) => `
+    <li class="planner-card${isBlocked ? " is-blocked" : ""}">
+      <div class="planner-card-head">
+        <div>
+          <h4>${escapeHtml(entry.cluster)} <span>/ ${escapeHtml(entry.queue || "")}</span></h4>
+          <p class="muted-text">
+            ${Number(entry.cores_free || 0).toLocaleString()} cores idle
+            ${entry.max_walltime ? `· max ${escapeHtml(entry.max_walltime)}` : ""}
+            ${entry.allocation_hours_remaining !== null && entry.allocation_hours_remaining !== undefined
+              ? `· ${Number(entry.allocation_hours_remaining).toLocaleString()} hrs left`
+              : ""}
+          </p>
+        </div>
+        ${isBlocked
+          ? '<span class="badge down">Cannot run</span>'
+          : `<span class="planner-score" title="Capacity ${entry.components.capacity} · wait ${entry.components.wait} · backlog ${entry.components.backlog} · allocation ${entry.components.allocation}">${formatScore(entry.score)}</span>`}
+      </div>
+      ${entry.wait_estimate?.wait_display
+        ? `<p class="planner-wait">Est. start <strong>${escapeHtml(entry.wait_estimate.wait_display)}</strong>
+             <small>${escapeHtml(entry.wait_estimate.basis || "")}</small></p>`
+        : ""}
+      ${(isBlocked ? entry.blockers : entry.reasons)?.length
+        ? `<ul class="planner-reasons">
+             ${(isBlocked ? entry.blockers : entry.reasons)
+               .map((reason) => `<li>${escapeHtml(reason)}</li>`)
+               .join("")}
+           </ul>`
+        : ""}
+      ${isBlocked
+        ? ""
+        : `<a class="planner-link" href="${entry.links.queues}">Open queue health →</a>`}
+    </li>`;
+
+  container.innerHTML = `
+    <p class="planner-summary muted-text">
+      Ranked ${candidates.length} of ${considered} queues for ${escapeHtml(jobLabel)}.
+    </p>
+    <ul class="planner-list">${candidates.map((c) => card(c, false)).join("")}</ul>
+    ${blocked.length
+      ? `<details class="planner-blocked">
+           <summary>${blocked.length} queue${blocked.length === 1 ? "" : "s"} cannot run this job</summary>
+           <ul class="planner-list">${blocked.map((b) => card(b, true)).join("")}</ul>
+         </details>`
+      : ""}`;
+}
+
+async function runPlanner(event) {
+  event?.preventDefault();
+  const container = document.getElementById("planner-results");
+  const params = new URLSearchParams({
+    cores: document.getElementById("planner-cores")?.value || "1",
+    hours: document.getElementById("planner-hours")?.value || "1",
+    gpus: document.getElementById("planner-gpus")?.value || "0",
+  });
+  if (container) {
+    container.innerHTML = '<p class="muted-text">Ranking queues…</p>';
+  }
+  try {
+    const response = await fetch(`${PLACEMENT_URL}?${params}`, { cache: "no-store" });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    renderPlacement(await response.json());
+  } catch (err) {
+    console.error("Placement request failed", err);
+    if (container) {
+      container.innerHTML = `<p class="muted-text">Unable to rank queues (${escapeHtml(err.message)}).</p>`;
+    }
+  }
+}
+
 function registerEvents() {
+  document.getElementById("planner-form")?.addEventListener("submit", runPlanner);
   elements.refreshBtn?.addEventListener("click", () => triggerRefresh());
   elements.themeToggle?.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || resolveDefaultTheme();
@@ -309,6 +408,7 @@ applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
 initHelpPanel();
 initQuickTips();
 initBrand();
+initNav();
 registerEvents();
 loadInsights();
 

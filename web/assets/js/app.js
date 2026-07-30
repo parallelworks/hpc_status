@@ -1,4 +1,12 @@
-import { clampPercent, clusterPagesEnabled, initHelpPanel, initBrand, formatRelativeTime, initQuickTips } from "./page-utils.js";
+import {
+  clampPercent,
+  clusterPagesEnabled,
+  initHelpPanel,
+  initBrand,
+  formatRelativeTime,
+  initQuickTips,
+  initNav,
+} from "./page-utils.js";
 
 const featureFlags = {
   clusterPages: clusterPagesEnabled(),
@@ -1032,6 +1040,7 @@ function applyConfigTitle() {
 applyTheme(safeGetStoredTheme() || resolveDefaultTheme(), { persist: false });
 applyConfigTitle();
 initBrand();
+initNav();
 registerEvents();
 initHelpPanel();
 initQuickTips();

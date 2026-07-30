@@ -57,6 +57,23 @@ class UIConfig:
 
 
 @dataclass
+class AlertsConfig:
+    """Outbound alerting on system state changes."""
+
+    enabled: bool = False
+    # Any endpoint that accepts a JSON POST: Slack/Teams incoming webhooks,
+    # or your own receiver. The payload carries both `text` and `event`.
+    webhook_url: Optional[str] = None
+    # Minimum severity to deliver: info | warning | critical.
+    min_severity: str = "warning"
+    # Per-system quiet period, so a flapping machine alerts once.
+    cooldown_seconds: int = 900
+    timeout: int = 10
+    # Optional link included in the alert text.
+    dashboard_url: Optional[str] = None
+
+
+@dataclass
 class TopologyConfig:
     """Topology view configuration."""
 
@@ -68,6 +85,8 @@ class TopologyConfig:
     # Window used for the per-system uptime percentage.
     uptime_window_hours: int = 24
     default_layout: str = "hierarchy"
+    # Trailing window used to measure queue turnover for wait estimates.
+    wait_estimate_window_hours: int = 6
     # Per-deployment site metadata, merged over the built-in catalog:
     #   sites:
     #     erdc: {name: "ERDC DSRC", location: "Vicksburg, MS", lat: 32.3, lon: -90.87}
@@ -94,6 +113,7 @@ class Config:
     ui: UIConfig = field(default_factory=UIConfig)
     rate_limiting: RateLimitConfig = field(default_factory=RateLimitConfig)
     topology: TopologyConfig = field(default_factory=TopologyConfig)
+    alerts: AlertsConfig = field(default_factory=AlertsConfig)
 
     collectors: Dict[str, CollectorConfig] = field(default_factory=dict)
 
@@ -147,7 +167,19 @@ class Config:
             address_ttl_seconds=topo_data.get("address_ttl_seconds", 3600),
             uptime_window_hours=topo_data.get("uptime_window_hours", 24),
             default_layout=topo_data.get("default_layout", "hierarchy"),
+            wait_estimate_window_hours=topo_data.get("wait_estimate_window_hours", 6),
             sites=topo_data.get("sites", {}) or {},
+        )
+
+        # Parse alerting config
+        alerts_data = data.get("alerts", {}) or {}
+        alerts = AlertsConfig(
+            enabled=alerts_data.get("enabled", False),
+            webhook_url=alerts_data.get("webhook_url"),
+            min_severity=alerts_data.get("min_severity", "warning"),
+            cooldown_seconds=alerts_data.get("cooldown_seconds", 900),
+            timeout=alerts_data.get("timeout", 10),
+            dashboard_url=alerts_data.get("dashboard_url"),
         )
 
         # Parse collector configs
@@ -173,6 +205,7 @@ class Config:
             ui=ui,
             rate_limiting=rate_limiting,
             topology=topology,
+            alerts=alerts,
             collectors=collectors,
             data_dir=data.get("data_dir"),
         )
@@ -251,11 +284,19 @@ class Config:
                 "max_concurrent_ssh": self.rate_limiting.max_concurrent_ssh,
                 "ssh_timeout": self.rate_limiting.ssh_timeout,
             },
+            "alerts": {
+                "enabled": self.alerts.enabled,
+                "min_severity": self.alerts.min_severity,
+                "cooldown_seconds": self.alerts.cooldown_seconds,
+                # webhook_url is deliberately not exposed: /api/config is
+                # public and the URL is a credential.
+            },
             "topology": {
                 "resolve_addresses": self.topology.resolve_addresses,
                 "address_ttl_seconds": self.topology.address_ttl_seconds,
                 "uptime_window_hours": self.topology.uptime_window_hours,
                 "default_layout": self.topology.default_layout,
+                "wait_estimate_window_hours": self.topology.wait_estimate_window_hours,
                 "sites": self.topology.sites,
             },
             "collectors": {
