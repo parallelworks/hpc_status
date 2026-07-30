@@ -958,6 +958,7 @@ const renderGraph = ({ animate = true, fit = false } = {}) => {
 /** Background decoration for the layouts that need it: lane frames, graticule. */
 const renderDecorations = (view) => {
   dom.laneLayer.innerHTML = "";
+  dom.canvas.classList.toggle("is-map", state.layout === "geo");
   if (state.layout === "geo") {
     state.basemapBounds = renderBasemap();
     renderGraticule(view);
@@ -1008,8 +1009,15 @@ const loadBasemap = async () => {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     state.basemap = await response.json();
   } catch (err) {
+    // Say so out loud. A silently absent basemap looks identical to a
+    // broken page, and "I see no map" is not a diagnosable bug report.
     console.warn("Basemap unavailable; drawing the graticule only", err);
     state.basemap = false;
+    setStatus(
+      "Map outline could not be loaded (assets/data/us-states.json) — " +
+        "showing coordinates on a grid instead.",
+      "error"
+    );
   }
   return state.basemap;
 };
@@ -1060,11 +1068,21 @@ const renderBasemap = () => {
   const plan = state.geoPlan;
   if (!basemap || !basemap.states || !plan) return null;
 
+  // Land is drawn in two passes so a coastline and a state line can look
+  // different: the national outline carries the fill and the heavier
+  // stroke, state borders are hairlines laid over it.
   const drawLand = (window_, project, parent) => {
+    (basemap.country || []).forEach((ring) => {
+      if (!overlaps(ring, window_)) return;
+      parent.append(svgEl("path", { class: "topo-land", d: ringPath(ring, project) }));
+    });
     basemap.states.forEach((entry) => {
       entry.r.forEach((ring) => {
         if (!overlaps(ring, window_)) return;
-        const path = svgEl("path", { class: "topo-land", d: ringPath(ring, project) });
+        const path = svgEl("path", {
+          class: basemap.country?.length ? "topo-state" : "topo-land",
+          d: ringPath(ring, project),
+        });
         const title = svgEl("title");
         title.textContent = entry.n;
         path.append(title);
