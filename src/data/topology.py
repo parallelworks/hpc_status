@@ -792,7 +792,8 @@ def _build_system_node(
 ) -> Dict[str, Any]:
     """Merge a fleet status row with any matching cluster telemetry."""
     meta = (cluster or {}).get("cluster_metadata") or {}
-    status = _normalize_status(row.get("status"))
+    reported = _normalize_status(row.get("status"))
+    cluster_status = _normalize_status(meta.get("status")) if cluster else "UNKNOWN"
     login = row.get("login") or meta.get("uri") or None
     scheduler = (row.get("scheduler") or "").upper() or None
 
@@ -815,7 +816,22 @@ def _build_system_node(
     # and fall back to the site-reported status history.
     history = cluster_stats or system_stats
 
-    connected = cluster is not None and _normalize_status(meta.get("status")) != "DOWN"
+    connected = cluster is not None and cluster_status != "DOWN"
+
+    # Being logged in and reading queues is direct evidence a system is up —
+    # better evidence than a page that does not mention it. So a live
+    # session fills in an unknown status, and is the whole story for systems
+    # that no status page covers. It never overrides a site that says its
+    # own machine is down or in maintenance: the site knows things we
+    # cannot see from a login node.
+    status = reported
+    status_source = "status page" if origin == "fleet" else "control plane"
+    if origin == "pw":
+        status = "UP" if connected else _normalize_status(meta.get("status"))
+        status_source = "live session" if connected else "control plane"
+    elif reported == "UNKNOWN" and connected:
+        status = "UP"
+        status_source = "live session"
     connection = {
         "source": "pw" if cluster is not None else "status-page",
         "uri": meta.get("uri"),
@@ -878,6 +894,8 @@ def _build_system_node(
         "insights": node_insights,
         "alert": alert,
         "site_source": site_source,
+        "status_source": status_source,
+        "reported_status": reported,
         "links": {
             "queues": f"queues.html?cluster={slug}",
             "quota": f"quota.html?cluster={slug}",

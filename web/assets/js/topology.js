@@ -27,7 +27,7 @@ const DATA_URL = buildApiUrl("api/topology").toString();
 const POLL_MS = 60_000;
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-const LAYOUTS = new Set(["hierarchy", "radial", "force", "lanes", "geo"]);
+const LAYOUTS = new Set(["hierarchy", "radial", "force", "lanes", "load", "geo"]);
 const GROUPINGS = new Set(["site", "scheduler", "status", "connection"]);
 // Control-plane round trip above which a link is called out as slow.
 const SLOW_LINK_MS = 1500;
@@ -94,6 +94,7 @@ const state = {
   transform: { x: 0, y: 0, k: 1 },
   elements: new Map(),
   animation: { handle: null, start: 0, duration: 620, from: new Map() },
+  frameDuration: 420, // transition length while replaying
   forceTicks: 0,
   suppressClick: false,
   pressedNodeId: null,
@@ -517,6 +518,59 @@ const layoutLanes = (view) => {
   return positions;
 };
 
+/**
+ * Load layout: vertical position *is* utilization.
+ *
+ * The other layouts arrange by structure, which never changes, so replaying
+ * history only ever recoloured them. Here a system's height is how busy it
+ * is, so scrubbing through the day makes the fleet visibly rise and fall.
+ */
+const LOAD_PLOT = { height: 620, columnWidth: 190, top: 40, unknownGap: 90 };
+
+const layoutLoad = (view) => {
+  const positions = new Map();
+  const { height, columnWidth, top, unknownGap } = LOAD_PLOT;
+
+  view.groups.forEach((group, groupIndex) => {
+    const columnX = groupIndex * columnWidth;
+    positions.set(group.id, { x: columnX, y: top - 110 });
+
+    // Systems with telemetry are placed by load; the rest sit in a band
+    // below the axis, because "idle" and "unmeasured" are different claims.
+    const measured = [];
+    const unmeasured = [];
+    group.members.forEach((member) => {
+      const value = Number(member.capacity?.utilization_percent);
+      (Number.isFinite(value) ? measured : unmeasured).push(member);
+    });
+
+    measured.forEach((member, index) => {
+      const value = clampPercent(Number(member.capacity.utilization_percent));
+      // Nudge members apart horizontally so equal loads do not stack.
+      const jitter = ((index % 3) - 1) * 34;
+      positions.set(member.id, {
+        x: columnX + jitter,
+        y: top + (1 - value / 100) * height,
+      });
+    });
+
+    unmeasured.forEach((member, index) => {
+      const perRow = 3;
+      const row = Math.floor(index / perRow);
+      const inRow = Math.min(perRow, unmeasured.length - row * perRow);
+      const offset = (index % perRow) - (inRow - 1) / 2;
+      positions.set(member.id, {
+        x: columnX + offset * 62,
+        y: top + height + unknownGap + row * 72,
+      });
+    });
+  });
+
+  const width = Math.max(0, view.groups.length - 1) * columnWidth;
+  positions.set(view.monitor.id, { x: width / 2, y: top - 210 });
+  return positions;
+};
+
 // Equirectangular projection with a standard parallel, so the country is
 // the shape people expect rather than a stretched rectangle. Longitude
 // degrees shrink by cos(latitude) as you leave the equator; using the
@@ -826,6 +880,7 @@ const computeLayout = (view) => {
   switch (state.layout) {
     case "radial": return layoutRadial(view);
     case "lanes": return layoutLanes(view);
+    case "load": return layoutLoad(view);
     case "geo": return layoutGeo(view);
     case "force": return null; // handled by the simulation loop
     case "hierarchy":
@@ -920,6 +975,15 @@ const updateNodeElement = (node, element) => {
   refs.core.setAttribute("r", radius);
   refs.halo.setAttribute("r", radius + 9);
   refs.util.setAttribute("r", radius + 5);
+
+  // The disc breathes with load: a busy machine fills its ring, an idle one
+  // sits as a dot inside it. Size carries capacity, fill carries use — and
+  // unlike either, this one moves when the numbers do.
+  const busy = Number(node.capacity?.utilization_percent);
+  const loadScale = Number.isFinite(busy)
+    ? 0.5 + 0.5 * (clampPercent(busy) / 100)
+    : 1; // no telemetry: no claim about load, so draw it plain
+  refs.core.style.transform = `scale(${loadScale.toFixed(3)})`;
 
   // Utilization ring: a dashed circle whose filled arc is the busy share.
   const utilization = node.kind === "system"
@@ -1148,6 +1212,10 @@ const renderDecorations = (view) => {
     state.basemapBounds = renderBasemap();
     renderGraticule(view);
     renderGeoLeaders(view);
+    return;
+  }
+  if (state.layout === "load") {
+    renderLoadAxis(view);
     return;
   }
   if (state.layout !== "lanes") return;
@@ -1397,6 +1465,63 @@ const renderGeoLeaders = (view) => {
   });
 };
 
+/** Percentage gridlines behind the load layout. */
+const renderLoadAxis = (view) => {
+  const { height, columnWidth, top, unknownGap } = LOAD_PLOT;
+  const width = Math.max(columnWidth, view.groups.length * columnWidth);
+  const left = -columnWidth * 0.7;
+  const right = left + width + columnWidth * 0.4;
+
+  [0, 25, 50, 75, 100].forEach((percent) => {
+    const y = top + (1 - percent / 100) * height;
+    dom.laneLayer.append(
+      svgEl("line", { class: "topo-axis-line", x1: left, y1: y, x2: right, y2: y })
+    );
+    const label = svgEl("text", {
+      class: "topo-axis-label",
+      x: left - 8,
+      y,
+      "text-anchor": "end",
+      dy: "0.32em",
+    });
+    label.textContent = `${percent}%`;
+    dom.laneLayer.append(label);
+  });
+
+  const caption = svgEl("text", {
+    class: "topo-axis-caption",
+    x: left - 8,
+    y: top - 22,
+    "text-anchor": "end",
+  });
+  caption.textContent = "cores busy";
+  dom.laneLayer.append(caption);
+
+  // Only draw the "no telemetry" band when something is actually in it.
+  const hasUnmeasured = view.groups.some((group) =>
+    group.members.some((m) => !Number.isFinite(Number(m.capacity?.utilization_percent)))
+  );
+  if (!hasUnmeasured) return;
+  const bandY = top + height + unknownGap - 34;
+  dom.laneLayer.append(
+    svgEl("line", {
+      class: "topo-axis-line topo-axis-line--band",
+      x1: left,
+      y1: bandY,
+      x2: right,
+      y2: bandY,
+    })
+  );
+  const bandLabel = svgEl("text", {
+    class: "topo-axis-label",
+    x: left - 8,
+    y: bandY + 26,
+    "text-anchor": "end",
+  });
+  bandLabel.textContent = "no telemetry";
+  dom.laneLayer.append(bandLabel);
+};
+
 /** Lat/lon grid behind the geographic layout, labelled every 5 degrees. */
 const renderGraticule = (view) => {
   const located = view.groups.filter((g) => Number.isFinite(g.lat) && Number.isFinite(g.lon));
@@ -1448,6 +1573,8 @@ const animateTo = (animate, onComplete) => {
     [...state.positions.entries()].map(([id, point]) => [id, { ...point }])
   );
   state.animation.start = performance.now();
+  state.animation.duration =
+    state.historyIndex === null || !state.playing ? 620 : state.frameDuration;
   const step = (now) => {
     const elapsed = now - state.animation.start;
     const t = Math.min(1, elapsed / state.animation.duration);
@@ -1935,6 +2062,10 @@ const renderInspector = (node) => {
       ${metaRow("Placed by", SITE_SOURCE_LABELS[node.site_source] || null,
         "How this system's site was determined")}
       ${metaRow("Data source", node.connected ? "Live session + status page" : "Status page only")}
+      ${metaRow("Status from", node.status_source ? escapeHtml(node.status_source) : null,
+        node.reported_status && node.reported_status !== node.status
+          ? `The status page reported ${node.reported_status}`
+          : "Where this system's status was determined")}
       ${metaRow("Connected for", connectedFor ? escapeHtml(connectedFor) : null,
         connection.connected_since ? `Since ${connection.connected_since}` : "")}
       ${metaRow(
@@ -2334,7 +2465,9 @@ const showFrame = (index) => {
     state.historyIndex = Math.max(0, Math.min(frames.length - 1, index));
   }
   renderPlayback();
-  renderGraph({ animate: false });
+  // Animated so the fleet visibly moves between one instant and the next —
+  // a hard cut between frames reads as a static picture being replaced.
+  renderGraph({ animate: true });
   if (state.selectedId) renderPanel();
 };
 
@@ -2417,10 +2550,14 @@ const applyFrameToNode = (node, frame) => {
   return {
     ...node,
     status: recorded.status || "UNKNOWN",
-    capacity: capacity || node.capacity,
-    queues: recorded.cores_pending !== undefined
-      ? { ...(node.queues || {}), pending_cores: recorded.cores_pending, count: node.queues?.count || 0 }
-      : node.queues,
+    // No load reading at this instant means we did not measure it then —
+    // not that it was as busy as it is now. Falling back to the live value
+    // would make the replay quietly assert something it does not know.
+    capacity,
+    queues:
+      recorded.cores_pending !== undefined
+        ? { count: node.queues?.count || 0, pending_cores: recorded.cores_pending }
+        : null,
     historical: true,
   };
 };
