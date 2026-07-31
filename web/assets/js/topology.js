@@ -73,6 +73,7 @@ const state = {
   hoverId: null,
   compare: new Set(), // node ids pinned into the comparison panel
   compareMode: false,
+  timelineOpen: false, // the replay transport is opt-in, not furniture
   history: null, // replay frames from /api/history
   historyIndex: null, // null = live; otherwise the frame being shown
   historyWindow: 24,
@@ -2506,8 +2507,26 @@ const renderPlayback = () => {
   const bar = dom.playback;
   if (!bar) return;
   const frames = state.history?.frames || [];
-  bar.hidden = frames.length < 2;
-  if (bar.hidden) return;
+  bar.hidden = !state.timelineOpen;
+  dom.timelineBtn?.classList.toggle("is-active", state.timelineOpen);
+  dom.timelineBtn?.setAttribute("aria-pressed", state.timelineOpen ? "true" : "false");
+
+  // Contents are kept current even while hidden: a bar that reopens showing
+  // a timestamp it is no longer displaying is a bar that lies about state.
+
+  // Opened with nothing recorded yet: say so rather than showing a dead
+  // scrubber. A new deployment has no history until it has collected some.
+  const empty = frames.length < 2;
+  if (dom.playbackEmpty) dom.playbackEmpty.hidden = !empty;
+  bar.classList.toggle("is-empty", empty);
+  [dom.play, dom.scrub, dom.liveBtn].forEach((el) => {
+    if (el) el.disabled = empty;
+  });
+  if (empty) {
+    dom.playbackTime.textContent = "";
+    dom.playbackRange.textContent = "";
+    return;
+  }
 
   dom.scrub.max = String(frames.length - 1);
   dom.scrub.value = String(
@@ -2562,6 +2581,21 @@ const applyFrameToNode = (node, frame) => {
   };
 };
 
+/** Show or hide the replay transport. History is fetched on first open. */
+const toggleTimeline = async (open) => {
+  state.timelineOpen = open === undefined ? !state.timelineOpen : Boolean(open);
+  if (state.timelineOpen) {
+    renderPlayback(); // show the bar straight away, then fill it
+    if (!state.history) await loadHistory();
+  } else {
+    // Never leave a hidden control holding the view in the past.
+    stopPlayback();
+    if (state.historyIndex !== null) showFrame(null);
+  }
+  renderPlayback();
+  syncLocation();
+};
+
 // ---------------------------------------------------------------------------
 // URL state
 // ---------------------------------------------------------------------------
@@ -2580,6 +2614,7 @@ const readLocation = () => {
   state.filters.connectedOnly = params.get("connected") === "1";
   const node = params.get("node");
   if (node) state.selectedId = node;
+  if (params.get("timeline") === "1") state.timelineOpen = true;
   const detail = params.get("detail");
   if (detail && MAP_DETAILS.has(detail)) state.mapDetail = detail;
   const compare = params.get("compare");
@@ -2600,6 +2635,7 @@ const syncLocation = () => {
   if (state.filters.status) params.set("status", state.filters.status);
   if (state.filters.connectedOnly) params.set("connected", "1");
   if (state.selectedId) params.set("node", state.selectedId);
+  if (state.timelineOpen) params.set("timeline", "1");
   if (state.mapDetail !== "auto") params.set("detail", state.mapDetail);
   if (state.compare.size) params.set("compare", [...state.compare].join(","));
   window.history.replaceState({}, "", `${window.location.pathname}?${params.toString()}`);
@@ -2631,6 +2667,8 @@ const cacheDom = () => {
   dom.compareToggle = document.getElementById("topo-compare");
   dom.detailSelect = document.getElementById("topo-detail");
   dom.playback = document.getElementById("topo-playback");
+  dom.playbackEmpty = document.getElementById("topo-playback-empty");
+  dom.timelineBtn = document.getElementById("topo-timeline");
   dom.play = document.getElementById("topo-play");
   dom.scrub = document.getElementById("topo-scrub");
   dom.playbackTime = document.getElementById("topo-playback-time");
@@ -2692,6 +2730,7 @@ const bindEvents = () => {
     if (btn) setLayout(btn.dataset.layout);
   });
 
+  dom.timelineBtn?.addEventListener("click", () => toggleTimeline());
   dom.play?.addEventListener("click", togglePlayback);
   dom.liveBtn?.addEventListener("click", () => {
     stopPlayback();
@@ -3033,7 +3072,10 @@ const bootstrap = async () => {
   if (pendingSelection) selectNode(pendingSelection);
   else if (state.compare.size) renderPanel();
 
-  loadHistory();
+  // History is only fetched when the timeline is opened — one fewer
+  // request on a page load that may never use it.
+  if (state.timelineOpen) toggleTimeline(true);
+  else renderPlayback();
   state.pollHandle = setInterval(() => loadData({ silent: true }), POLL_MS);
 };
 

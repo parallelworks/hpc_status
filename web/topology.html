@@ -144,6 +144,9 @@
         </label>
 
         <div class="topo-toolbar-actions">
+          <button type="button" class="ghost-btn ghost-btn--sm" id="topo-timeline" aria-pressed="false"
+            aria-controls="topo-playback"
+            title="Replay the last few hours or days from the monitor's own records">Timeline</button>
           <button type="button" class="ghost-btn ghost-btn--sm" id="topo-compare" aria-pressed="false"
             title="Click systems to stack them side by side (or shift-click any system at any time)">Compare</button>
           <button type="button" class="ghost-btn ghost-btn--sm" id="topo-fit" title="Fit the graph to the viewport">Fit</button>
@@ -153,6 +156,9 @@
 
       <section class="topo-playback" id="topo-playback" hidden aria-label="Replay">
         <button type="button" class="topo-play" id="topo-play" aria-label="Play the recorded history">▶</button>
+        <p class="topo-playback-empty" id="topo-playback-empty" hidden>
+          No recorded history yet — the timeline fills in as the monitor collects.
+        </p>
         <div class="topo-playback-track">
           <input type="range" id="topo-scrub" min="0" max="0" value="0" step="1"
             aria-label="Point in time" />
