@@ -98,3 +98,27 @@ class TestAppConfig:
         payload = json.loads(body)
         assert payload["deployment"] == {"name": "Test", "platform": "generic"}
         assert payload["topology"]["default_layout"] == "radial"
+
+
+class TestEndpointCatalog:
+    """The catalog is only useful if the server actually serves it."""
+
+    def test_catalog_is_served_with_groups_and_a_base_url(self, server):
+        import json
+
+        status, headers, body = fetch(f"{server}/api/endpoints")
+        payload = json.loads(body)
+        assert status == 200
+        assert headers["Content-Type"].startswith("application/json")
+        assert payload["groups"], "the API page renders one section per group"
+        assert payload["base_url"].startswith("/") or payload["base_url"] == ""
+        paths = {entry["path"] for entry in payload["endpoints"]}
+        # Self-description is the point: it must list itself.
+        assert "/api/endpoints" in paths
+        for entry in payload["endpoints"]:
+            assert entry["group"] in payload["groups"]
+
+    def test_catalog_answers_cross_origin_callers(self, server):
+        """Documented as CORS-open; a dashboard embedded elsewhere relies on it."""
+        _, headers, _ = fetch(f"{server}/api/endpoints")
+        assert headers["Access-Control-Allow-Origin"] == "*"

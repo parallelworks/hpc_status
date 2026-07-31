@@ -4091,7 +4091,209 @@ th[data-sortable][data-sort-dir="desc"]::after {
 }
 
 /* ----------------------------------------------------------------
-   32. Motion & Accessibility
+   32. API reference page
+   ---------------------------------------------------------------- */
+.api-base {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.api-base code {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: var(--text-sm);
+  padding: 0.45rem 0.75rem;
+  background: var(--panel-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  word-break: break-all;
+}
+
+.api-group {
+  margin-bottom: var(--space-6);
+}
+
+.api-group h2 {
+  font-size: var(--text-sm);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin: 0 0 var(--space-3);
+}
+
+.api-endpoint {
+  padding: var(--space-4) var(--space-6);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  margin-bottom: var(--space-3);
+}
+
+.api-endpoint-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.api-method {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  padding: 0.2rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--accent-soft);
+  color: var(--accent-text);
+}
+
+/* POST is the only verb here that changes anything — colour it as such. */
+.api-method--post {
+  background: rgba(212, 149, 47, 0.16);
+  color: var(--alert);
+}
+
+.api-path {
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: var(--text-sm);
+  color: var(--text);
+  word-break: break-all;
+}
+
+.api-summary {
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
+.api-description,
+.api-note {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  max-width: 70ch;
+}
+
+.api-note::before {
+  content: "Note: ";
+  color: var(--alert);
+}
+
+.api-params {
+  width: 100%;
+  margin-top: var(--space-3);
+  border-collapse: collapse;
+  font-size: var(--text-xs);
+}
+
+.api-params th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 0.35rem 0.6rem 0.35rem 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.api-params td {
+  padding: 0.4rem 0.6rem 0.4rem 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+  color: var(--text);
+}
+
+.api-params td:last-child {
+  color: var(--muted);
+}
+
+.api-returns {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.api-returns span {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-right: var(--space-2);
+}
+
+.api-returns code,
+.api-params code {
+  font-family: "SFMono-Regular", Consolas, monospace;
+  padding: 0.1rem 0.35rem;
+  background: var(--panel-alt);
+  border-radius: var(--radius-sm);
+}
+
+.api-actions {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+
+.api-arg {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.api-arg input {
+  padding: 0.4rem 0.6rem;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: var(--text-xs);
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  min-width: 10rem;
+}
+
+.api-arg--wide input {
+  min-width: 18rem;
+}
+
+.api-response {
+  margin: var(--space-3) 0 0;
+  padding: var(--space-3);
+  max-height: 22rem;
+  overflow: auto;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: var(--text-xs);
+  line-height: 1.55;
+  white-space: pre;
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.api-response.is-error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+@media (max-width: 700px) {
+  .api-arg input,
+  .api-arg--wide input {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .api-arg {
+    flex: 1 1 100%;
+  }
+}
+
+/* ----------------------------------------------------------------
+   33. Motion & Accessibility
    ---------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   *,

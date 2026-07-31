@@ -126,6 +126,7 @@ const NAV_TAB_KEYS = {
   "quota.html": ["quota"],
   "storage.html": ["storage"],
   "insights.html": ["insights"],
+  "api.html": ["api"],
 };
 
 /**
@@ -385,6 +386,14 @@ const QUICK_TIPS = {
       "<strong>$SCRATCH</strong> files are automatically deleted after 30-60 days - don't store important data there",
       "Keep <strong>$HOME</strong> under 80% - multiple directories including $HOME are backed up",
       "Move completed project data to <strong>archive</strong> storage to free up working space"
+    ],
+  },
+  "api.html": {
+    title: "API Tips",
+    tips: [
+      "Every panel in this dashboard is backed by one of these endpoints — <strong>Try it</strong> shows exactly what it returns",
+      "The list is served by the API itself, so it describes the version you are running",
+      "<strong>Copy curl</strong> gives you a command that works from anywhere that can reach this host",
     ],
   },
   "insights.html": {

@@ -26,6 +26,7 @@ ui:
     queues: true
     quota: true
     storage: true
+    api: true
     fleet: false
 
 rate_limiting:

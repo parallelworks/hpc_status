@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>API | HPC Status Dashboard</title>
+  <meta name="description" content="REST API reference for the HPC Status Monitor, with live example responses from this deployment.">
+  <script>
+    (function () {
+      var path = window.location.pathname || "/";
+      var base = document.createElement("base");
+      base.href = window.location.origin + path;
+      document.documentElement.setAttribute("data-base-path", path);
+      document.head.appendChild(base);
+    })();
+  </script>
+  <script src="app-config.js"></script>
+  <script>
+    (function () {
+      try {
+        const saved = window.localStorage.getItem("hpc-status-theme");
+        const fallback = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+        document.documentElement.dataset.theme = saved || fallback || "dark";
+      } catch (err) {
+        document.documentElement.dataset.theme = (window.APP_CONFIG && window.APP_CONFIG.defaultTheme) || "dark";
+      }
+      document.documentElement.dataset.platform = (window.APP_CONFIG && window.APP_CONFIG.platform) || "generic";
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="assets/css/styles.css" />
+</head>
+
+<body>
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+
+  <div class="page">
+    <header class="hero">
+      <div>
+        <p class="eyebrow" id="header-eyebrow">HPC STATUS</p>
+        <h1>API</h1>
+        <p class="lede">
+          Everything this dashboard shows is available as JSON. Run any request against
+          this deployment and see exactly what it returns.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <a class="ghost-btn" href="index.html">← Fleet dashboard</a>
+        <button id="theme-toggle" class="theme-btn" aria-label="Toggle color theme">
+          <span class="theme-icon" aria-hidden="true">🌙</span>
+          <span class="theme-label">Dark</span>
+        </button>
+      </div>
+    </header>
+
+    <nav class="subnav" data-cluster-nav aria-label="Main navigation">
+      <a href="index.html">Fleet status</a>
+      <a href="topology.html">Topology</a>
+      <a href="queues.html">Queue health</a>
+      <a href="quota.html">Quota usage</a>
+      <a href="storage.html">Storage</a>
+      <a href="insights.html">Insights</a>
+      <a href="api.html" aria-current="page">API</a>
+    </nav>
+
+    <p id="api-status" class="status-banner" role="status" hidden></p>
+
+    <main id="main-content">
+      <section class="panel">
+        <div class="panel-head">
+          <div>
+            <p class="eyebrow">Getting started</p>
+            <h3>Base URL</h3>
+          </div>
+        </div>
+        <div class="api-base">
+          <code id="api-base-url">…</code>
+          <button type="button" class="ghost-btn ghost-btn--sm" id="api-copy-base">Copy</button>
+        </div>
+        <p class="muted-text">
+          Every endpoint is a plain HTTP <code>GET</code> unless marked otherwise, needs no
+          authentication, and answers JSON with <code>Access-Control-Allow-Origin: *</code>.
+          Responses are never cached — each one reflects the most recent collection.
+        </p>
+        <p class="muted-text">
+          The list below is served by the API itself at
+          <code>/api/endpoints</code>, so it always describes the version you are
+          running rather than the version someone last wrote about.
+        </p>
+      </section>
+
+      <section id="api-list" aria-live="polite">
+        <p class="placeholder">Loading the endpoint catalog…</p>
+      </section>
+    </main>
+
+    <footer class="footer" role="contentinfo">
+      <small>Full reference: <code>docs/api.md</code> · machine-readable: <code>schemas/openapi.yaml</code></small>
+      <small>HPC Status Monitor v2.1</small>
+    </footer>
+  </div>
+
+  <script type="module" src="assets/js/api.js"></script>
+</body>
+
+</html>

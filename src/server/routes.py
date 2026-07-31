@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Dict, Optional, TYPE_CHECKING
 from urllib.parse import urlparse, unquote
 
+from .api_catalog import catalog, groups
+
 if TYPE_CHECKING:
     from .alerts import AlertDispatcher
     from .netinfo import HostResolver
@@ -116,6 +118,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return self._handle_placement(parsed)
         if parsed.path == "/api/history":
             return self._handle_history(parsed)
+        if parsed.path == "/api/endpoints":
+            return self._handle_endpoints()
 
         # Fall back to static file serving
         return super().do_GET()
@@ -477,6 +481,21 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 "alerting_enabled": bool(
                     self.alert_dispatcher and self.alert_dispatcher.enabled
                 ),
+                "generated_at": datetime.utcnow().isoformat() + "Z",
+            }
+        )
+
+    def _handle_endpoints(self):
+        """Describe the API, including this endpoint.
+
+        Served from the same catalog the API page and the OpenAPI document
+        are built from, so none of the three can drift from the others.
+        """
+        self._send_json(
+            {
+                "endpoints": catalog(),
+                "groups": groups(),
+                "base_url": self._build_prefixed_path("/"),
                 "generated_at": datetime.utcnow().isoformat() + "Z",
             }
         )
