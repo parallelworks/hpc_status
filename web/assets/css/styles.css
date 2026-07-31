@@ -3035,6 +3035,24 @@ th[data-sortable][data-sort-dir="desc"]::after {
   box-shadow: var(--shadow-sm);
 }
 
+.ghost-btn--sm.is-active {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--brand-on, #fff);
+}
+
+.topo-playback.is-empty .topo-playback-track,
+.topo-playback.is-empty .topo-field {
+  opacity: 0.45;
+}
+
+.topo-playback-empty {
+  flex: 1;
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--text-sm);
+}
+
 .topo-play {
   width: 2.4rem;
   height: 2.4rem;

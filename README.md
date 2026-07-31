@@ -31,8 +31,7 @@ force, lane, load, and geographic layouts — the geographic one is a real map,
 with each site pinned at its actual coordinates and framed insets for
 anything off the mainland. Cloud clusters are placed too — an AWS GovCloud
 machine pins to its region. Zoom in (or set **Map detail**) and each site
-opens up into the individual systems behind it. A timeline under the
-controls replays the last 6 hours to 3 days from the monitor's own
+opens up into the individual systems behind it. A **Timeline** button reveals a transport that replays the last 6 hours to 3 days from the monitor's own
 records — scrub or press play to watch status and load move — and systems
 that change on a live refresh pulse so you can see it happen. The **Load**
 layout plots each system by how busy it is, so replaying a day shows the
