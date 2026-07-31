@@ -98,6 +98,33 @@ class TestPages:
         assert not missing, f"{page.name} references missing files: {missing}"
 
 
+class TestStylesheet:
+    """A typo in a custom property drops the whole declaration, silently.
+
+    ``padding: var(--space-4) var(--space-5)`` with no --space-5 defined
+    does not fall back to something sensible — the browser throws the
+    padding away entirely, and the only symptom is a cramped layout.
+    """
+
+    def test_every_custom_property_used_is_defined(self):
+        css = (WEB / "assets" / "css" / "styles.css").read_text()
+        defined = set(re.findall(r"^\s*(--[\w-]+)\s*:", css, re.M))
+        # var(--x, fallback) is fine even when --x is absent; those are
+        # written deliberately, so only flag the single-argument form.
+        used = set(re.findall(r"var\(\s*(--[\w-]+)\s*\)", css))
+        undefined = sorted(used - defined)
+        assert not undefined, f"styles.css uses undefined custom properties: {undefined}"
+
+    def test_javascript_only_sets_properties_that_exist(self):
+        """JS reads theme colours by name; a rename would break them quietly."""
+        css = (WEB / "assets" / "css" / "styles.css").read_text()
+        defined = set(re.findall(r"^\s*(--[\w-]+)\s*:", css, re.M))
+        for script in PAGE_SCRIPTS:
+            used = set(re.findall(r'getPropertyValue\(\s*"(--[\w-]+)"', script.read_text()))
+            undefined = sorted(used - defined)
+            assert not undefined, f"{script.name} reads undefined properties: {undefined}"
+
+
 class TestBundledData:
     def test_basemap_is_present_and_shaped_correctly(self):
         """The topology map needs this file; losing it fails silently."""

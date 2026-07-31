@@ -2,6 +2,12 @@
 
 The HPC Status Monitor exposes a REST API for programmatic access to fleet and cluster data.
 
+The authoritative endpoint list is served by the API itself at `GET /api/endpoints`
+and rendered, with a "Try it" button per endpoint, at `/api.html` in a running
+deployment. `schemas/openapi.yaml` is generated from the same source
+(`python scripts/build_openapi.py`). This document adds the worked examples that a
+generated spec cannot.
+
 ## Base URL
 
 ```
@@ -402,6 +408,59 @@ the timeline shows it as unknown rather than implying the current status
 held back then. A gap between collection sweeps holds the previous
 reading, because a sweep that did not run is not a cluster at zero.
 
+### Storage
+
+#### GET /api/storage
+
+Returns filesystem capacity and usage for every connected cluster. Shares the
+warming-up envelope described under `/api/cluster-usage`.
+
+**Response**
+
+```json
+{
+  "cluster_metadata": {
+    "narwhal": {"display_name": "Narwhal", "scheduler": "PBS"}
+  },
+  "storage_data": {
+    "narwhal": [
+      {
+        "filesystem": "/p/home",
+        "used_gb": 412.5,
+        "quota_gb": 1024.0,
+        "percent_used": 40.3,
+        "files": 182344,
+        "file_limit": 500000
+      }
+    ]
+  }
+}
+```
+
+### Insights
+
+#### GET /api/insights
+
+Returns generated findings — allocation burn-down, queue backlog, idle GPUs and
+status changes — sorted by priority.
+
+**Response**
+
+```json
+{
+  "insights": [
+    {
+      "severity": "WARNING",
+      "category": "allocation",
+      "title": "Project ABC1234 is 92% spent with 4 months left",
+      "detail": "...",
+      "system": "narwhal"
+    }
+  ],
+  "generated_at": "2026-01-22T15:30:00Z"
+}
+```
+
 ### Placement
 
 #### GET /api/placement
@@ -515,59 +574,63 @@ No body required.
 }
 ```
 
-### System Details
+### Reference
 
-#### GET /api/system/{system}
+#### GET /api/system-markdown/{system}
 
-Returns detailed information for a specific system.
-
-**Parameters**
-
-| Name | Type | Description |
-|------|------|-------------|
-| system | string | System name (case-insensitive) |
+Returns the scraped briefing for a system, keyed by slug (lowercase, non-alphanumerics
+removed — `Nautilus` is `nautilus`).
 
 **Response**
 
 ```json
 {
-  "system": "Nautilus",
-  "status": "UP",
-  "dsrc": "NAVO",
-  "login_node": "nautilus.navo.hpc.mil",
-  "scheduler": "PBS",
-  "observed_at": "2026-01-22T15:30:00Z",
-  "details": {
-    "architecture": "Cray EX",
-    "cores": 123456,
-    "memory_tb": 512,
-    "description": "..."
-  },
-  "markdown_content": "..."
+  "slug": "nautilus",
+  "content": "# Nautilus\n\nCray EX, NAVO DSRC..."
 }
 ```
 
-### Health Check
+#### GET /api/config
 
-#### GET /api/health
+Returns the deployment configuration the frontend needs: branding, enabled tabs,
+feature flags and topology settings. Secrets are never included — the alert webhook
+URL in particular is deliberately withheld.
 
-Returns server health status.
+`GET /app-config.js` returns the same data as JavaScript that assigns
+`window.APP_CONFIG`, for pages that need it before any module loads.
 
-**Response**
+#### GET /api/endpoints
+
+Returns this catalog: every endpoint with its parameters, description and top-level
+response keys, plus the group ordering the API page renders.
 
 ```json
 {
-  "status": "healthy",
-  "uptime_seconds": 3600,
-  "collectors": {
-    "hpcmp_fleet": {
-      "status": "ok",
-      "last_run": "2026-01-22T15:28:00Z"
-    },
-    "pw_cluster": {
-      "status": "ok",
-      "last_run": "2026-01-22T15:29:00Z"
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/api/topology",
+      "group": "Fleet",
+      "summary": "The fleet as a graph: monitor, sites, systems",
+      "description": "...",
+      "returns": ["meta", "summary", "sites", "nodes", "edges"]
     }
+  ],
+  "groups": ["Fleet", "Clusters", "Decisions", "Reference", "Control"],
+  "generated_at": "2026-01-22T15:30:00Z"
+}
+```
+
+#### GET /api/v2/collectors/status
+
+Reports whether each configured collector has produced data yet — the endpoint to
+poll while a deployment is starting up.
+
+```json
+{
+  "collectors": {
+    "hpcmp_fleet": {"ready": true, "systems": 12},
+    "pw_cluster": {"ready": false}
   }
 }
 ```
@@ -577,23 +640,21 @@ Returns server health status.
 | Code | Description |
 |------|-------------|
 | 200 | Success |
-| 400 | Bad request (invalid parameters) |
-| 404 | Resource not found |
-| 429 | Rate limited |
+| 404 | No such system, cluster, or path |
+| 503 | Data not collected yet (`/api/status` only — other endpoints return a warming-up envelope with 200) |
 | 500 | Server error |
 
-## Rate Limiting
+## Caching
 
-Default limits (configurable):
-- Manual refresh: 30 second cooldown
-- API requests: 60 per minute
+Responses are sent with `Cache-Control: no-cache, must-revalidate`. Each request
+reflects the most recent completed collection; the API does not collect on demand
+except for `POST /api/refresh`.
 
-Rate limit headers:
-```
-X-RateLimit-Limit: 60
-X-RateLimit-Remaining: 55
-X-RateLimit-Reset: 1705936260
-```
+## Concurrency Limits
+
+`rate_limiting` in the configuration bounds how hard the monitor works the clusters
+it connects to (`max_concurrent_ssh`, `ssh_timeout`, `failure_threshold`). There is
+no per-client limit on HTTP requests and no `X-RateLimit-*` headers.
 
 ## Example Usage
 

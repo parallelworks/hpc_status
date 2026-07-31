@@ -51,6 +51,7 @@ class UIConfig:
             "queues": True,
             "quota": True,
             "storage": True,
+            "api": True,
         }
     )
     default_theme: str = "dark"
