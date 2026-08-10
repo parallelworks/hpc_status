@@ -106,6 +106,19 @@ jobs:
             exit 1
           fi
 
+          # Resolve the launcher to an absolute path. `pw endpoints run`
+          # fork/execs the command directly rather than through a shell,
+          # so a relative path depends on a working directory we do not
+          # control.
+          # run.sh cd's to its own project root, so pointing at the right
+          # file is all that matters.
+          launcher="${PWD}/scripts/run.sh"
+          if [ ! -f "${launcher}" ]; then
+            echo "Cannot find scripts/run.sh. Working directory: ${PWD}" >&2
+            ls -la >&2
+            exit 1
+          fi
+
           # 0 means "let the CLI find a free port", which is the default.
           port_args=""
           if [ "${PINNED_PORT:-0}" -gt 0 ]; then
@@ -115,7 +128,9 @@ jobs:
           # The endpoint owns the dashboard: it exports PORT and
           # PW_ENDPOINT_PATH for run.sh to pick up, forwards the session
           # URL to it, and kills the process tree when the run ends.
+          # `bash <script>` rather than the script itself, so a checkout
+          # that lost the executable bit still starts.
           exec pw endpoints run \
             --name "${ENDPOINT_NAME}" \
             ${port_args} \
-            -- ./scripts/run.sh
+            -- bash "${launcher}"
