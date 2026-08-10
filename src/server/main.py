@@ -243,6 +243,33 @@ def create_generate_payload_fn(config: Config, store: DataStore):
         return generate_pwcluster_payload
 
 
+def _marketplace_collector(config: Config):
+    """The catalog collector, when the deployment wants one.
+
+    Descriptions and catalog-only systems are a nicety, not a dependency:
+    a deployment without a marketplace gets a fleet page built from the
+    sources it does have.
+    """
+    collector_config = config.get_collector_config("pw_marketplace")
+    if not collector_config.enabled:
+        _log("[dashboard] Marketplace catalog disabled")
+        return None
+
+    from ..collectors.pw_marketplace import PWMarketplaceCollector
+
+    collector = PWMarketplaceCollector(
+        timeout=collector_config.timeout,
+        pw_context=(
+            collector_config.extra.get("pw_context")
+            or config.get_collector_config("pw_cluster").extra.get("pw_context")
+        ),
+    )
+    if not collector.is_available():
+        _log("[dashboard] Marketplace catalog unavailable (no pw CLI)")
+        return None
+    return collector
+
+
 def run_server(args) -> None:
     """Run the dashboard server."""
     # Load configuration
@@ -375,6 +402,7 @@ def run_server(args) -> None:
     DashboardRequestHandler.host_resolver = host_resolver
     DashboardRequestHandler.uptime_window_hours = config.topology.uptime_window_hours
     DashboardRequestHandler.alert_dispatcher = alert_dispatcher
+    DashboardRequestHandler.marketplace_collector = _marketplace_collector(config)
     DashboardRequestHandler.wait_estimate_window_hours = (
         config.topology.wait_estimate_window_hours
     )

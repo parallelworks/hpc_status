@@ -84,6 +84,7 @@
           <article class="card">
             <p>Total systems</p>
             <h2 id="total-systems" aria-live="polite">--</h2>
+            <p class="card-note" id="total-systems-note"></p>
             <span class="card-tooltip" data-help="total-systems" title="Number of HPC systems being monitored across all sites">ⓘ</span>
           </article>
           <article class="card">
@@ -137,11 +138,22 @@
           </label>
         </section>
 
-        <section class="table-panel" aria-label="Systems table">
-          <div class="table-head">
-            <h3>Systems</h3>
-            <p id="table-count" aria-live="polite">-- results</p>
+        <div class="systems-head">
+          <h3>Systems</h3>
+          <p id="table-count" aria-live="polite">-- results</p>
+          <div class="view-toggle" role="group" aria-label="How to show systems">
+            <button type="button" class="ghost-btn ghost-btn--sm" data-view="cards"
+              aria-pressed="true">Cards</button>
+            <button type="button" class="ghost-btn ghost-btn--sm" data-view="table"
+              aria-pressed="false">Table</button>
           </div>
+        </div>
+
+        <section id="systems-cards" class="systems-cards" aria-label="Systems by site">
+          <p class="placeholder">Loading…</p>
+        </section>
+
+        <section class="table-panel" aria-label="Systems table" hidden>
           <div class="table-scroll">
             <table>
               <thead>

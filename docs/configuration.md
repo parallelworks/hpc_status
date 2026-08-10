@@ -270,6 +270,31 @@ which step placed it.
 Set `resolve_addresses: false` on networks where
 outbound DNS lookups for site hostnames are undesirable.
 
+### Marketplace Catalog
+
+```yaml
+collectors:
+  pw_marketplace:
+    enabled: true
+    timeout: 30
+```
+
+Reads compute listings with `pw marketplace ls`, which is where the fleet
+page gets its descriptions and the systems no status page publishes. It is
+a catalog, not a status source: nothing here reports whether a machine is
+up, and a system known only from a listing shows as `NOT MONITORED` rather
+than `UNKNOWN` — nothing looked at it.
+
+Only listings with subtype `existing` can introduce a system. The other
+subtypes (`aws-slurm`, `google-slurm`, ...) are recipes for creating a
+cluster rather than clusters, so they never invent a machine — though they
+will still describe one the monitor is connected to. A listing's tags are
+read for a scheduler and a facility, which is how a system tagged `mhpcc`
+lands at MHPCC when nothing else can place it.
+
+Set `enabled: false` on a deployment with no marketplace, or one where the
+listings describe machines this dashboard should not advertise.
+
 ### Rate Limits Section
 
 ```yaml

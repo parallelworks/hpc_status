@@ -13,6 +13,12 @@ collectors:
   pw_cluster:
     enabled: true
     refresh_interval: 120
+  pw_marketplace:
+    # Compute listings from the platform marketplace: what exists and what
+    # each machine is for. Adds descriptions to the fleet page and surfaces
+    # systems no status page publishes. Not a status source.
+    enabled: true
+    timeout: 30
 
   hpcmp:
     enabled: true

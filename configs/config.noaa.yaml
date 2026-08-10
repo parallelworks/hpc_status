@@ -36,6 +36,12 @@ collectors:
     # For a NOAA-only deployment this is typically simply ``noaa``.
     # Equivalent alternative: launch with ``PW_CONTEXT=noaa ./scripts/run.sh``.
     pw_context: "noaa"
+  pw_marketplace:
+    # Compute listings from the platform marketplace: what exists and what
+    # each machine is for. Adds descriptions to the fleet page and surfaces
+    # systems no status page publishes. Not a status source.
+    enabled: true
+    timeout: 30
 
   # Static fleet catalog + future hooks for scraping the RDHPCS docs site.
   noaa_docs:

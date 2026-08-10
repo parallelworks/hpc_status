@@ -47,6 +47,7 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
     uptime_window_hours: int = 24
     wait_estimate_window_hours: int = 6
     alert_dispatcher: Optional["AlertDispatcher"] = None
+    marketplace_collector: Optional[Any] = None
 
     def __init__(self, *args, directory=None, **kwargs):
         self._cache_control_sent = False
@@ -96,6 +97,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return self._handle_app_config()
         if parsed.path == "/api/fleet/summary":
             return self._handle_fleet_summary()
+        if parsed.path == "/api/fleet":
+            return self._handle_fleet()
         if parsed.path == "/api/cluster-usage":
             return self._handle_cluster_usage()
         if parsed.path.startswith("/api/cluster-usage/"):
@@ -455,6 +458,57 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         graph["meta"]["ready"] = bool(graph.get("nodes"))
         graph["meta"]["collection_progress"] = progress
         self._send_json(graph)
+
+    def _handle_fleet(self):
+        """Every system this deployment knows about, from all three sources.
+
+        The home page renders this rather than the status collector's
+        payload alone, which is why a machine that is reachable but not
+        published — Coral — used to be invisible there.
+
+        Always answers 200: a deployment mid-collection has fewer sources,
+        not an error, and ``meta.sources`` says which ones answered.
+        """
+        from ..data.fleet import build_fleet
+
+        payload = None
+        if self.server_state:
+            payload, _, _ = self.server_state.snapshot()
+
+        clusters = self._clusters_from_payload(self._load_cluster_usage_payload())
+
+        config_data = self.config or {}
+        topology_cfg = config_data.get("topology") or {}
+        deployment_cfg = config_data.get("deployment") or {}
+
+        fleet = build_fleet(
+            payload,
+            clusters,
+            self._marketplace_listings(),
+            platform=(deployment_cfg.get("platform") or "generic"),
+            site_overrides=topology_cfg.get("sites"),
+            system_sites=topology_cfg.get("system_sites"),
+            cloud_region_default=topology_cfg.get("cloud_region_default"),
+        )
+        progress = self.cluster_worker.get_progress() if self.cluster_worker else None
+        fleet["meta"]["collection_progress"] = progress
+        self._send_json(fleet)
+
+    def _marketplace_listings(self):
+        """Catalog listings, or nothing at all.
+
+        A deployment with no marketplace, no pw CLI, or no permission to
+        read it still has a fleet page; it just has no descriptions and no
+        catalog-only systems.
+        """
+        collector = type(self).marketplace_collector
+        if collector is None:
+            return []
+        try:
+            return collector.listings()
+        except Exception as exc:
+            print(f"[api] Marketplace catalog unavailable: {exc}", flush=True)
+            return []
 
     def _handle_events(self, parsed):
         """Return recent system state changes (newest first).
