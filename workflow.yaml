@@ -43,6 +43,14 @@ on:
             label: Endpoint Name
             default: hpc-status
             tooltip: Name of the endpoint session, shown in your sessions list
+          subdomain:
+            type: string
+            label: Public Subdomain
+            default: ""
+            tooltip: >-
+              Hostname label for the dashboard, so the URL stays the same
+              between runs. Blank derives status-<username>. Reserve it
+              with `pw subdomains reserve <name>` to keep it yours.
           repo_url:
             type: string
             label: Source Repository
@@ -104,6 +112,7 @@ jobs:
           CLUSTER_MONITOR_INTERVAL: ${{ inputs.settings.cluster_monitor_interval }}
           CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
           ENDPOINT_NAME: ${{ inputs.settings.name }}
+          ENDPOINT_SUBDOMAIN: ${{ inputs.settings.subdomain }}
           PINNED_PORT: ${{ inputs.settings.port }}
           REPO_URL: ${{ inputs.settings.repo_url }}
           REPO_BRANCH: ${{ inputs.settings.repo_branch }}
