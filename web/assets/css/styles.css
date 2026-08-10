@@ -4200,37 +4200,18 @@ th[data-sortable][data-sort-dir="desc"]::after {
   font-size: var(--text-sm);
   color: var(--muted);
   line-height: 1.45;
+  /* Two lines: enough to say what a machine is for, not enough for one
+     verbose listing to set the height of every card in the row. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
-.system-card-facts {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  margin: 0;
-  font-size: var(--text-xs);
-}
-
-.system-card-facts div {
-  display: flex;
-  gap: var(--space-2);
-}
-
-.system-card-facts dt {
-  color: var(--muted);
-  min-width: 5rem;
-}
-
-.system-card-facts dd {
-  margin: 0;
-  color: var(--text);
-  overflow-wrap: anywhere;
-}
-
-.system-card-source {
+.system-card-meta {
   margin: 0;
   font-size: var(--text-xs);
   color: var(--muted);
-  font-style: italic;
 }
 
 .system-card-links {

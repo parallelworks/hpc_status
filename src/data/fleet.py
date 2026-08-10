@@ -81,6 +81,31 @@ def _tag_site(tags: List[str], catalog_lookup) -> Optional[str]:
     return None
 
 
+def _match_existing(slug: str, systems: Dict[str, Dict[str, Any]]) -> Optional[str]:
+    """Find the system a slug refers to, allowing a facility suffix.
+
+    The same machine goes by different names in different places: the
+    marketplace lists "chessie" and "builder", while the clusters they
+    describe are registered as "chessiearl" and "buildermhpcc". Matched
+    only on the slug, those became two entries — one connected and one
+    reported NOT MONITORED, which is a duplicate and a lie about the
+    second.
+
+    The difference is only ever a facility the catalog already knows, so
+    that is all this accepts. "coral" and "coralreef" stay separate
+    machines, because "reef" is not a site.
+    """
+    from .topology import SITE_CATALOG
+
+    if slug in systems:
+        return slug
+    for known in systems:
+        longer, shorter = (known, slug) if len(known) > len(slug) else (slug, known)
+        if longer.startswith(shorter) and longer[len(shorter):] in SITE_CATALOG:
+            return known
+    return None
+
+
 def build_fleet(
     fleet_payload: Optional[Dict[str, Any]],
     clusters: Optional[List[Dict[str, Any]]] = None,
@@ -137,6 +162,7 @@ def build_fleet(
         slug = slugify(name)
         if not slug:
             continue
+        slug = _match_existing(slug, systems) or slug
         entry = systems.setdefault(
             slug,
             {
@@ -182,9 +208,10 @@ def build_fleet(
         # inventing a machine nobody has. They can still describe a system
         # we know about from somewhere else, which is how a cloud cluster
         # the monitor is connected to gets its description.
-        known = slug in systems
-        if not known and str(listing.get("subtype") or "") != "existing":
+        matched = _match_existing(slug, systems)
+        if matched is None and str(listing.get("subtype") or "") != "existing":
             continue
+        slug = matched or slug
         entry = systems.setdefault(
             slug,
             {

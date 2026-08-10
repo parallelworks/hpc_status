@@ -21,9 +21,9 @@ commands to decide where to submit.
 ## What you'll see
 
 **Fleet status.** Every HPC system this deployment knows about, as cards
-grouped by site — what each machine is for, its status, its login node
-and scheduler, and links straight to its queues and storage. Switch to
-the dense table whenever you prefer it.
+grouped by site: what each machine is for, whether it is up, and how busy
+it is. Switch to the dense table for login nodes, schedulers and
+timestamps.
 
 "Knows about" means three sources merged, because none of them knows
 everything: the centre's status page publishes some systems, the monitor

@@ -271,3 +271,106 @@ class TestMetadata:
         monitored = [s["monitored"] for s in systems]
         assert monitored == sorted(monitored, reverse=True)
         assert systems[-1]["name"] == "Builder"
+
+
+class TestSameMachineDifferentNames:
+    """The same machine goes by different names in different places.
+
+    The marketplace lists "chessie" and "builder"; the clusters they
+    describe are registered as "chessiearl" and "buildermhpcc". Matched on
+    the slug alone they became two entries each — one connected, and one
+    reported NOT MONITORED, which duplicated the machine and lied about
+    the copy.
+    """
+
+    @staticmethod
+    def clusters(*names):
+        return [
+            {
+                "cluster_metadata": {
+                    "name": name,
+                    "uri": f"pw://user/{name}",
+                    "status": "active",
+                }
+            }
+            for name in names
+        ]
+
+    def test_a_facility_suffix_is_the_same_machine(self):
+        listings = [
+            {
+                "slug": "builder",
+                "name": "Builder",
+                "description": "Builder MHPCC System",
+                "subtype": "existing",
+                "tags": ["mhpcc"],
+            }
+        ]
+        fleet = by_slug(build_fleet(None, self.clusters("buildermhpcc"), listings))
+        assert "builder" not in fleet, "that is the same machine, listed twice"
+        assert fleet["buildermhpcc"]["description"] == "Builder MHPCC System"
+
+    def test_the_merged_machine_is_up_not_unmonitored(self):
+        """The complaint: a connected system reported as NOT MONITORED."""
+        listings = [
+            {"slug": "chessie", "name": "Chessie", "subtype": "existing", "tags": []}
+        ]
+        entry = by_slug(build_fleet(None, self.clusters("chessiearl"), listings))[
+            "chessiearl"
+        ]
+        assert entry["connected"] is True
+        assert entry["monitored"] is True
+        assert entry["status"] == "UP"
+        assert entry["status"] != UNMONITORED
+
+    def test_it_takes_the_curated_name(self):
+        listings = [
+            {"slug": "chessie", "name": "Chessie", "subtype": "existing", "tags": []}
+        ]
+        fleet = by_slug(build_fleet(None, self.clusters("chessiearl"), listings))
+        assert fleet["chessiearl"]["name"] == "Chessie"
+
+    def test_a_suffix_that_is_not_a_facility_stays_separate(self):
+        """Only a site the catalog knows may join two names."""
+        listings = [
+            {"slug": "coral", "name": "Coral", "subtype": "existing", "tags": []}
+        ]
+        fleet = by_slug(build_fleet(None, self.clusters("coralreef"), listings))
+        assert "coral" in fleet and "coralreef" in fleet, (
+            "'reef' is not a site, so these are two machines"
+        )
+
+    def test_it_works_in_the_other_direction_too(self):
+        """A cluster may be the short name and the listing the long one."""
+        listings = [
+            {
+                "slug": "buildermhpcc",
+                "name": "Builder MHPCC",
+                "description": "The MHPCC build box.",
+                "subtype": "existing",
+                "tags": [],
+            }
+        ]
+        fleet = by_slug(build_fleet(None, self.clusters("builder"), listings))
+        assert len(fleet) == 1
+        assert fleet["builder"]["description"] == "The MHPCC build box."
+
+    def test_a_cluster_joins_the_status_page_entry_it_matches(self):
+        payload = {
+            "meta": {},
+            "systems": [
+                {"system": "Chessie", "status": "UP", "dsrc": "arl", "scheduler": "slurm"}
+            ],
+        }
+        fleet = by_slug(build_fleet(payload, self.clusters("chessiearl"), []))
+        assert len(fleet) == 1, "one machine, whichever name each source uses"
+        assert fleet["chessie"]["connected"] is True
+
+    def test_an_unmatched_listing_is_still_unmonitored(self):
+        """Reconciling names must not quietly adopt every listing."""
+        listings = [
+            {"slug": "rqhap", "name": "RQ HAP", "subtype": "existing", "tags": ["afrl"]}
+        ]
+        entry = by_slug(build_fleet(None, self.clusters("coral"), listings))["rqhap"]
+        assert entry["monitored"] is False
+        assert entry["status"] == UNMONITORED

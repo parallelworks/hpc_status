@@ -541,30 +541,30 @@ function renderCards() {
 
 function systemCard(row) {
   const status = row.status || "UNKNOWN";
+  // One line of facts, not a table. The site is already the group
+  // heading, and the login node and provenance belong in the detail view
+  // — a card that repeats them is a table with worse density.
+  const facts = [];
+  if (row.scheduler) facts.push(escapeHtml(row.scheduler));
   const capacity = row.capacity;
-  const busy =
-    capacity && Number.isFinite(capacity.utilization_percent)
-      ? `${Math.round(capacity.utilization_percent)}% of ${formatCount(capacity.cores_total)} cores busy`
-      : null;
-  // Say what is watching it. "NOT MONITORED" without that reads as a fault.
-  const provenance = row.monitored
-    ? `${escapeHtml(row.status_source || "")}${row.connected ? " · connected" : ""}`
-    : "listed in the marketplace · nothing is watching it";
+  if (capacity && Number.isFinite(capacity.utilization_percent)) {
+    facts.push(`${Math.round(capacity.utilization_percent)}% of ${formatCount(capacity.cores_total)} cores busy`);
+  }
+  // Say it once, on the card that needs it, rather than on every card.
+  const why = row.monitored
+    ? `Status from the ${row.status_source}`
+    : "Listed in the marketplace; no status source is watching it";
 
   return `
     <article class="system-card${row.monitored ? "" : " system-card--unmonitored"}"
-      data-slug="${escapeHtml(row.slug || "")}" tabindex="0" role="button">
+      data-slug="${escapeHtml(row.slug || "")}" tabindex="0" role="button"
+      title="${escapeHtml(why)}">
       <header class="system-card-head">
         <h4>${escapeHtml(row.system || "(unnamed)")}</h4>
         <span class="badge ${statusClass(status)}">${escapeHtml(status)}</span>
       </header>
       ${row.description ? `<p class="system-card-desc">${escapeHtml(row.description)}</p>` : ""}
-      <dl class="system-card-facts">
-        ${row.scheduler ? `<div><dt>Scheduler</dt><dd>${escapeHtml(row.scheduler)}</dd></div>` : ""}
-        ${row.login ? `<div><dt>Login</dt><dd><code>${escapeHtml(row.login)}</code></dd></div>` : ""}
-        ${busy ? `<div><dt>Load</dt><dd>${escapeHtml(busy)}</dd></div>` : ""}
-      </dl>
-      <p class="system-card-source">${provenance}</p>
+      ${facts.length ? `<p class="system-card-meta">${facts.join(" · ")}</p>` : ""}
       ${systemCardLinks(row)}
     </article>`;
 }
@@ -577,7 +577,6 @@ function systemCardLinks(row) {
     <nav class="system-card-links" aria-label="Detail pages">
       <a href="queues.html?cluster=${slug}">Queues</a>
       <a href="storage.html?cluster=${slug}">Storage</a>
-      <a href="topology.html?node=sys:${slug}">Topology</a>
     </nav>`;
 }
 

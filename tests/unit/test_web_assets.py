@@ -171,6 +171,35 @@ class TestApiPageBaseUrl:
         )
 
 
+class TestFleetCardIsCalm:
+    """A card says what a machine is; the table says everything else.
+
+    The first version repeated the site (already the group heading), the
+    login node, and a provenance line on every card, which is a table with
+    worse density.
+    """
+
+    SOURCE = (JS_DIR / "app.js").read_text()
+
+    def test_the_card_does_not_repeat_the_table(self):
+        card = self.SOURCE[self.SOURCE.index("function systemCard(") :]
+        card = card[: card.index("function systemCardLinks(")]
+        assert "row.login" not in card, "the login node belongs in the detail view"
+        assert "system-card-facts" not in card, "one meta line, not a definition list"
+        assert "system-card-source" not in card, "provenance moved to the tooltip"
+
+    def test_it_still_says_what_the_machine_is_for(self):
+        card = self.SOURCE[self.SOURCE.index("function systemCard(") :]
+        card = card[: card.index("function systemCardLinks(")]
+        assert "row.description" in card
+
+    def test_a_long_description_cannot_stretch_the_row(self):
+        css = (WEB / "assets" / "css" / "styles.css").read_text()
+        block = css[css.index(".system-card-desc {") :]
+        block = block[: block.index("}")]
+        assert "-webkit-line-clamp: 2" in block
+
+
 class TestStaleCacheResilience:
     """A browser holding the previous index.html must still see systems.
 
