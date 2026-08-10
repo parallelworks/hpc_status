@@ -243,7 +243,31 @@ topology:
 
 This beats everything else. Otherwise the site is taken from the
 collector's own label, then the login hostname's domain
-(`crux.mhpcc.hpc.mil` → MHPCC), then a built-in system-name hint. Set `resolve_addresses: false` on networks where
+(`crux.mhpcc.hpc.mil` → MHPCC), then a built-in system-name hint.
+
+**What each deployment infers.** The last of those steps — guessing from a
+short cluster name — is scoped to `deployment.platform`, because the names
+belong to the deployment that chose them:
+
+| `platform` | Facilities called | Name hints applied |
+|---|---|---|
+| `hpcmp` | DSRCs | chessie and janus at ARL, crux at MHPCC |
+| `noaa` | Sites | hera and niagara at NESCC, gaea at ORNL, ppan at GFDL |
+| anything else | Sites | none |
+
+A generic deployment with a cluster called `janus` is not the Army
+Research Laboratory's, and a pin on Aberdeen Proving Ground captioned with
+somebody else's organization is worse than an honest "Unassigned". Use
+`system_sites` to place your own.
+
+The two steps above it are *not* scoped, because neither is a guess: a
+site the collector reports is data, and a hostname like
+`crux.mhpcc.hpc.mil` is the machine stating its own address. Cloud regions
+resolve everywhere too. `GET /api/topology` reports which set was applied
+as `meta.site_hints`, and every system carries a `site_source` saying
+which step placed it.
+
+Set `resolve_addresses: false` on networks where
 outbound DNS lookups for site hostnames are undesirable.
 
 ### Rate Limits Section

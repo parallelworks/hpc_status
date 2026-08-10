@@ -527,3 +527,145 @@ class TestConnectionHistory:
         store.cleanup_old_data(days=30)
         remaining = store.get_system_history("system:a")
         assert [row["status"] for row in remaining] == ["DOWN"]
+
+
+class TestPlatformScoping:
+    """Name hints belong to the deployment that named the machines.
+
+    The catalog knows chessie, janus and crux are HPCMP boxes, and hera,
+    gaea and ppan are NOAA ones. Applied everywhere, that put a generic
+    deployment's cluster called "janus" on a pin at Aberdeen Proving
+    Ground, captioned Army Research Laboratory — confidently wrong, which
+    is worse than Unassigned.
+    """
+
+    @staticmethod
+    def payload(*names):
+        return {
+            "meta": {},
+            "systems": [
+                {
+                    "system": name,
+                    "status": "UP",
+                    "dsrc": "existing",
+                    "login": f"{name}.example.com",
+                    "scheduler": "slurm",
+                }
+                for name in names
+            ],
+        }
+
+    def sites_for(self, platform, *names):
+        graph = build_topology(self.payload(*names), [], platform=platform)
+        return {
+            node["slug"]: (node["site"], node["site_source"])
+            for node in graph["nodes"]
+            if node["kind"] == "system"
+        }
+
+    def test_generic_guesses_nothing_from_a_name(self):
+        placed = self.sites_for("generic", "janus", "hera")
+        assert placed["janus"] == ("unassigned", "none")
+        assert placed["hera"] == ("unassigned", "none")
+
+    def test_hpcmp_places_its_own_and_not_noaas(self):
+        placed = self.sites_for("hpcmp", "janus", "crux", "hera")
+        assert placed["janus"] == ("arl", "name-hint")
+        assert placed["crux"] == ("mhpcc", "name-hint")
+        assert placed["hera"] == ("unassigned", "none")
+
+    def test_noaa_places_its_own_and_not_hpcmps(self):
+        placed = self.sites_for("noaa", "hera", "gaea-c5", "janus")
+        assert placed["hera"] == ("nessc", "name-hint")
+        # Slugs drop punctuation, so a renamed gaea-c5 still matches.
+        assert placed["gaeac5"] == ("ornl", "name-hint")
+        assert placed["janus"] == ("unassigned", "none")
+
+    @pytest.mark.parametrize("platform", ["generic", "hpcmp", "noaa"])
+    def test_a_hostname_is_evidence_on_any_platform(self, platform):
+        """The host names itself; that is not a guess that can collide."""
+        graph = build_topology(
+            {
+                "meta": {},
+                "systems": [
+                    {
+                        "system": "crux",
+                        "status": "UP",
+                        "dsrc": "existing",
+                        "login": "crux.mhpcc.hpc.mil",
+                        "scheduler": "pbs",
+                    }
+                ],
+            },
+            [],
+            platform=platform,
+        )
+        node = next(n for n in graph["nodes"] if n["kind"] == "system")
+        assert (node["site"], node["site_source"]) == ("mhpcc", "hostname")
+
+    @pytest.mark.parametrize("platform", ["generic", "hpcmp", "noaa"])
+    def test_what_the_collector_reports_always_wins(self, platform):
+        """A reported site is data, not inference — never scoped away."""
+        graph = build_topology(
+            {
+                "meta": {},
+                "systems": [
+                    {
+                        "system": "carpenter",
+                        "status": "UP",
+                        "dsrc": "ERDC DSRC",
+                        "login": "carpenter.example.com",
+                        "scheduler": "pbs",
+                    }
+                ],
+            },
+            [],
+            platform=platform,
+        )
+        node = next(n for n in graph["nodes"] if n["kind"] == "system")
+        assert (node["site"], node["site_source"]) == ("erdc", "collector")
+
+    @pytest.mark.parametrize(
+        "platform,label", [("hpcmp", "DSRC"), ("noaa", "Site"), ("generic", "Site")]
+    )
+    def test_facilities_are_called_what_the_deployment_calls_them(
+        self, platform, label
+    ):
+        graph = build_topology(self.payload("box"), [], platform=platform)
+        assert graph["meta"]["site_label"] == label
+
+    @pytest.mark.parametrize(
+        "platform,hints",
+        [("hpcmp", "hpcmp"), ("noaa", "noaa"), ("generic", "none")],
+    )
+    def test_the_payload_says_which_hints_were_applied(self, platform, hints):
+        """"Why is this machine there?" must be answerable from the API."""
+        graph = build_topology(self.payload("box"), [], platform=platform)
+        assert graph["meta"]["site_hints"] == hints
+
+    def test_config_overrides_beat_the_absence_of_hints(self):
+        """A generic deployment can still say where its machines live."""
+        graph = build_topology(
+            self.payload("janus"),
+            [],
+            platform="generic",
+            system_sites={"janus": "erdc"},
+        )
+        node = next(n for n in graph["nodes"] if n["kind"] == "system")
+        assert (node["site"], node["site_source"]) == ("erdc", "config")
+
+    def test_cloud_regions_apply_everywhere(self):
+        """Any deployment can run in the cloud."""
+        for platform in ("generic", "hpcmp", "noaa"):
+            assert (
+                resolve_site_id(
+                    "aws", "c1", "ip-10-0-0-1.us-gov-west-1.compute.internal",
+                    None, None, platform,
+                )
+                == "usgovwest1"
+            )
+
+    def test_helpers_with_no_platform_still_see_everything(self):
+        """Callers outside a deployment get the permissive behaviour."""
+        assert resolve_site_id("existing", "gaea-c5") == "ornl"
+        assert resolve_site_id("existing", "janus") == "arl"

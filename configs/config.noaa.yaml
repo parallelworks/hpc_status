@@ -213,9 +213,11 @@ topology:
   sites: {}
   # Place systems nothing else can identify — not on a status page, and a
   # login hostname with no site in it. Keyed by system name (slugified).
+  #
+  # This deployment already gets the NOAA name hints (hera and niagara at
+  # NESCC, gaea at ORNL, ppan at GFDL); this is for anything else.
   #   system_sites:
-  #     chessie: arl
-  #     crux: mhpcc
+  #     mycluster: nessc
   system_sites: {}
   # Region to assume for cloud clusters whose hostname does not name one,
   # e.g. usgovwest1 for a fleet that runs entirely in AWS GovCloud West.

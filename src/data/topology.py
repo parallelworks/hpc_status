@@ -34,8 +34,8 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 # not listed here still render — they just have no coordinates and land in
 # the "unplaced" tray of the geo layout. Deployments can extend or override
 # any entry via ``topology.sites`` in the config file.
-SITE_CATALOG: Dict[str, Dict[str, Any]] = {
-    # --- HPCMP DSRCs (DoD High Performance Computing Modernization Program)
+# --- HPCMP DSRCs (DoD High Performance Computing Modernization Program)
+HPCMP_SITES: Dict[str, Dict[str, Any]] = {
     "afrl": {
         "name": "AFRL DSRC",
         "organization": "Air Force Research Laboratory",
@@ -71,7 +71,10 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 20.75,
         "lon": -156.45,
     },
-    # --- NOAA RDHPCS facilities
+}
+
+# --- NOAA RDHPCS facilities
+NOAA_SITES: Dict[str, Dict[str, Any]] = {
     "nessc": {
         "name": "NESCC",
         "organization": "NOAA Environmental Security Computing Center",
@@ -93,12 +96,16 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
         "lat": 40.35,
         "lon": -74.65,
     },
-    # --- Cloud regions.
-    #
-    # Coordinates are the published region locality, not a datacenter
+}
+
+# --- Cloud regions. Any deployment can run in the cloud, so these apply
+# whatever the platform.
+#
+# Coordinates are the published region locality, not a datacenter
     # address — providers do not publish those, and a region spans several
     # availability zones anyway. They are precise enough to put a pin in
     # the right state and no more, which is what the map is for.
+CLOUD_SITES: Dict[str, Dict[str, Any]] = {
     "usgovwest1": {
         "name": "AWS GovCloud (US-West)",
         "organization": "Amazon Web Services · us-gov-west-1",
@@ -174,40 +181,68 @@ SITE_CATALOG: Dict[str, Dict[str, Any]] = {
     },
 }
 
-# System-name → site for deployments whose collector does not report a site.
-# Matched on a slug substring so renamed clusters (``gaea-c5``) still land at
-# the right facility.
-SYSTEM_SITE_HINTS: Tuple[Tuple[str, str], ...] = (
-    # NOAA RDHPCS
-    ("hera", "nessc"),
-    ("niagara", "nessc"),
-    ("gaea", "ornl"),
-    ("ppan", "gfdl"),
-    ("gfdl", "gfdl"),
+# Every facility we know of. Lookup stays platform-agnostic on purpose: if
+# a collector reports "erdc", describing it as the ERDC DSRC in Vicksburg
+# is right whatever the deployment calls itself. It is *guessing* that has
+# to be scoped — see the hint tables below.
+SITE_CATALOG: Dict[str, Dict[str, Any]] = {**HPCMP_SITES, **NOAA_SITES, **CLOUD_SITES}
+
+# System-name → site, for deployments whose collector does not report one.
+# Matched on a slug substring so renamed clusters (``gaea-c5``) still land
+# at the right facility.
+#
+# These are guesses from a name, so they are scoped to the deployment they
+# describe. A generic deployment with a cluster called "janus" is not the
+# Army Research Laboratory's, and putting a pin on Aberdeen Proving Ground
+# because the names collide is worse than admitting we do not know. Any
+# deployment can name its own with ``topology.system_sites``.
+HPCMP_SYSTEM_HINTS: Tuple[Tuple[str, str], ...] = (
     # HPCMP systems that are not on the public status page, so nothing else
-    # in the pipeline knows where they live. Override per deployment with
-    # ``topology.system_sites``.
+    # in the pipeline knows where they live.
     ("chessie", "arl"),
     ("janus", "arl"),
     ("crux", "mhpcc"),
 )
 
+NOAA_SYSTEM_HINTS: Tuple[Tuple[str, str], ...] = (
+    ("hera", "nessc"),
+    ("niagara", "nessc"),
+    ("gaea", "ornl"),
+    ("ppan", "gfdl"),
+    ("gfdl", "gfdl"),
+)
+
+PLATFORM_SYSTEM_HINTS: Dict[str, Tuple[Tuple[str, str], ...]] = {
+    "hpcmp": HPCMP_SYSTEM_HINTS,
+    "noaa": NOAA_SYSTEM_HINTS,
+    "rdhpcs": NOAA_SYSTEM_HINTS,
+}
+
+# Every hint, for callers that have no platform to scope by.
+SYSTEM_SITE_HINTS: Tuple[Tuple[str, str], ...] = NOAA_SYSTEM_HINTS + HPCMP_SYSTEM_HINTS
+
 # Domain labels → catalog site id. A login node's own name says where it
-# lives: crux.mhpcc.hpc.mil is MHPCC whether or not the collector managed to
-# label it. Matched against every label of the hostname.
-DOMAIN_SITE_HINTS: Dict[str, str] = {
+# lives: crux.mhpcc.hpc.mil is MHPCC whether or not the collector managed
+# to label it. Matched against every label of the hostname.
+HPCMP_DOMAIN_HINTS: Dict[str, str] = {
     "afrl": "afrl",
     "arl": "arl",
     "erdc": "erdc",
     "navy": "navy",
     "navydsrc": "navy",
     "mhpcc": "mhpcc",
+}
+
+NOAA_DOMAIN_HINTS: Dict[str, str] = {
     "gfdl": "gfdl",
     "ncrc": "ornl",
     "ornl": "ornl",
     "nessc": "nessc",
-    # EC2 puts the region straight into the instance's own name:
-    # ip-10-1-2-3.us-gov-west-1.compute.internal
+}
+
+# EC2 puts the region straight into the instance's own name:
+# ip-10-1-2-3.us-gov-west-1.compute.internal. True on any platform.
+CLOUD_DOMAIN_HINTS: Dict[str, str] = {
     "usgovwest1": "usgovwest1",
     "usgoveast1": "usgoveast1",
     "useast1": "useast1",
@@ -215,6 +250,31 @@ DOMAIN_SITE_HINTS: Dict[str, str] = {
     "uswest1": "uswest1",
     "uswest2": "uswest2",
 }
+
+# Unlike the name hints, these are not scoped by platform. A cluster
+# called "janus" on an unrelated deployment is not the Army's, but
+# crux.mhpcc.hpc.mil is MHPCC's whoever is watching it — the host is
+# stating its own address rather than colliding with someone else's short
+# name. A deployment that disagrees can say so with ``topology.sites``.
+DOMAIN_SITE_HINTS: Dict[str, str] = {
+    **CLOUD_DOMAIN_HINTS,
+    **HPCMP_DOMAIN_HINTS,
+    **NOAA_DOMAIN_HINTS,
+}
+
+
+def system_hints_for(platform: Any) -> Tuple[Tuple[str, str], ...]:
+    """Name hints that apply to a deployment.
+
+    ``None`` means "no platform to scope by" and gets all of them, which
+    is what the standalone helpers do. A platform we have no hints for —
+    ``generic`` — gets none, and its unplaceable systems land in
+    Unassigned rather than somewhere confidently wrong.
+    """
+    if platform is None:
+        return SYSTEM_SITE_HINTS
+    return PLATFORM_SYSTEM_HINTS.get(slugify(platform), ())
+
 
 # us-east-1 is the exception: instances there use a bare ec2.internal /
 # compute-1.amazonaws.com suffix with no region in the name at all.
@@ -255,6 +315,10 @@ def cloud_provider_from_label(raw_site: Any) -> Optional[str]:
 GENERIC_SITE_IDS = frozenset({"", "unknown", "existing", "pw", "none", "null"})
 
 UNASSIGNED_SITE_ID = "unassigned"
+
+# What a deployment calls its facilities. HPCMP's are DSRCs; everyone
+# else's are sites.
+SITE_LABELS: Dict[str, str] = {"hpcmp": "DSRC"}
 
 UP_STATUSES = frozenset({"UP", "ACTIVE", "ON", "RUNNING", "ONLINE"})
 DOWN_STATUSES = frozenset({"DOWN", "OFF", "OFFLINE", "ERROR"})
@@ -330,7 +394,9 @@ def site_from_hostname(hostname: Any) -> Optional[str]:
     """Infer a site from a login hostname's domain.
 
     ``crux.mhpcc.hpc.mil`` is an MHPCC machine no matter what the collector
-    managed to scrape, so the hostname is a better signal than nothing.
+    managed to scrape, so the hostname is a better signal than nothing —
+    and unlike a name hint it holds on any deployment, because the host is
+    naming itself rather than colliding with somebody else's short name.
     """
     text = str(hostname or "").strip().lower()
     if not text or "://" in text:
@@ -351,6 +417,7 @@ def resolve_site(
     hostname: Any = "",
     system_sites: Optional[Dict[str, str]] = None,
     cloud_region_default: Optional[str] = None,
+    platform: Any = None,
 ) -> Tuple[str, str]:
     """Map a system to a catalog site id, and say where the answer came from.
 
@@ -368,7 +435,13 @@ def resolve_site(
        cloud in one region and whose hostnames do not say so.
 
     So a machine only lands in "Unassigned" when nothing about it says
-    where it runs.
+    where it runs — or, on a deployment we have no hints for, when the
+    only thing that would have placed it was a guess from its name.
+
+    ``platform`` scopes step 4, the one that guesses from a short name.
+    ``None`` applies every hint we know, which is what a caller with no
+    deployment in hand wants. Step 3 is not scoped: a hostname is the
+    machine stating its own address.
     """
     system_slug = slugify(system_name)
     if system_sites:
@@ -401,7 +474,7 @@ def resolve_site(
             return default, "cloud-default"
         return provider, "provider"
 
-    for needle, site_id in SYSTEM_SITE_HINTS:
+    for needle, site_id in system_hints_for(platform):
         if needle in system_slug:
             return site_id, "name-hint"
     return UNASSIGNED_SITE_ID, "none"
@@ -670,6 +743,7 @@ def build_topology(
                 insight_index=insight_index,
                 system_sites=system_site_map,
                 cloud_region_default=cloud_region_default,
+                platform=platform,
             )
         )
 
@@ -700,6 +774,7 @@ def build_topology(
                 insight_index=insight_index,
                 system_sites=system_site_map,
                 cloud_region_default=cloud_region_default,
+                platform=platform,
                 origin="pw",
             )
         )
@@ -764,7 +839,10 @@ def build_topology(
         "meta": {
             "generated_at": _now_iso(),
             "platform": platform,
-            "site_label": "DSRC" if platform == "hpcmp" else "Site",
+            "site_label": SITE_LABELS.get(slugify(platform), "Site"),
+            # Which hint set placed the unlabelled systems, so "why is this
+            # machine there?" stays answerable from the payload alone.
+            "site_hints": slugify(platform) if system_hints_for(platform) else "none",
             "fleet_observed_at": fleet_payload.get("meta", {}).get("generated_at"),
             "fleet_source_url": fleet_payload.get("meta", {}).get("source_url"),
             "telemetry_clusters": len(clusters),
@@ -789,6 +867,7 @@ def _build_system_node(
     system_sites: Optional[Dict[str, str]] = None,
     cloud_region_default: Optional[str] = None,
     origin: str = "fleet",
+    platform: Any = None,
 ) -> Dict[str, Any]:
     """Merge a fleet status row with any matching cluster telemetry."""
     meta = (cluster or {}).get("cluster_metadata") or {}
@@ -858,7 +937,7 @@ def _build_system_node(
     allocation = _cluster_allocation(cluster) if cluster else None
 
     site_id, site_source = resolve_site(
-        row.get("dsrc"), name, hostname, system_sites, cloud_region_default
+        row.get("dsrc"), name, hostname, system_sites, cloud_region_default, platform
     )
     node_insights, alert = _attach_insights(slug, insight_index or {})
 
