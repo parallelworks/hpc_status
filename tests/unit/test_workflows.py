@@ -216,11 +216,10 @@ class TestServeEndpointScript:
             "detached mode must confirm the URL rather than report success blindly"
         )
 
-    def test_detached_mode_refuses_to_stack(self):
+    def test_detached_mode_replaces_rather_than_stacks(self):
+        """Two of the same endpoint cannot coexist, so start means restart."""
         source = self.SCRIPT.read_text()
-        assert "Already serving" in source, (
-            "a second detached start would leave an unreachable dashboard behind"
-        )
+        assert "Clearing any previous instance" in source
 
     def test_falls_back_when_the_subdomain_is_refused(self):
         """A platform with no sessions domain must still serve the dashboard."""
@@ -277,24 +276,73 @@ class TestStopScript:
 
 
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
-class TestStopAction:
-    """A detached dashboard needs a way back from the platform UI.
+class TestStartIsTheOnlyAction:
+    """Launching is the whole interface, and it restarts what is running.
 
-    Cancelling the run no longer stops it, and nobody has a shell on the
-    workspace, so the workflow itself has to be able to stop one.
+    Two launches of the same endpoint name do not coexist — the platform
+    hands the name to the newcomer and the incumbent logs "was replaced by
+    another process; shutting down". Relying on that made a relaunch look
+    like the dashboard dying at random, so the script stops the previous
+    instance first, deliberately and in order.
     """
 
-    def test_offers_a_stop_action(self, path):
-        action = load(path)["on"]["execute"]["inputs"]["action"]
-        assert action["default"] == "start"
-        assert {option["value"] for option in action["options"]} == {"start", "stop"}
+    def test_there_is_no_action_input(self, path):
+        inputs = load(path)["on"]["execute"]["inputs"]
+        assert "action" not in inputs, "starting is the only thing a run does"
 
-    def test_stop_runs_the_stop_script(self, path):
+    def test_the_step_does_not_branch(self, path):
         run = step_of(load(path))["run"]
-        assert 'if [ "${ACTION}" = "stop" ]' in run
-        assert "scripts/stop-endpoint.sh" in run
+        assert 'ACTION' not in run
+        assert "stop-endpoint.sh" not in run, (
+            "stopping is done by deleting the session, or by the script directly"
+        )
 
-    def test_stop_happens_after_the_source_is_located(self, path):
-        """The stop script lives in the checkout, so find it first."""
-        run = step_of(load(path))["run"]
-        assert run.index("# Locate the source.") < run.index('= "stop" ]')
+    def test_it_keeps_serving_after_the_run_by_default(self, path):
+        """The run should finish in seconds, not sit open for days."""
+        detach = load(path)["on"]["execute"]["inputs"]["settings"]["items"]["detach"]
+        assert detach["default"] is True
+
+
+class TestRestartOnStart:
+    SCRIPT = REPO / "scripts" / "serve-endpoint.sh"
+
+    def test_a_previous_instance_is_stopped_first(self):
+        source = self.SCRIPT.read_text()
+        assert "Clearing any previous instance" in source
+        assert "stop-endpoint.sh" in source
+
+    def test_it_does_not_depend_on_the_pidfile_being_there(self):
+        """A session can outlive its pidfile; that was the racing case."""
+        source = self.SCRIPT.read_text()
+        clearing = source[source.index("Clearing any previous instance") :]
+        clearing = clearing[: clearing.index("setsid")]
+        assert "kill -0" not in clearing, (
+            "the stop must run unconditionally, not only when a live pid is "
+            "recorded"
+        )
+
+    def test_the_log_is_truncated_before_starting(self):
+        """The readiness check greps this log; a stale hit is a false pass."""
+        source = self.SCRIPT.read_text()
+        assert ': > "${logfile}"' in source
+        assert source.index(': > "${logfile}"') < source.index("setsid nohup")
+
+    def test_no_url_is_a_failure_not_a_success(self):
+        source = self.SCRIPT.read_text()
+        assert "No URL after 2 minutes" in source, (
+            "a dashboard that never announced a URL must not report success"
+        )
+
+    def test_it_waits_for_the_dashboard_not_just_the_tunnel(self):
+        """A live endpoint means the tunnel registered, nothing more.
+
+        The dashboard still has to install its dependencies and bind, and
+        a visitor in that window gets a refused connection from a run that
+        already reported success.
+        """
+        source = self.SCRIPT.read_text()
+        assert "serving localhost:" in source, "read the assigned port from the log"
+        assert "Dashboard answering on port" in source
+        assert "Nothing is listening on" in source, (
+            "a port that never opens is a failure, not a slow start"
+        )

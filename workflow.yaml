@@ -21,18 +21,6 @@ permissions:
 on:
   execute:
     inputs:
-      action:
-        type: dropdown
-        label: Action
-        default: start
-        tooltip: >-
-          Start the dashboard, or stop one that was left running with
-          Detach. Stopping needs no other inputs.
-        options:
-          - label: Start
-            value: start
-          - label: Stop a detached dashboard
-            value: stop
       platform:
         type: dropdown
         label: Platform
@@ -63,11 +51,12 @@ on:
           detach:
             type: boolean
             label: Keep Serving After The Run Ends
-            default: false
+            default: true
             tooltip: >-
-              Off, the run owns the dashboard and cancelling it stops
-              everything. On, the run finishes in seconds and the dashboard
-              keeps serving — stop it later with scripts/stop-endpoint.sh.
+              On, the run finishes in seconds and the dashboard keeps
+              serving; stop it by deleting the session. Off, the run stays
+              open for as long as the dashboard does and cancelling it
+              stops everything.
           subdomain:
             type: string
             label: Public Subdomain
@@ -141,7 +130,6 @@ jobs:
           ENDPOINT_NAME: ${{ inputs.settings.name }}
           ENDPOINT_SUBDOMAIN: ${{ inputs.settings.subdomain }}
           DETACH: ${{ inputs.settings.detach && '1' || '0' }}
-          ACTION: ${{ inputs.action }}
           PINNED_PORT: ${{ inputs.settings.port }}
           REPO_URL: ${{ inputs.settings.repo_url }}
           REPO_BRANCH: ${{ inputs.settings.repo_branch }}
@@ -168,12 +156,5 @@ jobs:
             fi
           fi
           echo "Source:   ${checkout}"
-
-          # A detached dashboard outlives its run, so stopping it needs a
-          # run of its own — there is otherwise no way back from the
-          # platform UI.
-          if [ "${ACTION}" = "stop" ]; then
-            exec bash "${checkout}/scripts/stop-endpoint.sh"
-          fi
 
           exec bash "${checkout}/scripts/serve-endpoint.sh"
