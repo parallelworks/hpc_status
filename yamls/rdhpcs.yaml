@@ -49,6 +49,14 @@ on:
             label: Endpoint Name
             default: rdhpcs-status
             tooltip: Name of the endpoint session, shown in your sessions list
+          detach:
+            type: boolean
+            label: Keep Serving After The Run Ends
+            default: false
+            tooltip: >-
+              Off, the run owns the dashboard and cancelling it stops
+              everything. On, the run finishes in seconds and the dashboard
+              keeps serving — stop it later with scripts/stop-endpoint.sh.
           subdomain:
             type: string
             label: Public Subdomain
@@ -119,6 +127,7 @@ jobs:
           CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
           ENDPOINT_NAME: ${{ inputs.settings.name }}
           ENDPOINT_SUBDOMAIN: ${{ inputs.settings.subdomain }}
+          DETACH: ${{ inputs.settings.detach && '1' || '0' }}
           PINNED_PORT: ${{ inputs.settings.port }}
           REPO_URL: ${{ inputs.settings.repo_url }}
           REPO_BRANCH: ${{ inputs.settings.repo_branch }}

@@ -24,9 +24,14 @@ on:
       platform:
         type: dropdown
         label: Platform
-        default: generic
-        tooltip: Select the deployment platform configuration
+        default: auto
+        tooltip: >-
+          Which configuration to load. Auto picks it from the platform the
+          run is on, so a marketplace launch on a DoD host comes up with
+          the HPCMP fleet rather than a generic deployment.
         options:
+          - label: Auto-detect
+            value: auto
           - label: Generic
             value: generic
           - label: HPCMP
@@ -43,6 +48,14 @@ on:
             label: Endpoint Name
             default: hpc-status
             tooltip: Name of the endpoint session, shown in your sessions list
+          detach:
+            type: boolean
+            label: Keep Serving After The Run Ends
+            default: false
+            tooltip: >-
+              Off, the run owns the dashboard and cancelling it stops
+              everything. On, the run finishes in seconds and the dashboard
+              keeps serving — stop it later with scripts/stop-endpoint.sh.
           subdomain:
             type: string
             label: Public Subdomain
@@ -110,9 +123,12 @@ jobs:
           ENABLE_CLUSTER_PAGES: ${{ inputs.settings.enable_cluster_pages && '1' || '0' }}
           ENABLE_CLUSTER_MONITOR: ${{ inputs.settings.enable_cluster_monitor && '1' || '0' }}
           CLUSTER_MONITOR_INTERVAL: ${{ inputs.settings.cluster_monitor_interval }}
-          CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
+          # Empty when platform is 'auto': a ${{ }} expression cannot see
+          # the host, so scripts/serve-endpoint.sh resolves it there.
+          CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || inputs.platform == 'generic' && 'configs/config.yaml' || '' }}
           ENDPOINT_NAME: ${{ inputs.settings.name }}
           ENDPOINT_SUBDOMAIN: ${{ inputs.settings.subdomain }}
+          DETACH: ${{ inputs.settings.detach && '1' || '0' }}
           PINNED_PORT: ${{ inputs.settings.port }}
           REPO_URL: ${{ inputs.settings.repo_url }}
           REPO_BRANCH: ${{ inputs.settings.repo_branch }}

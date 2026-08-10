@@ -115,7 +115,9 @@ class TestWorkflowsAgree:
             for path in WORKFLOWS
         }
         assert platforms == {
-            "workflow.yaml": "generic",
+            # The generic one is what a marketplace launch resolves to, so
+            # it works out where it is rather than assuming.
+            "workflow.yaml": "auto",
             "hsp.yaml": "hpcmp",
             "rdhpcs.yaml": "noaa",
         }
@@ -173,6 +175,53 @@ class TestServeEndpointScript:
         )
         assert result.stdout.strip() == expected, result.stderr
 
+    @pytest.mark.parametrize(
+        "host,config",
+        [
+            ("activate.hpc.mil", "configs/config.hpcmp.yaml"),
+            ("hpcmp.parallel.works", "configs/config.hpcmp.yaml"),
+            ("noaa.parallel.works", "configs/config.noaa.yaml"),
+            ("activate.parallel.works", "configs/config.yaml"),
+            ("", "configs/config.yaml"),
+        ],
+    )
+    def test_auto_resolves_the_config_from_the_platform(self, host, config):
+        """A marketplace launch runs workflow.yaml, which cannot see the host.
+
+        Without this, the listing called "HPCMP Status" on a DoD platform
+        would come up as a generic deployment with no fleet at all.
+        """
+        source = self.SCRIPT.read_text()
+        body = source[source.index('case "${PW_PLATFORM_HOST:-}"') :]
+        body = body[: body.index("esac") + 4]
+        import subprocess
+
+        result = subprocess.run(
+            ["bash", "-c", f'PW_PLATFORM_HOST={host!r}\nCONFIG_FILE=""\n{body}\n'
+             'echo "${CONFIG_FILE}"'],
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
+        assert result.stdout.strip() == config, result.stderr
+
+    def test_detached_mode_records_a_pid_and_a_way_back(self):
+        """Detaching gives up cancel-stops-it, so it must be stoppable."""
+        source = self.SCRIPT.read_text()
+        assert "setsid nohup pw endpoints run" in source, (
+            "a new process group is what lets it outlive the run"
+        )
+        assert "endpoint.pid" in source and "stop-endpoint.sh" in source
+        assert "Endpoint live at" in source, (
+            "detached mode must confirm the URL rather than report success blindly"
+        )
+
+    def test_detached_mode_refuses_to_stack(self):
+        source = self.SCRIPT.read_text()
+        assert "Already serving" in source, (
+            "a second detached start would leave an unreachable dashboard behind"
+        )
+
     def test_falls_back_when_the_subdomain_is_refused(self):
         """A platform with no sessions domain must still serve the dashboard."""
         source = self.SCRIPT.read_text()
@@ -181,3 +230,39 @@ class TestServeEndpointScript:
             "session that dies must not be silently restarted elsewhere"
         )
         assert "pw subdomains reserve" in source, "say how to claim the name"
+
+
+class TestStopScript:
+    SCRIPT = REPO / "scripts" / "stop-endpoint.sh"
+
+    def test_exists_and_is_executable(self):
+        assert self.SCRIPT.exists(), "detached mode is unusable without a way back"
+        assert self.SCRIPT.stat().st_mode & 0o111
+
+    def test_kills_the_group_not_just_the_tunnel(self):
+        """Killing `pw endpoints run` alone can orphan the dashboard."""
+        source = self.SCRIPT.read_text()
+        assert 'kill -TERM -- "-${pid}"' in source
+        assert 'kill -KILL -- "-${pid}"' in source, "escalate if TERM is ignored"
+
+    def test_cleans_up_a_stale_pidfile(self):
+        source = self.SCRIPT.read_text()
+        assert "stale pidfile" in source
+
+    def test_deletes_a_session_left_behind(self):
+        """A killed tunnel never gets to delete its own session."""
+        source = self.SCRIPT.read_text()
+        assert "pw endpoints delete" in source
+
+    def test_says_something_useful_when_nothing_is_detached(self, tmp_path):
+        import subprocess
+
+        result = subprocess.run(
+            ["bash", str(self.SCRIPT)],
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env={**__import__("os").environ, "HPC_STATUS_DATA_DIR": str(tmp_path)},
+        )
+        assert result.returncode == 0, result.stderr
+        assert "nothing detached to stop" in result.stdout

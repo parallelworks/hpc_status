@@ -71,8 +71,66 @@ if [[ "${PINNED_PORT}" =~ ^[0-9]+$ ]] && [[ "${PINNED_PORT}" -gt 0 ]]; then
     args+=(--port "${PINNED_PORT}")
 fi
 
+# A marketplace launch runs workflow.yaml, whose platform input defaults
+# to "auto" and leaves CONFIG_FILE empty, because a `${{ }}` expression
+# cannot look at the host it is running on. The listing that says "HPCMP
+# Status" should not come up configured for a generic deployment.
+if [[ -z "${CONFIG_FILE:-}" ]]; then
+    case "${PW_PLATFORM_HOST:-}" in
+        *hpc.mil*|*hpcmp*) CONFIG_FILE="configs/config.hpcmp.yaml" ;;
+        *noaa*|*rdhpcs*)   CONFIG_FILE="configs/config.noaa.yaml" ;;
+        *)                 CONFIG_FILE="configs/config.yaml" ;;
+    esac
+    export CONFIG_FILE
+    echo "[endpoint] Platform ${PW_PLATFORM_HOST:-unknown} -> ${CONFIG_FILE}"
+fi
+
 echo "[endpoint] Publishing as '${ENDPOINT_NAME}' from ${PROJECT_ROOT}"
 echo "[endpoint] Requesting subdomain '${ENDPOINT_SUBDOMAIN}'"
+
+# Detached mode lets the workflow run finish while the dashboard keeps
+# serving. It costs the thing that makes the supervised mode good:
+# cancelling the run no longer stops anything, so stop-endpoint.sh and a
+# pidfile are the only way back.
+if [[ "${DETACH:-0}" =~ ^(1|true|yes)$ ]]; then
+    state_dir="${HPC_STATUS_DATA_DIR:-${HOME}/.hpc_status}"
+    mkdir -p "${state_dir}"
+    pidfile="${state_dir}/endpoint.pid"
+    logfile="${state_dir}/endpoint.log"
+
+    if [[ -f "${pidfile}" ]] && kill -0 "$(cat "${pidfile}")" 2>/dev/null; then
+        echo "[endpoint] Already serving (pid $(cat "${pidfile}")). Stop it with" >&2
+        echo "[endpoint]   ${PROJECT_ROOT}/scripts/stop-endpoint.sh" >&2
+        exit 1
+    fi
+
+    # setsid detaches from the job's process group, which is what lets it
+    # outlive the step; the runner does not reap it.
+    setsid nohup pw endpoints run "${args[@]}" \
+        --subdomain "${ENDPOINT_SUBDOMAIN}" -- bash "${launcher}" \
+        >>"${logfile}" 2>&1 </dev/null &
+    endpoint_pid=$!
+    echo "${endpoint_pid}" > "${pidfile}"
+
+    # Wait for the URL to show up rather than reporting success blindly.
+    for _ in $(seq 1 60); do
+        if grep -qm1 "Endpoint live at" "${logfile}" 2>/dev/null; then
+            break
+        fi
+        if ! kill -0 "${endpoint_pid}" 2>/dev/null; then
+            echo "[endpoint] The endpoint exited during startup:" >&2
+            tail -20 "${logfile}" >&2
+            rm -f "${pidfile}"
+            exit 1
+        fi
+        sleep 2
+    done
+
+    echo "[endpoint] Detached (pid ${endpoint_pid}), logging to ${logfile}"
+    grep -m1 "Endpoint live at" "${logfile}" || true
+    echo "[endpoint] Stop it with ${PROJECT_ROOT}/scripts/stop-endpoint.sh"
+    exit 0
+fi
 
 started=${SECONDS}
 set +e
