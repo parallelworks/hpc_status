@@ -17,9 +17,17 @@ UV_BIN="${HOME}/.local/bin/uv"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 
 # Server defaults
+# Remember whether the caller chose the port. An explicit port is a
+# promise to something else — `pw endpoints run` assigns one and tunnels
+# to it — so we must never quietly move off it.
+if [ -n "${PORT+set}" ]; then PORT_EXPLICIT=1; else PORT_EXPLICIT=0; fi
 PORT="${PORT:-8080}"
 HOST="${HOST:-0.0.0.0}"
-URL_PREFIX="${URL_PREFIX:-}"
+# Under `pw endpoints run` the public URL may be path-based
+# (/me/session/<user>/<name>/); PW_ENDPOINT_PATH is what the platform
+# forwards under, and the app needs it to build its own links. It is "/"
+# for a subdomain endpoint, which the server treats as no prefix at all.
+URL_PREFIX="${URL_PREFIX:-${PW_ENDPOINT_PATH:-}}"
 # Default theme: leave empty so the config's ``ui.default_theme`` wins.
 # Set DEFAULT_THEME=dark|light in the environment only when you want to
 # override the config (e.g. for a one-off test launch).
@@ -73,13 +81,53 @@ setup_data_dir() {
     mkdir -p "$DATA_DIR/logs" "$DATA_DIR/cache" "$DATA_DIR/markdown" "$DATA_DIR/user_data"
 }
 
-# Kill any existing dashboard process on the port
+# Stop a previous instance of *this* dashboard on the port.
+#
+# The old version killed whatever held the port, which is fine on a laptop
+# and wrong on a shared workspace: port 8080 on an ACTIVATE node belongs to
+# Grafana. Match our own command line instead, so we can only ever stop
+# ourselves.
 cleanup_existing() {
-    if command -v netstat &> /dev/null; then
-        netstat -tulpn 2>/dev/null | grep ":$PORT " | awk '{print $7}' | cut -d '/' -f1 | xargs -r kill 2>/dev/null || true
-    elif command -v lsof &> /dev/null; then
-        lsof -ti:$PORT | xargs -r kill 2>/dev/null || true
+    local pids
+    pids=$(pgrep -u "$(id -u)" -f -- "src\.server\.main .*--port ${PORT}( |\$)" 2>/dev/null || true)
+    if [[ -n "$pids" ]]; then
+        echo "[run] Stopping previous dashboard on port ${PORT} (pid: ${pids//$'\n'/, })"
+        kill $pids 2>/dev/null || true
+        # Give it a moment to release the socket before we bind it.
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            port_is_free && return 0
+            sleep 0.3
+        done
     fi
+}
+
+# True when nothing is listening on $1 (or $PORT). Uses bash's /dev/tcp so
+# it works without lsof, netstat, or ss.
+port_is_free() {
+    local probe="${1:-$PORT}"
+    ! (exec 3<>"/dev/tcp/127.0.0.1/${probe}") 2>/dev/null
+}
+
+# A default port is a suggestion; an explicit one is a contract.
+select_port() {
+    port_is_free && return 0
+
+    if [[ "$PORT_EXPLICIT" == "1" ]]; then
+        # Leave it: the server prints a far better diagnostic than we can,
+        # including what is holding the port.
+        return 0
+    fi
+
+    local candidate
+    for candidate in $(seq $((PORT + 1)) $((PORT + 20))); do
+        if port_is_free "$candidate"; then
+            echo "[run] Port ${PORT} is in use by another service — using ${candidate}"
+            echo "[run] Set PORT=... to choose one yourself"
+            PORT="$candidate"
+            return 0
+        fi
+    done
+    echo "[run] Ports ${PORT}-$((PORT + 20)) are all in use; set PORT=... to pick one"
 }
 
 # Build server command
@@ -134,8 +182,9 @@ main() {
     sync_deps
     setup_data_dir
 
-    # Cleanup existing processes
+    # Stop our own previous instance, then settle on a port
     cleanup_existing
+    select_port
 
     # Build and run command
     local cmd
@@ -155,5 +204,8 @@ main() {
     exec $cmd
 }
 
-# Run main
-main "$@"
+# Run main, unless this file was sourced — the tests source it to exercise
+# the port helpers without starting a dashboard.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

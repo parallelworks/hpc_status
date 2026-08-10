@@ -31,6 +31,70 @@ DEFAULT_REFRESH_SECONDS = 180
 DEFAULT_CLUSTER_MONITOR_INTERVAL = 120
 
 
+def _identify_listener(port: int) -> str:
+    """Describe whatever is already listening on a port.
+
+    ``lsof`` and ``ss`` only name a process the calling user owns, and the
+    thing in the way is usually somebody else's service — on an ACTIVATE
+    workspace, port 8080 is Grafana. Asking the port itself works
+    regardless of who owns it.
+    """
+    import http.client
+
+    try:
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=1.5)
+        conn.request("GET", "/")
+        response = conn.getresponse()
+        body = response.read(2048).decode("utf-8", "replace")
+        conn.close()
+    except Exception:
+        return "something that is not an HTTP server"
+
+    import re
+
+    title = re.search(r"<title[^>]*>([^<]{1,60})</title>", body, re.I)
+    server = response.getheader("Server")
+    for label in (title.group(1).strip() if title else None, server):
+        if label:
+            return f"an HTTP server ({label})"
+    return f"an HTTP server (HTTP {response.status})"
+
+
+def _create_server(host: str, port: int, handler) -> ThreadingHTTPServer:
+    """Bind the listening socket, or explain why we could not.
+
+    Binding happens before any collection so that a busy port costs a
+    second rather than a full scrape, and reports the conflict instead of
+    an OSError traceback from four frames deep in socketserver.
+    """
+    try:
+        return ThreadingHTTPServer((host, port), handler)
+    except OSError as exc:
+        import errno
+
+        if exc.errno not in (errno.EADDRINUSE, errno.EACCES):
+            raise
+
+        if exc.errno == errno.EACCES:
+            _log(
+                f"[dashboard] Cannot bind port {port}: permission denied. "
+                f"Ports below 1024 need root; pick a higher one with "
+                f"--port or PORT=."
+            )
+            raise SystemExit(1)
+
+        _log(
+            f"[dashboard] Port {port} is already in use by "
+            f"{_identify_listener(port)}."
+        )
+        _log(
+            "[dashboard] Start on a different port with `PORT=8081 "
+            "./scripts/run.sh` or `--port 8081`, or let the platform pick "
+            "one with `pw endpoints run -- ./scripts/run.sh`."
+        )
+        raise SystemExit(1)
+
+
 def create_generate_payload_fn(config: Config, store: DataStore):
     """Create the payload generation function based on config.
 
@@ -188,18 +252,26 @@ def run_server(args) -> None:
     # Override config with CLI args
     if args.host:
         config.server.host = args.host
-    if args.port:
+    if args.port is not None:
         config.server.port = args.port
     if args.url_prefix:
         config.server.url_prefix = args.url_prefix
     if args.default_theme:
         config.ui.default_theme = args.default_theme
 
-    # Initialize data store
-    store = DataStore(Path(config.data_dir) if config.data_dir else None)
-
     # Determine web directory
     web_dir = WEB_DIR if WEB_DIR.exists() else PUBLIC_DIR
+
+    # Claim the port before doing anything expensive. A busy port used to
+    # surface as an OSError traceback *after* a full fleet scrape and two
+    # started workers, which left threads running behind the failure.
+    handler = functools.partial(DashboardRequestHandler, directory=str(web_dir))
+    server = _create_server(config.server.host, config.server.port, handler)
+    # --port 0 asks the OS for a free port; report the one we actually got.
+    config.server.port = server.server_address[1]
+
+    # Initialize data store
+    store = DataStore(Path(config.data_dir) if config.data_dir else None)
 
     # The topology map needs a bundled data file. Say so here rather than
     # letting the browser be the first to find out: a deploy that copies
@@ -307,10 +379,6 @@ def run_server(args) -> None:
         config.topology.wait_estimate_window_hours
     )
 
-    # Create and run the server
-    handler = functools.partial(DashboardRequestHandler, directory=str(web_dir))
-    server = ThreadingHTTPServer((config.server.host, config.server.port), handler)
-
     _log(f"[dashboard] Serving on http://{config.server.host}:{config.server.port}")
     if config.server.url_prefix:
         _log(f"[dashboard] URL prefix: {config.server.url_prefix}")
@@ -339,7 +407,15 @@ def parse_args():
 
     # Server options
     parser.add_argument("--host", default="0.0.0.0", help="Bind address")
-    parser.add_argument("--port", type=int, default=8080, help="Port to listen on")
+    # No default: an absent flag must let the config file's server.port
+    # win, and `--port 0` (ask the OS for a free port) must not read as
+    # "unset" the way a falsy 0 would.
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Port to listen on (0 picks a free one; default: config server.port)",
+    )
     parser.add_argument("--config", type=str, help="Path to config YAML file")
 
     # Refresh options

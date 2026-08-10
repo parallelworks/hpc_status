@@ -81,7 +81,24 @@ back, with a per-system cooldown so a flapping machine doesn't spam you.
 ./scripts/run.sh
 ```
 
-Then open [http://localhost:8080](http://localhost:8080).
+Then open [http://localhost:8080](http://localhost:8080). If something else
+already holds 8080 — on an ACTIVATE workspace that is Grafana — the script
+steps to the next free port and tells you which. Set `PORT=...` to choose
+one yourself.
+
+### Sharing it
+
+On [Parallel Works](https://parallel.works/), publish the dashboard as an
+endpoint session and get a URL you can hand to someone else:
+
+```bash
+pw endpoints run --name hpc-status -- ./scripts/run.sh
+```
+
+The platform assigns a free port, tunnels to it without needing any
+inbound access to your machine, and kills the dashboard when you exit.
+The **HPC Status** workflow does exactly this — see
+[docs/deployment.md](docs/deployment.md).
 
 ### Watching your own clusters
 
