@@ -34,8 +34,16 @@ const setStatus = (message, variant = "info") => {
   dom.status.dataset.variant = variant;
 };
 
-/** The absolute URL a caller outside the browser would use. */
-const absoluteUrl = (path) => new URL(path.replace(/^\//, ""), getBaseUrl()).toString();
+/**
+ * The absolute URL a caller outside the browser would use.
+ *
+ * The base is this document, so an empty relative path resolves to the
+ * document itself — which is how the base-URL panel came to advertise
+ * ".../api.html". "." asks for the directory it lives in instead, which
+ * is what callers actually append to.
+ */
+const absoluteUrl = (path) =>
+  new URL(path.replace(/^\//, "") || ".", getBaseUrl()).toString();
 
 const paramRows = (params) => {
   if (!params?.length) return "";
