@@ -160,7 +160,7 @@ const systemNodes = () =>
 const matchesFilters = (node) => {
   const { search, status, connectedOnly } = state.filters;
   if (status && String(node.status).toUpperCase() !== status) return false;
-  if (connectedOnly && !node.connected) return false;
+  if (connectedOnly === true && !node.connected) return false;
   if (search) {
     const haystack = [
       node.label,
@@ -2355,6 +2355,34 @@ const setStatus = (message, tone = "info") => {
   dom.status.dataset.variant = tone;
 };
 
+/**
+ * Decide the default scope once the fleet is known.
+ *
+ * This page is about what the monitor is actually talking to, and a graph
+ * full of machines nobody here has a session to reads as noise — several
+ * of them are systems a given user has never heard of. So live
+ * connections only is the default.
+ *
+ * A deployment with no live sessions at all (a status-page-only fleet)
+ * would then open on an empty canvas, which is worse than the noise, so
+ * the default only applies when there is something connected to show. An
+ * explicit ?connected= in the URL always wins over both.
+ */
+const resolveDefaultScope = (graph) => {
+  if (state.filters.connectedOnly !== null) return;
+  const systems = (graph?.nodes || []).filter((node) => node.kind === "system");
+  const connected = systems.filter((node) => node.connected).length;
+  state.filters.connectedOnly = connected > 0;
+  if (dom.connectedOnly) dom.connectedOnly.checked = state.filters.connectedOnly;
+  if (state.filters.connectedOnly && connected < systems.length) {
+    setStatus(
+      `Showing the ${connected} system${connected === 1 ? "" : "s"} this monitor holds ` +
+        `a live session to \u2014 untick "Live connections only" for all ${systems.length}.`,
+      "info"
+    );
+  }
+};
+
 const loadData = async ({ silent = false } = {}) => {
   if (state.loading) return;
   state.loading = true;
@@ -2382,6 +2410,9 @@ const loadData = async ({ silent = false } = {}) => {
     } else {
       setStatus("");
     }
+    // After the status block, which would otherwise clear the note it
+    // leaves about what is being hidden.
+    resolveDefaultScope(graph);
 
     markChangedSystems(previousSystems);
     renderSummary();
@@ -2612,7 +2643,11 @@ const readLocation = () => {
   if (group && GROUPINGS.has(group)) state.group = group;
   state.filters.search = params.get("q") || "";
   state.filters.status = (params.get("status") || "").toUpperCase();
-  state.filters.connectedOnly = params.get("connected") === "1";
+  // The default is live-only, so an absent parameter is not "off": only
+  // connected=0 turns it off. Applied once the graph is loaded, because a
+  // fleet with nothing connected must not open on an empty canvas.
+  const connectedParam = params.get("connected");
+  state.filters.connectedOnly = connectedParam === null ? null : connectedParam === "1";
   const node = params.get("node");
   if (node) state.selectedId = node;
   if (params.get("timeline") === "1") state.timelineOpen = true;
@@ -2634,7 +2669,7 @@ const syncLocation = () => {
   params.set("group", state.group);
   if (state.filters.search) params.set("q", state.filters.search);
   if (state.filters.status) params.set("status", state.filters.status);
-  if (state.filters.connectedOnly) params.set("connected", "1");
+  if (state.filters.connectedOnly === false) params.set("connected", "0");
   if (state.selectedId) params.set("node", state.selectedId);
   if (state.timelineOpen) params.set("timeline", "1");
   if (state.mapDetail !== "auto") params.set("detail", state.mapDetail);

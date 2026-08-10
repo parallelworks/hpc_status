@@ -24,8 +24,10 @@ commands to decide where to submit.
 (UP / DEGRADED / MAINTENANCE / DOWN), its login node, its scheduler, and
 when it was last checked. Click a system for the full details page.
 
-**Topology.** An interactive map of the fleet — every site, every system,
-and which ones the monitor actually holds a live session to. Group by site
+**Topology.** An interactive map of what the monitor is connected to —
+sites, systems, and the live sessions between them. It opens on live
+connections only, since a graph of machines nobody here has a session to
+is mostly noise; untick **Live connections only** for the whole fleet. Group by site
 (a DSRC on an HPCMP deployment), scheduler, status, or connection; switch between hierarchy, radial,
 force, lane, load, and geographic layouts — the geographic one is a real map,
 with each site pinned at its actual coordinates and framed insets for

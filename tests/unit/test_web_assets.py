@@ -125,6 +125,52 @@ class TestStylesheet:
             assert not undefined, f"{script.name} reads undefined properties: {undefined}"
 
 
+class TestTopologyDefaultScope:
+    """The topology opens on live connections only.
+
+    A graph full of machines nobody at this deployment has a session to
+    reads as noise — several are systems a given user has never heard of.
+    But a status-page-only fleet has no live sessions at all, and must not
+    open on an empty canvas, so the default is conditional.
+    """
+
+    SOURCE = (JS_DIR / "topology.js").read_text()
+
+    def test_the_default_is_decided_from_the_data(self):
+        assert "const resolveDefaultScope" in self.SOURCE
+        assert "connected > 0" in self.SOURCE, (
+            "the default must depend on there being something connected"
+        )
+
+    def test_an_absent_url_parameter_is_not_off(self):
+        """?connected=0 is off; no parameter at all means 'decide for me'."""
+        assert 'connectedParam === null ? null' in self.SOURCE
+        assert 'params.set("connected", "0")' in self.SOURCE, (
+            "turning it off must survive a reload"
+        )
+
+    def test_the_filter_treats_undecided_as_show_everything(self):
+        assert "connectedOnly === true && !node.connected" in self.SOURCE, (
+            "a null (undecided) scope must not hide anything"
+        )
+
+    def test_it_says_what_it_is_hiding(self):
+        assert "holds " in self.SOURCE and "Live connections only" in self.SOURCE
+
+
+class TestApiPageBaseUrl:
+    """The base URL panel advertises what callers append to."""
+
+    SOURCE = (JS_DIR / "api.js").read_text()
+
+    def test_an_empty_path_resolves_to_the_directory(self):
+        """new URL("", ".../api.html") is api.html itself, not the base."""
+        assert '|| "."' in self.SOURCE, (
+            'an empty relative path must become "." or the panel advertises '
+            "the page's own URL"
+        )
+
+
 class TestBundledData:
     def test_basemap_is_present_and_shaped_correctly(self):
         """The topology map needs this file; losing it fails silently."""
