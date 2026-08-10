@@ -475,16 +475,20 @@ function setView(view) {
 }
 
 function renderSystems() {
-  const view = currentView();
   const cardsHost = document.getElementById("systems-cards");
   const tableHost = document.querySelector(".table-panel");
+  // A browser holding a cached copy of the previous index.html has no
+  // cards container. Hiding the table on its behalf would leave the page
+  // with nothing at all in it, which reads as "the dashboard is down"
+  // rather than "reload me".
+  const view = cardsHost ? currentView() : "table";
   document.querySelectorAll("[data-view]").forEach((button) => {
     const active = button.dataset.view === view;
     button.classList.toggle("is-active", active);
     button.setAttribute("aria-pressed", active ? "true" : "false");
   });
   if (cardsHost) cardsHost.hidden = view !== "cards";
-  if (tableHost) tableHost.hidden = view !== "table";
+  if (tableHost) tableHost.hidden = cardsHost ? view !== "table" : false;
   if (view === "cards") renderCards();
   else renderTable();
 }

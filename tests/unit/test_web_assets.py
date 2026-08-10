@@ -171,6 +171,26 @@ class TestApiPageBaseUrl:
         )
 
 
+class TestStaleCacheResilience:
+    """A browser holding the previous index.html must still see systems.
+
+    The cards container arrived with the fleet rewrite. A cached copy of
+    the older page has no such element, and the view switch would have
+    hidden the table on its behalf — leaving a page with nothing in it,
+    which reads as "the dashboard is down" rather than "reload me".
+    """
+
+    SOURCE = (JS_DIR / "app.js").read_text()
+
+    def test_the_view_falls_back_to_the_table(self):
+        assert 'const view = cardsHost ? currentView() : "table"' in self.SOURCE
+
+    def test_the_table_is_never_hidden_without_a_replacement(self):
+        assert "cardsHost ? view !== \"table\" : false" in self.SOURCE, (
+            "with no cards container the table must stay visible"
+        )
+
+
 class TestBundledData:
     def test_basemap_is_present_and_shaped_correctly(self):
         """The topology map needs this file; losing it fails silently."""
