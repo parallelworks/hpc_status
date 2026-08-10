@@ -41,6 +41,23 @@ ENDPOINTS: List[Dict[str, Any]] = [
     },
     {
         "method": "GET",
+        "path": "/api/fleet",
+        "group": "Fleet",
+        "summary": "Every system this deployment knows about",
+        "description": (
+            "Merges the status page, the monitor's live sessions and the "
+            "marketplace catalog into one list. Each system carries the "
+            "sources that know it, and 'monitored' says whether anything is "
+            "watching it at all. This is what the Fleet status page renders."
+        ),
+        "returns": ["meta", "summary", "sites", "systems"],
+        "notes": (
+            "Uptime in the summary is over monitored systems only — a "
+            "machine nothing is watching is not evidence of health."
+        ),
+    },
+    {
+        "method": "GET",
         "path": "/api/topology",
         "group": "Fleet",
         "summary": "The fleet as a graph: monitor, sites, systems",

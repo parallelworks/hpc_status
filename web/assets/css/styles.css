@@ -4091,7 +4091,167 @@ th[data-sortable][data-sort-dir="desc"]::after {
 }
 
 /* ----------------------------------------------------------------
-   32. API reference page
+   32. Fleet cards
+   ---------------------------------------------------------------- */
+.systems-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+}
+
+.systems-head h3 {
+  margin: 0;
+}
+
+.view-toggle {
+  display: inline-flex;
+  gap: var(--space-1);
+  margin-left: auto;
+}
+
+.card-note {
+  margin: 0.15rem 0 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+
+.site-group {
+  margin-bottom: var(--space-6);
+}
+
+.site-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--space-3);
+}
+
+.site-group-head h3 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.site-group-head .muted-text {
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.site-group-count {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.system-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: var(--space-3);
+}
+
+.system-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease;
+}
+
+.system-card:hover,
+.system-card:focus-visible {
+  border-color: var(--accent);
+  transform: translateY(-1px);
+}
+
+/* Nothing is watching these, so they should not read as healthy — or as
+   broken. Muted, not coloured. */
+.system-card--unmonitored {
+  border-style: dashed;
+  background: var(--panel-alt);
+}
+
+.system-card-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.system-card-head h4 {
+  margin: 0;
+  font-size: var(--text-base);
+}
+
+.system-card-head .badge {
+  margin-left: auto;
+}
+
+.system-card-desc {
+  margin: 0;
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: 1.45;
+}
+
+.system-card-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  margin: 0;
+  font-size: var(--text-xs);
+}
+
+.system-card-facts div {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.system-card-facts dt {
+  color: var(--muted);
+  min-width: 5rem;
+}
+
+.system-card-facts dd {
+  margin: 0;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.system-card-source {
+  margin: 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-style: italic;
+}
+
+.system-card-links {
+  display: flex;
+  gap: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+}
+
+.system-card-links a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.system-card-links a:hover {
+  text-decoration: underline;
+}
+
+/* ----------------------------------------------------------------
+   33. API reference page
    ---------------------------------------------------------------- */
 .api-base {
   display: flex;
@@ -4293,7 +4453,7 @@ th[data-sortable][data-sort-dir="desc"]::after {
 }
 
 /* ----------------------------------------------------------------
-   33. Motion & Accessibility
+   34. Motion & Accessibility
    ---------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
   *,

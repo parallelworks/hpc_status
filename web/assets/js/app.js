@@ -46,7 +46,10 @@ const apiBase = (() => {
   }
 })();
 
-const STATUS_URL = new URL("api/status", apiBase).toString();
+// The fleet endpoint merges the status page, the monitor's live sessions
+// and the marketplace catalog. /api/status is only one of those, which is
+// why a reachable-but-unpublished system used to be missing here.
+const FLEET_URL = new URL("api/fleet", apiBase).toString();
 const REFRESH_URL = new URL("api/refresh", apiBase).toString();
 const CLUSTER_USAGE_URL = new URL("api/cluster-usage", apiBase).toString();
 // Note: Insights moved to dedicated page (insights.html)
@@ -312,7 +315,7 @@ async function loadData({ silentFallback = false, showLoading = true } = {}) {
     setTableLoading("Loading latest data…");
   }
   try {
-    const data = await fetchJson(`${STATUS_URL}?t=${Date.now()}`);
+    const data = await fetchJson(`${FLEET_URL}?t=${Date.now()}`);
     ingestData(data);
     state.usingApi = true;
     showStatusMessage("");
@@ -331,16 +334,23 @@ async function loadData({ silentFallback = false, showLoading = true } = {}) {
 
 function ingestData(data) {
   const systems = data.systems || [];
+  const siteNames = new Map((data.sites || []).map((site) => [site.id, site.name]));
+  state.sites = data.sites || [];
+  // The rest of this page speaks the older row shape (system / dsrc /
+  // raw_alt), so translate once here rather than at every use.
   state.systems = systems.map((row, idx) => ({
     ...row,
-    slug: slugifySystem(row.system) || `system${idx + 1}`,
+    system: row.name,
+    dsrc: siteNames.get(row.site) || row.site || "",
+    raw_alt: row.notes || row.description || "",
+    slug: row.slug || slugifySystem(row.name) || `system${idx + 1}`,
     __index: idx,
   }));
   state.summary = data.summary || {};
   state.meta = data.meta || {};
   updateSummary();
   populateFilters();
-  renderTable();
+  renderSystems();
   updateDetailViewState();
   invalidateMarkdownCache();
 }
@@ -348,7 +358,23 @@ function ingestData(data) {
 function updateSummary() {
   const { summary, meta, systems } = state;
   elements.totalSystems.textContent = summary.total_systems ?? systems.length;
-  elements.fleetUptime.textContent = summary.uptime_ratio !== undefined ? percent(summary.uptime_ratio) : "--";
+  // Uptime is over monitored systems only, so say how many that is —
+  // otherwise the percentage looks like it disagrees with the count.
+  const note = document.getElementById("total-systems-note");
+  if (note) {
+    note.textContent = summary.catalog_only
+      ? `${summary.monitored} monitored · ${summary.catalog_only} catalog only`
+      : summary.connected
+        ? `${summary.connected} with a live session`
+        : "";
+  }
+  elements.fleetUptime.textContent =
+    summary.uptime_ratio !== undefined && summary.uptime_ratio !== null
+      ? percent(summary.uptime_ratio)
+      : "--";
+  if (elements.fleetUptime.parentElement && summary.monitored) {
+    elements.fleetUptime.title = `${summary.up} of ${summary.monitored} monitored systems are up`;
+  }
   const nonUp = (summary.status_counts && Object.entries(summary.status_counts)
     .filter(([key]) => key !== "UP")
     .reduce((sum, [, val]) => sum + val, 0)) || 0;
@@ -364,7 +390,7 @@ function updateSummary() {
   }
 
   buildLegend(elements.statusLegend, summary.status_counts);
-  buildLegend(elements.dsrcLegend, summary.dsrc_counts, true);
+  buildLegend(elements.dsrcLegend, summary.site_counts || summary.dsrc_counts, true);
   buildLegend(elements.schedulerLegend, summary.scheduler_counts, true);
 
   // Update footer source dynamically
@@ -422,6 +448,137 @@ function setOptions(select, values) {
   if (values.includes(current)) {
     select.value = current;
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// Systems: cards by site, or the dense table
+// ---------------------------------------------------------------------------
+
+const VIEW_KEY = "hpc-status-fleet-view";
+
+function currentView() {
+  try {
+    return window.localStorage.getItem(VIEW_KEY) === "table" ? "table" : "cards";
+  } catch (err) {
+    return "cards";
+  }
+}
+
+function setView(view) {
+  try {
+    window.localStorage.setItem(VIEW_KEY, view);
+  } catch (err) {
+    /* private browsing: the choice just does not persist */
+  }
+  renderSystems();
+}
+
+function renderSystems() {
+  const view = currentView();
+  const cardsHost = document.getElementById("systems-cards");
+  const tableHost = document.querySelector(".table-panel");
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    const active = button.dataset.view === view;
+    button.classList.toggle("is-active", active);
+    button.setAttribute("aria-pressed", active ? "true" : "false");
+  });
+  if (cardsHost) cardsHost.hidden = view !== "cards";
+  if (tableHost) tableHost.hidden = view !== "table";
+  if (view === "cards") renderCards();
+  else renderTable();
+}
+
+/** Systems grouped under the site that hosts them. */
+function renderCards() {
+  const host = document.getElementById("systems-cards");
+  if (!host) return;
+  const rows = filteredRows();
+  elements.tableCount.textContent = `${rows.length} result${rows.length === 1 ? "" : "s"}`;
+  if (!rows.length) {
+    host.innerHTML = `<p class="placeholder">No systems match the filters.</p>`;
+    return;
+  }
+
+  const bySite = new Map();
+  rows.forEach((row) => {
+    const key = row.site || "unassigned";
+    if (!bySite.has(key)) bySite.set(key, []);
+    bySite.get(key).push(row);
+  });
+
+  const siteMeta = new Map((state.sites || []).map((site) => [site.id, site]));
+  // Unassigned last: it is a residue, not a place.
+  const order = [...bySite.keys()].sort((a, b) => {
+    if (a === "unassigned") return 1;
+    if (b === "unassigned") return -1;
+    return (siteMeta.get(a)?.name || a).localeCompare(siteMeta.get(b)?.name || b);
+  });
+
+  host.innerHTML = order
+    .map((siteId) => {
+      const site = siteMeta.get(siteId) || { name: siteId, id: siteId };
+      const members = bySite.get(siteId);
+      const where = [site.organization, site.location].filter(Boolean).join(" · ");
+      return `
+        <section class="site-group">
+          <header class="site-group-head">
+            <h3>${escapeHtml(site.name || siteId)}</h3>
+            ${where ? `<p class="muted-text">${escapeHtml(where)}</p>` : ""}
+            <span class="site-group-count">${members.length} system${members.length === 1 ? "" : "s"}</span>
+          </header>
+          <div class="system-cards">
+            ${members.map(systemCard).join("")}
+          </div>
+        </section>`;
+    })
+    .join("");
+}
+
+function systemCard(row) {
+  const status = row.status || "UNKNOWN";
+  const capacity = row.capacity;
+  const busy =
+    capacity && Number.isFinite(capacity.utilization_percent)
+      ? `${Math.round(capacity.utilization_percent)}% of ${formatCount(capacity.cores_total)} cores busy`
+      : null;
+  // Say what is watching it. "NOT MONITORED" without that reads as a fault.
+  const provenance = row.monitored
+    ? `${escapeHtml(row.status_source || "")}${row.connected ? " · connected" : ""}`
+    : "listed in the marketplace · nothing is watching it";
+
+  return `
+    <article class="system-card${row.monitored ? "" : " system-card--unmonitored"}"
+      data-slug="${escapeHtml(row.slug || "")}" tabindex="0" role="button">
+      <header class="system-card-head">
+        <h4>${escapeHtml(row.system || "(unnamed)")}</h4>
+        <span class="badge ${statusClass(status)}">${escapeHtml(status)}</span>
+      </header>
+      ${row.description ? `<p class="system-card-desc">${escapeHtml(row.description)}</p>` : ""}
+      <dl class="system-card-facts">
+        ${row.scheduler ? `<div><dt>Scheduler</dt><dd>${escapeHtml(row.scheduler)}</dd></div>` : ""}
+        ${row.login ? `<div><dt>Login</dt><dd><code>${escapeHtml(row.login)}</code></dd></div>` : ""}
+        ${busy ? `<div><dt>Load</dt><dd>${escapeHtml(busy)}</dd></div>` : ""}
+      </dl>
+      <p class="system-card-source">${provenance}</p>
+      ${systemCardLinks(row)}
+    </article>`;
+}
+
+/** Only link to pages that will actually have something to show. */
+function systemCardLinks(row) {
+  if (!clusterPagesEnabled() || !row.connected) return "";
+  const slug = encodeURIComponent(row.slug || "");
+  return `
+    <nav class="system-card-links" aria-label="Detail pages">
+      <a href="queues.html?cluster=${slug}">Queues</a>
+      <a href="storage.html?cluster=${slug}">Storage</a>
+      <a href="topology.html?node=sys:${slug}">Topology</a>
+    </nav>`;
+}
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
 }
 
 function renderTable() {
@@ -557,9 +714,12 @@ async function triggerRefresh() {
 }
 
 function registerEvents() {
-  elements.searchInput.addEventListener("input", debounce(renderTable, 150));
-  elements.statusFilter.addEventListener("change", renderTable);
-  elements.dsrcFilter.addEventListener("change", renderTable);
+  elements.searchInput.addEventListener("input", debounce(renderSystems, 150));
+  elements.statusFilter.addEventListener("change", renderSystems);
+  elements.dsrcFilter.addEventListener("change", renderSystems);
+  document.querySelectorAll("[data-view]").forEach((button) => {
+    button.addEventListener("click", () => setView(button.dataset.view));
+  });
   elements.refreshBtn.addEventListener("click", () => triggerRefresh());
   elements.themeToggle?.addEventListener("click", () => {
     const current = document.documentElement.dataset.theme || resolveDefaultTheme();
@@ -568,12 +728,20 @@ function registerEvents() {
   });
   elements.tableBody.addEventListener("click", onTableRowClick);
   elements.tableBody.addEventListener("keydown", onTableRowKeydown);
+  const cardsHost = document.getElementById("systems-cards");
+  if (cardsHost) {
+    cardsHost.addEventListener("click", onTableRowClick);
+    cardsHost.addEventListener("keydown", onTableRowKeydown);
+  }
   elements.detailBack?.addEventListener("click", () => closeDetail());
   window.addEventListener("popstate", () => syncViewWithLocation());
 }
 
 function onTableRowClick(event) {
-  const row = event.target.closest("tr[data-slug]");
+  // A card carries its own links; let those navigate rather than opening
+  // the inline detail behind them.
+  if (event.target.closest(".system-card-links")) return;
+  const row = event.target.closest("[data-slug]");
   if (!row) {
     return;
   }
@@ -587,7 +755,8 @@ function onTableRowKeydown(event) {
   if (event.key !== "Enter" && event.key !== " ") {
     return;
   }
-  const row = event.target.closest("tr[data-slug]");
+  if (event.target.closest(".system-card-links")) return;
+  const row = event.target.closest("[data-slug]");
   if (!row) {
     return;
   }

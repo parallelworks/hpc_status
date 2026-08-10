@@ -84,6 +84,31 @@ paths:
                   generated_at: {}
                   fleet_stats: {}
                   systems: {}
+  /api/fleet:
+    get:
+      tags:
+      - Fleet
+      summary: Every system this deployment knows about
+      description: 'Merges the status page, the monitor''s live sessions and the marketplace
+        catalog into one list. Each system carries the sources that know it, and ''monitored''
+        says whether anything is watching it at all. This is what the Fleet status page renders.
+
+
+        Uptime in the summary is over monitored systems only — a machine nothing is watching
+        is not evidence of health.'
+      operationId: apiFleet
+      responses:
+        '200':
+          description: Every system this deployment knows about
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta: {}
+                  summary: {}
+                  sites: {}
+                  systems: {}
   /api/topology:
     get:
       tags:

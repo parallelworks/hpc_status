@@ -20,9 +20,18 @@ commands to decide where to submit.
 
 ## What you'll see
 
-**Fleet status.** Every HPC system you have access to, with a status
-(UP / DEGRADED / MAINTENANCE / DOWN), its login node, its scheduler, and
-when it was last checked. Click a system for the full details page.
+**Fleet status.** Every HPC system this deployment knows about, as cards
+grouped by site — what each machine is for, its status, its login node
+and scheduler, and links straight to its queues and storage. Switch to
+the dense table whenever you prefer it.
+
+"Knows about" means three sources merged, because none of them knows
+everything: the centre's status page publishes some systems, the monitor
+holds live sessions to others, and the marketplace lists what exists and
+describes it. A machine that is reachable but unpublished used to be
+missing here entirely. Systems nothing is watching still appear, marked
+as such, and are left out of the uptime figure — the percentage is over
+monitored systems, not over everything that has a name.
 
 **Topology.** An interactive map of what the monitor is connected to —
 sites, systems, and the live sessions between them. It opens on live

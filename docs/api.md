@@ -27,6 +27,61 @@ No authentication required. Rate limiting may apply (configurable).
 
 ### Fleet Status
 
+#### GET /api/fleet
+
+Returns every system this deployment knows about, merged from three sources:
+the status page, the monitor's live sessions, and the marketplace catalog. This
+is what the Fleet status page renders.
+
+**Response**
+
+```json
+{
+  "meta": {
+    "generated_at": "2026-08-10T15:30:00Z",
+    "platform": "hpcmp",
+    "site_label": "DSRC",
+    "sources": ["status page", "live session", "catalog"]
+  },
+  "summary": {
+    "total_systems": 21,
+    "monitored": 17,
+    "catalog_only": 4,
+    "connected": 9,
+    "up": 14,
+    "not_up": 3,
+    "uptime_ratio": 0.8235,
+    "status_counts": {"UP": 14, "DOWN": 3, "NOT MONITORED": 4},
+    "site_counts": {"mhpcc": 3, "arl": 4},
+    "scheduler_counts": {"SLURM": 12, "PBS": 5}
+  },
+  "sites": [
+    {"id": "mhpcc", "name": "MHPCC DSRC", "location": "Kihei, HI", "systems": 3}
+  ],
+  "systems": [
+    {
+      "slug": "coral",
+      "name": "Coral",
+      "status": "UP",
+      "status_source": "live session",
+      "monitored": true,
+      "connected": true,
+      "sources": ["live session", "catalog"],
+      "site": "mhpcc",
+      "site_source": "hostname",
+      "scheduler": "SLURM",
+      "login": "coral.mhpcc.hpc.mil",
+      "description": "Heterogeneous x86_64 and ARM high-performance computing cluster.",
+      "capacity": {"cores_total": 400, "cores_running": 150, "utilization_percent": 37.5}
+    }
+  ]
+}
+```
+
+`uptime_ratio` is over `monitored` systems only. A machine that appears solely
+in the catalog has status `NOT MONITORED` — nothing is watching it, and calling
+that `UNKNOWN` would imply somebody looked.
+
 #### GET /api/status
 
 Returns the full fleet status payload used by the dashboard.
