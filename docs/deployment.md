@@ -25,11 +25,10 @@ Inputs:
 
 | Input | Default | Meaning |
 |---|---|---|
-| `action` | `start` | `start` the dashboard, or `stop` a detached one |
 | `platform` | `auto` | Which config to load: `auto`, `generic`, `hpcmp`, or `noaa` |
 | `name` | `hpc-status` | Endpoint session name, shown in your sessions list |
 | `subdomain` | *(blank)* | Public hostname label; blank derives `status-<username>` |
-| `detach` | `false` | Keep serving after the run ends (see below) |
+| `detach` | `true` | Keep serving after the run ends (see below) |
 | `port` | `0` | Local port; `0` lets the CLI pick a free one |
 | `theme` | `light` | Default color theme |
 | `enable_cluster_pages` | `true` | Queue and quota pages |
@@ -49,53 +48,43 @@ The workflow publishes the dashboard with `pw endpoints run`, which:
 
 ### Who owns the dashboard
 
-By default the run owns it: the step stays in the foreground for as long
-as the dashboard serves, logs stream into the run, and **cancelling the
-run stops everything** — tunnel, dashboard, workers, session.
-
-The run showing as "running" for days is the cost of that, and it is what
-the `detach` input trades away:
-
-| | `detach: false` (default) | `detach: true` |
-|---|---|---|
-| Run status | running until you cancel | completed in seconds |
-| Logs | stream into the run | `~/.hpc_status/endpoint.log` |
-| To stop it | cancel the run | `scripts/stop-endpoint.sh` |
-| If you forget | nothing to forget | it serves until stopped |
-
-A detached start records its pid, waits for the URL rather than
-reporting success blindly, and refuses to start a second dashboard over
-the first.
-
-**The session is the stop button.** `pw endpoints run` watches its own
-session, so deleting the session — from the ACTIVATE sessions UI, or with
-the CLI — makes it shut down and take the dashboard and its workers with
-it:
-
-```
-Endpoint "hpc-status" was deleted; shutting down.
-```
+By default the run finishes in seconds and the dashboard keeps serving —
+that is the `detach` input, and it is on. The dashboard is stopped by
+deleting its session, from the ACTIVATE sessions UI or the CLI:
 
 ```bash
 pw endpoints delete hpc-status          # or delete it in the sessions UI
 ```
 
-That works with no shell on the workspace, which is the case that
-matters. `scripts/stop-endpoint.sh` does the same thing and then checks:
-it deletes the session first, waits for the CLI to notice, and only
-signals the process group if something is still running — a session that
-went away while the tunnel was disconnected, say.
+`pw endpoints run` watches its own session and shuts down when it goes,
+taking the dashboard and its workers with it:
 
-```bash
-./scripts/stop-endpoint.sh
+```
+Endpoint "hpc-status" was deleted; shutting down.
 ```
 
-From the platform, launch the same workflow with **Action: Stop a
-detached dashboard**; no other input matters:
+Turn `detach` off to have the run own the dashboard instead: the step
+stays in the foreground for as long as it serves, logs stream into the
+run, and cancelling the run stops everything.
 
-```bash
-pw workflows run hpcmp_status -i '{"action":"stop"}'
-```
+| | `detach: true` (default) | `detach: false` |
+|---|---|---|
+| Run status | completed in seconds | running until you cancel |
+| Logs | `~/.hpc_status/endpoint.log` | stream into the run |
+| To stop it | delete the session | cancel the run |
+
+**Starting again restarts.** Two launches of the same endpoint name do not
+coexist — the platform hands the name to the newcomer and the incumbent
+logs `was replaced by another process; shutting down`. Relying on that
+made a relaunch look like the dashboard dying at random, so a start stops
+whatever is already there first, waits for it to go, and only then starts.
+Launching is the only action a run takes.
+
+A start does not report success until the dashboard actually answers on
+the port the CLI assigned. A live endpoint only means the tunnel
+registered; the server behind it still has to install its dependencies and
+bind, and a run that returns before then hands you a URL that refuses
+connections.
 
 ### Choosing the configuration
 

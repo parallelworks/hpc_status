@@ -98,11 +98,26 @@ if [[ "${DETACH:-0}" =~ ^(1|true|yes)$ ]]; then
     pidfile="${state_dir}/endpoint.pid"
     logfile="${state_dir}/endpoint.log"
 
-    if [[ -f "${pidfile}" ]] && kill -0 "$(cat "${pidfile}")" 2>/dev/null; then
-        echo "[endpoint] Already serving (pid $(cat "${pidfile}")). Stop it with" >&2
-        echo "[endpoint]   ${PROJECT_ROOT}/scripts/stop-endpoint.sh" >&2
-        exit 1
-    fi
+    # Starting is a restart when something is already serving.
+    #
+    # Two launches of the same endpoint name do not coexist: the platform
+    # hands the name to the newcomer and the incumbent logs "was replaced
+    # by another process; shutting down". Left to chance that reads as the
+    # dashboard dying at random, so do it deliberately and in order —
+    # stop, wait, start — rather than racing.
+    # Unconditionally, not only when the pidfile says so: the session can
+    # outlive the pidfile (a restarted workspace, a run from a different
+    # job directory), and that is exactly the case that used to race.
+    # Stopping nothing is a no-op that costs one listing.
+    echo "[endpoint] Clearing any previous instance before starting"
+    ENDPOINT_NAME="${ENDPOINT_NAME}" bash "${PROJECT_ROOT}/scripts/stop-endpoint.sh" \
+        2>&1 | sed 's/^\[endpoint\] /  /' || true
+
+    # Start from an empty log. It is opened in append mode so a restart
+    # keeps nothing from last time, and the readiness check below greps
+    # for a line this run must produce — matching the previous run's copy
+    # of it would report success without ever confirming anything.
+    : > "${logfile}"
 
     # setsid detaches from the job's process group, which is what lets it
     # outlive the step; the runner does not reap it.
@@ -112,9 +127,12 @@ if [[ "${DETACH:-0}" =~ ^(1|true|yes)$ ]]; then
     endpoint_pid=$!
     echo "${endpoint_pid}" > "${pidfile}"
 
-    # Wait for the URL to show up rather than reporting success blindly.
+    # Wait for the URL rather than reporting success blindly. The log was
+    # truncated above, so this line can only be this run's.
+    live=""
     for _ in $(seq 1 60); do
         if grep -qm1 "Endpoint live at" "${logfile}" 2>/dev/null; then
+            live="yes"
             break
         fi
         if ! kill -0 "${endpoint_pid}" 2>/dev/null; then
@@ -126,9 +144,48 @@ if [[ "${DETACH:-0}" =~ ^(1|true|yes)$ ]]; then
         sleep 2
     done
 
+    if [[ -z "${live}" ]]; then
+        # Still running but never announced a URL. Reporting success here
+        # is how a dead dashboard looks healthy.
+        echo "[endpoint] No URL after 2 minutes; the endpoint is not serving." >&2
+        tail -20 "${logfile}" >&2
+        exit 1
+    fi
+
+    # A live endpoint means the tunnel registered, not that anything is
+    # answering behind it — the dashboard still has to install its deps
+    # and collect. Wait for the port the CLI assigned to serve a page, so
+    # "started" means a visitor gets the dashboard rather than a refused
+    # connection.
+    local_port="$(sed -n 's/.*serving localhost:\([0-9]\{1,\}\).*/\1/p' \
+        "${logfile}" | head -1)"
+    if [[ -n "${local_port}" ]]; then
+        for _ in $(seq 1 60); do
+            if (exec 3<>"/dev/tcp/127.0.0.1/${local_port}") 2>/dev/null; then
+                exec 3>&- 2>/dev/null || true
+                break
+            fi
+            if ! kill -0 "${endpoint_pid}" 2>/dev/null; then
+                echo "[endpoint] The dashboard exited before it served:" >&2
+                tail -20 "${logfile}" >&2
+                rm -f "${pidfile}"
+                exit 1
+            fi
+            sleep 2
+        done
+        if ! (exec 3<>"/dev/tcp/127.0.0.1/${local_port}") 2>/dev/null; then
+            echo "[endpoint] Nothing is listening on ${local_port} after 2 minutes." >&2
+            tail -20 "${logfile}" >&2
+            exit 1
+        fi
+        exec 3>&- 2>/dev/null || true
+        echo "[endpoint] Dashboard answering on port ${local_port}"
+    fi
+
     echo "[endpoint] Detached (pid ${endpoint_pid}), logging to ${logfile}"
     grep -m1 "Endpoint live at" "${logfile}" || true
-    echo "[endpoint] Stop it with ${PROJECT_ROOT}/scripts/stop-endpoint.sh"
+    echo "[endpoint] Stop it by deleting the session, or with"
+    echo "[endpoint]   ${PROJECT_ROOT}/scripts/stop-endpoint.sh"
     exit 0
 fi
 
