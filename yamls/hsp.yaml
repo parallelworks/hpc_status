@@ -1,21 +1,22 @@
 # yaml-language-server: $schema=https://activate.parallel.works/workflow.schema.json
 ---
 #
-# HPC Status Monitor - ACTIVATE Workflow
+# HPC Status Monitor - ACTIVATE Workflow (HPCMP)
 #
-# This workflow runs the HPC status monitoring dashboard on the Parallel Works platform.
-# Supports both HPCMP and NOAA deployments via configuration.
+# Serves the dashboard through `pw endpoints run`: it assigns a free local
+# port, dials out to register a reverse tunnel (so the node needs no
+# inbound access), and tears the whole process tree down when it exits.
+#
+# That replaced a sessions/update-session pair which pinned port 8080 —
+# Grafana on an ACTIVATE workspace, so the run died on "Address already in
+# use" — polled the port up to 1000 times waiting for the server, and left
+# dashboards running after their session was registered.
+#
+# The three deployment YAMLs differ only in their defaults; the logic they
+# share lives in scripts/serve-endpoint.sh, and a test keeps them aligned.
 
 permissions:
   - "*"
-
-sessions:
-  session:
-    useTLS: false
-    redirect: true
-    useCustomDomain: false
-    prompt-for-name:
-      default: hpc_status
 
 on:
   execute:
@@ -38,11 +39,31 @@ on:
         label: Settings
         collapsed: true
         items:
+          name:
+            type: string
+            label: Endpoint Name
+            default: hpc-status
+            tooltip: Name of the endpoint session, shown in your sessions list
+          repo_url:
+            type: string
+            label: Source Repository
+            default: https://github.com/parallelworks/hpc_status.git
+            tooltip: >-
+              Where to fetch the dashboard from, when the platform does not
+              check the repository out for the run itself.
+          repo_branch:
+            type: string
+            label: Branch
+            default: main
+            tooltip: Branch to run
           port:
             type: number
-            label: Server Port
-            default: 8080
-            tooltip: HTTP port for the dashboard server
+            label: Local Port
+            default: 0
+            tooltip: >-
+              Local port the dashboard binds on the node. Leave at 0 to let
+              the CLI pick a free one — set it only if you need a
+              predictable port, and note that 8080 is already Grafana.
           theme:
             type: dropdown
             label: UI Theme
@@ -70,45 +91,45 @@ on:
             tooltip: Data refresh interval in seconds
 
 jobs:
-  run_status_tracker:
+  serve_dashboard:
     steps:
-      - name: Run HPC Status Monitor
+      - name: Serve the HPC Status Monitor as an endpoint
         env:
-          PORT: ${{ inputs.settings.port }}
-          HOST: "0.0.0.0"
+          # PORT is deliberately absent: `pw endpoints run` exports the
+          # port it assigned and scripts/run.sh reads it. Pinning it here
+          # would bind the server to a port the tunnel is not watching.
+          HOST: "127.0.0.1"
           DEFAULT_THEME: ${{ inputs.settings.theme }}
           ENABLE_CLUSTER_PAGES: ${{ inputs.settings.enable_cluster_pages && '1' || '0' }}
           ENABLE_CLUSTER_MONITOR: ${{ inputs.settings.enable_cluster_monitor && '1' || '0' }}
           CLUSTER_MONITOR_INTERVAL: ${{ inputs.settings.cluster_monitor_interval }}
           CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
+          ENDPOINT_NAME: ${{ inputs.settings.name }}
+          PINNED_PORT: ${{ inputs.settings.port }}
+          REPO_URL: ${{ inputs.settings.repo_url }}
+          REPO_BRANCH: ${{ inputs.settings.repo_branch }}
         run: |
-          set -e
-          echo "Starting HPC Status Monitor..."
+          set -euo pipefail
+
           echo "Platform: ${{ inputs.platform }}"
-          echo "Port: ${PORT}"
-          echo "Theme: ${DEFAULT_THEME}"
-          echo "Config: ${CONFIG_FILE}"
+          echo "Config:   ${CONFIG_FILE}"
 
-          # Run the dashboard
-          ./scripts/run.sh
+          # Locate the source. Some platform versions check the repository
+          # out into the job directory and some hand the step an empty one,
+          # so find it or fetch it rather than assuming either.
+          if [ -f "${PWD}/scripts/serve-endpoint.sh" ]; then
+            checkout="${PWD}"
+          else
+            checkout="${HOME}/pw/src/hpc_status"
+            if [ -d "${checkout}/.git" ]; then
+              git -C "${checkout}" fetch --depth 1 origin "${REPO_BRANCH}"
+              git -C "${checkout}" reset --hard "origin/${REPO_BRANCH}"
+            else
+              mkdir -p "$(dirname "${checkout}")"
+              git clone --depth 1 --branch "${REPO_BRANCH}" \
+                "${REPO_URL}" "${checkout}"
+            fi
+          fi
+          echo "Source:   ${checkout}"
 
-  create_session:
-    steps:
-      - name: Wait for Server To Start
-        early-cancel: any-job-failed
-        env:
-          host: localhost
-          port: ${{ inputs.settings.port }}
-        retry:
-          interval: 3s
-          max-retries: 1000
-          timeout: 5s
-        run: curl --fail --silent "http://${host}:${port}" >/dev/null 2>&1
-
-      - name: Update Session
-        uses: parallelworks/update-session
-        with:
-          remotePort: ${{ inputs.settings.port }}
-          name: ${{ sessions.session }}
-          status: "running"
-          target: "user-workspace"
+          exec bash "${checkout}/scripts/serve-endpoint.sh"
