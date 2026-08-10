@@ -43,6 +43,18 @@ on:
             label: Endpoint Name
             default: hpc-status
             tooltip: Name of the endpoint session, shown in your sessions list
+          repo_url:
+            type: string
+            label: Source Repository
+            default: https://github.com/parallelworks/hpc_status.git
+            tooltip: >-
+              Where to fetch the dashboard from. The runner does not check
+              the repository out, so the workflow clones it itself.
+          repo_branch:
+            type: string
+            label: Branch
+            default: main
+            tooltip: Branch to run
           port:
             type: number
             label: Local Port
@@ -93,6 +105,8 @@ jobs:
           CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
           ENDPOINT_NAME: ${{ inputs.settings.name }}
           PINNED_PORT: ${{ inputs.settings.port }}
+          REPO_URL: ${{ inputs.settings.repo_url }}
+          REPO_BRANCH: ${{ inputs.settings.repo_branch }}
         run: |
           set -euo pipefail
 
@@ -106,16 +120,30 @@ jobs:
             exit 1
           fi
 
-          # Resolve the launcher to an absolute path. `pw endpoints run`
-          # fork/execs the command directly rather than through a shell,
-          # so a relative path depends on a working directory we do not
-          # control.
-          # run.sh cd's to its own project root, so pointing at the right
-          # file is all that matters.
-          launcher="${PWD}/scripts/run.sh"
+          # The runner starts the step in a job directory holding only
+          # inputs and logs — it does not check the repository out — so
+          # the workflow fetches its own source and launches it by
+          # absolute path. (`pw endpoints run` fork/execs the command
+          # rather than going through a shell, and run.sh cd's to its own
+          # project root, so the path to the file is all that matters.)
+          echo "Workflow environment:"
+          env | grep -E '^(PW_|WORKFLOW|REPO|GIT_)' | grep -viE 'key|token|secret|pass' | sort || true
+
+          checkout="${HOME}/pw/src/hpc_status"
+          if [ -d "${checkout}/.git" ]; then
+            echo "Updating ${checkout}"
+            git -C "${checkout}" fetch --depth 1 origin "${REPO_BRANCH}"
+            git -C "${checkout}" reset --hard "origin/${REPO_BRANCH}"
+          else
+            echo "Cloning ${REPO_URL} (${REPO_BRANCH}) into ${checkout}"
+            mkdir -p "$(dirname "${checkout}")"
+            git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${checkout}"
+          fi
+
+          launcher="${checkout}/scripts/run.sh"
           if [ ! -f "${launcher}" ]; then
-            echo "Cannot find scripts/run.sh. Working directory: ${PWD}" >&2
-            ls -la >&2
+            echo "Cannot find scripts/run.sh under ${checkout}" >&2
+            ls -la "${checkout}" >&2
             exit 1
           fi
 
