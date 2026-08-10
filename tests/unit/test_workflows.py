@@ -266,3 +266,27 @@ class TestStopScript:
         )
         assert result.returncode == 0, result.stderr
         assert "nothing detached to stop" in result.stdout
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+class TestStopAction:
+    """A detached dashboard needs a way back from the platform UI.
+
+    Cancelling the run no longer stops it, and nobody has a shell on the
+    workspace, so the workflow itself has to be able to stop one.
+    """
+
+    def test_offers_a_stop_action(self, path):
+        action = load(path)["on"]["execute"]["inputs"]["action"]
+        assert action["default"] == "start"
+        assert {option["value"] for option in action["options"]} == {"start", "stop"}
+
+    def test_stop_runs_the_stop_script(self, path):
+        run = step_of(load(path))["run"]
+        assert 'if [ "${ACTION}" = "stop" ]' in run
+        assert "scripts/stop-endpoint.sh" in run
+
+    def test_stop_happens_after_the_source_is_located(self, path):
+        """The stop script lives in the checkout, so find it first."""
+        run = step_of(load(path))["run"]
+        assert run.index("# Locate the source.") < run.index('= "stop" ]')
