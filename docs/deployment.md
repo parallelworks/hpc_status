@@ -14,50 +14,55 @@ The recommended deployment method for Parallel Works users.
 
 ### Using the Workflow
 
-1. Clone the repository to your PW workspace:
-   ```bash
-   git clone https://github.com/parallelworks/hpcmp_status_site.git
-   cd hpcmp_status_site
-   ```
+Launch **HPC Status** from your workflows list, or from a clone of the repo:
 
-2. Launch the workflow:
-   ```bash
-   pw workflow launch workflow.yaml
-   ```
-
-3. Configure via workflow inputs:
-   - `platform`: Select `generic`, `hpcmp`, or `noaa`
-   - `port`: Server port (default: 8080)
-   - `theme`: Default theme `dark` or `light`
-   - `enable_cluster_pages`: Enable queue/quota pages
-   - `enable_cluster_monitor`: Enable background monitoring
-
-### Workflow Configuration
-
-The `workflow.yaml` file supports these inputs:
-
-```yaml
-inputs:
-  platform:
-    type: string
-    default: "generic"
-    enum: [generic, hpcmp, noaa]
-  port:
-    type: number
-    default: 8080
-  theme:
-    type: string
-    default: "dark"
-  enable_cluster_pages:
-    type: boolean
-    default: true
-  enable_cluster_monitor:
-    type: boolean
-    default: true
-  cluster_monitor_interval:
-    type: number
-    default: 120
+```bash
+pw workflows run hpcmp_status                 # the registered workflow
+pw workflows run -i '{"platform":"hpcmp"}' ./workflow.yaml
 ```
+
+Inputs:
+
+| Input | Default | Meaning |
+|---|---|---|
+| `platform` | `generic` | Which config to load: `generic`, `hpcmp`, or `noaa` |
+| `name` | `hpc-status` | Endpoint session name, shown in your sessions list |
+| `port` | `0` | Local port; `0` lets the CLI pick a free one |
+| `theme` | `light` | Default color theme |
+| `enable_cluster_pages` | `true` | Queue and quota pages |
+| `enable_cluster_monitor` | `true` | Background cluster collection |
+| `cluster_monitor_interval` | `120` | Seconds between collections |
+
+The workflow publishes the dashboard with `pw endpoints run`, which:
+
+- **assigns a free local port** and exports it as `PORT`, so nothing has to
+  guess one. This matters: port 8080 on an ACTIVATE workspace is Grafana,
+  and the old fixed-port workflow died on `Address already in use`.
+- **dials out** to register a reverse tunnel, so the node needs no inbound
+  network access.
+- **owns the process tree** — when the run ends or is cancelled, the
+  dashboard and its workers are killed with it, and the endpoint session
+  is deleted. Nothing outlives the run.
+
+### Publishing a dashboard by hand
+
+The same mechanism works outside a workflow, from a clone of the repo:
+
+```bash
+pw endpoints run --name hpc-status -- ./scripts/run.sh
+```
+
+It prints the public URL and holds it open until you press Ctrl-C. Add
+`--keep` to leave the session registered after you exit, `--port N` to pin
+the local port, and `--public` to allow access without logging in (only if
+your organization permits public sessions).
+
+`scripts/run.sh` reads two variables the endpoint exports:
+
+- `PORT` — the assigned local port
+- `PW_ENDPOINT_PATH` — the base path the session is served under, which
+  becomes the server's `--url-prefix` so links resolve behind the prefix.
+  It is `/` for a subdomain endpoint, which means no prefix at all.
 
 ## Manual Deployment
 

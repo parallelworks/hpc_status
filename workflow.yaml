@@ -3,19 +3,20 @@
 #
 # HPC Status Monitor - ACTIVATE Workflow
 #
-# This workflow runs the HPC status monitoring dashboard on the Parallel Works platform.
-# Supports both HPCMP and NOAA deployments via configuration.
+# Serves the dashboard through `pw endpoints run`, which assigns a free
+# local port, dials out to register a reverse tunnel, and tears the whole
+# process tree down when it exits. That replaces the previous
+# sessions/update-session pair, and with it three problems:
+#
+#   - the fixed port 8080, which is Grafana on an ACTIVATE workspace, so
+#     the run died on "Address already in use"
+#   - the poll loop that curled the port up to 1000 times waiting for the
+#     server to appear
+#   - dashboards outliving their run, because nothing owned the process
+#     once the session was registered
 
 permissions:
   - "*"
-
-sessions:
-  session:
-    useTLS: false
-    redirect: true
-    useCustomDomain: false
-    prompt-for-name:
-      default: hpc_status
 
 on:
   execute:
@@ -37,11 +38,19 @@ on:
         label: Settings
         collapsed: true
         items:
+          name:
+            type: string
+            label: Endpoint Name
+            default: hpc-status
+            tooltip: Name of the endpoint session, shown in your sessions list
           port:
             type: number
-            label: Server Port
-            default: 8080
-            tooltip: HTTP port for the dashboard server
+            label: Local Port
+            default: 0
+            tooltip: >-
+              Local port the dashboard binds on the node. Leave at 0 to let
+              the CLI pick a free one — set it only if you need a
+              predictable port, and note that 8080 is already Grafana.
           theme:
             type: dropdown
             label: UI Theme
@@ -69,45 +78,44 @@ on:
             tooltip: Data refresh interval in seconds
 
 jobs:
-  run_status_tracker:
+  serve_dashboard:
     steps:
-      - name: Run HPC Status Monitor
+      - name: Serve the HPC Status Monitor as an endpoint
         env:
-          PORT: ${{ inputs.settings.port }}
-          HOST: "0.0.0.0"
+          # PORT is deliberately absent: `pw endpoints run` exports the
+          # port it assigned, and scripts/run.sh reads it. Setting it here
+          # would pin the server to a port the tunnel is not watching.
+          HOST: "127.0.0.1"
           DEFAULT_THEME: ${{ inputs.settings.theme }}
           ENABLE_CLUSTER_PAGES: ${{ inputs.settings.enable_cluster_pages && '1' || '0' }}
           ENABLE_CLUSTER_MONITOR: ${{ inputs.settings.enable_cluster_monitor && '1' || '0' }}
           CLUSTER_MONITOR_INTERVAL: ${{ inputs.settings.cluster_monitor_interval }}
           CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
+          ENDPOINT_NAME: ${{ inputs.settings.name }}
+          PINNED_PORT: ${{ inputs.settings.port }}
         run: |
-          set -e
-          echo "Starting HPC Status Monitor..."
+          set -euo pipefail
+
           echo "Platform: ${{ inputs.platform }}"
-          echo "Port: ${PORT}"
-          echo "Theme: ${DEFAULT_THEME}"
-          echo "Config: ${CONFIG_FILE}"
+          echo "Config:   ${CONFIG_FILE}"
+          echo "Theme:    ${DEFAULT_THEME}"
 
-          # Run the dashboard
-          ./scripts/run.sh
+          if ! command -v pw >/dev/null 2>&1; then
+            echo "The pw CLI is not on PATH; it is required to publish the" >&2
+            echo "dashboard as an endpoint session." >&2
+            exit 1
+          fi
 
-  create_session:
-    steps:
-      - name: Wait for Server To Start
-        early-cancel: any-job-failed
-        env:
-          host: localhost
-          port: ${{ inputs.settings.port }}
-        retry:
-          interval: 3s
-          max-retries: 1000
-          timeout: 5s
-        run: curl --fail --silent "http://${host}:${port}" >/dev/null 2>&1
+          # 0 means "let the CLI find a free port", which is the default.
+          port_args=""
+          if [ "${PINNED_PORT:-0}" -gt 0 ]; then
+            port_args="--port ${PINNED_PORT}"
+          fi
 
-      - name: Update Session
-        uses: parallelworks/update-session
-        with:
-          remotePort: ${{ inputs.settings.port }}
-          name: ${{ sessions.session }}
-          status: "running"
-          target: "user-workspace"
+          # The endpoint owns the dashboard: it exports PORT and
+          # PW_ENDPOINT_PATH for run.sh to pick up, forwards the session
+          # URL to it, and kills the process tree when the run ends.
+          exec pw endpoints run \
+            --name "${ENDPOINT_NAME}" \
+            ${port_args} \
+            -- ./scripts/run.sh
