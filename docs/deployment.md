@@ -63,19 +63,35 @@ the `detach` input trades away:
 | To stop it | cancel the run | `scripts/stop-endpoint.sh` |
 | If you forget | nothing to forget | it serves until stopped |
 
-A detached start records its pid, waits for the URL rather than reporting
-success blindly, and refuses to start a second dashboard over the first.
-Stopping signals the whole process group, so the dashboard and its
-workers go with the tunnel, and deletes the session if the tunnel did not
-get there itself:
+A detached start records its pid, waits for the URL rather than
+reporting success blindly, and refuses to start a second dashboard over
+the first.
+
+**The session is the stop button.** `pw endpoints run` watches its own
+session, so deleting the session — from the ACTIVATE sessions UI, or with
+the CLI — makes it shut down and take the dashboard and its workers with
+it:
+
+```
+Endpoint "hpc-status" was deleted; shutting down.
+```
+
+```bash
+pw endpoints delete hpc-status          # or delete it in the sessions UI
+```
+
+That works with no shell on the workspace, which is the case that
+matters. `scripts/stop-endpoint.sh` does the same thing and then checks:
+it deletes the session first, waits for the CLI to notice, and only
+signals the process group if something is still running — a session that
+went away while the tunnel was disconnected, say.
 
 ```bash
 ./scripts/stop-endpoint.sh
 ```
 
-From the platform, where nobody has a shell on the workspace, launch the
-same workflow with **Action: Stop a detached dashboard** — no other input
-matters:
+From the platform, launch the same workflow with **Action: Stop a
+detached dashboard**; no other input matters:
 
 ```bash
 pw workflows run hpcmp_status -i '{"action":"stop"}'

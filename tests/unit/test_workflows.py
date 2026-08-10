@@ -239,20 +239,26 @@ class TestStopScript:
         assert self.SCRIPT.exists(), "detached mode is unusable without a way back"
         assert self.SCRIPT.stat().st_mode & 0o111
 
-    def test_kills_the_group_not_just_the_tunnel(self):
-        """Killing `pw endpoints run` alone can orphan the dashboard."""
+    def test_deletes_the_session_before_reaching_for_signals(self):
+        """The session is the handle.
+
+        `pw endpoints run` watches its own session and shuts down when it
+        is deleted — "Endpoint ... was deleted; shutting down" — taking
+        the dashboard and its workers with it. That is also the only path
+        available from the platform UI, where nobody has a shell on the
+        node, so it must come first.
+        """
         source = self.SCRIPT.read_text()
-        assert 'kill -TERM -- "-${pid}"' in source
+        assert source.index("pw endpoints delete") < source.index("kill -TERM"), (
+            "signalling first throws away the graceful shutdown the CLI does"
+        )
+
+    def test_signals_the_group_only_as_a_fallback(self):
+        """A session deleted while the tunnel was disconnected leaves it."""
+        source = self.SCRIPT.read_text()
+        assert 'kill -TERM -- "-${pid}"' in source, "the group, not just the tunnel"
         assert 'kill -KILL -- "-${pid}"' in source, "escalate if TERM is ignored"
-
-    def test_cleans_up_a_stale_pidfile(self):
-        source = self.SCRIPT.read_text()
-        assert "stale pidfile" in source
-
-    def test_deletes_a_session_left_behind(self):
-        """A killed tunnel never gets to delete its own session."""
-        source = self.SCRIPT.read_text()
-        assert "pw endpoints delete" in source
+        assert "Waiting for pid" in source, "give the CLI time to notice"
 
     def test_says_something_useful_when_nothing_is_detached(self, tmp_path):
         import subprocess
@@ -265,7 +271,9 @@ class TestStopScript:
             env={**__import__("os").environ, "HPC_STATUS_DATA_DIR": str(tmp_path)},
         )
         assert result.returncode == 0, result.stderr
-        assert "nothing detached to stop" in result.stdout
+        # No pidfile and no session is not an error — it is the answer.
+        assert "No session named" in result.stdout
+        assert "Stopped." in result.stdout
 
 
 @pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
