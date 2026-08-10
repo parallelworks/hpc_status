@@ -3,17 +3,17 @@
 #
 # HPC Status Monitor - ACTIVATE Workflow
 #
-# Serves the dashboard through `pw endpoints run`, which assigns a free
-# local port, dials out to register a reverse tunnel, and tears the whole
-# process tree down when it exits. That replaces the previous
-# sessions/update-session pair, and with it three problems:
+# Serves the dashboard through `pw endpoints run`: it assigns a free local
+# port, dials out to register a reverse tunnel (so the node needs no
+# inbound access), and tears the whole process tree down when it exits.
 #
-#   - the fixed port 8080, which is Grafana on an ACTIVATE workspace, so
-#     the run died on "Address already in use"
-#   - the poll loop that curled the port up to 1000 times waiting for the
-#     server to appear
-#   - dashboards outliving their run, because nothing owned the process
-#     once the session was registered
+# That replaced a sessions/update-session pair which pinned port 8080 —
+# Grafana on an ACTIVATE workspace, so the run died on "Address already in
+# use" — polled the port up to 1000 times waiting for the server, and left
+# dashboards running after their session was registered.
+#
+# The three deployment YAMLs differ only in their defaults; the logic they
+# share lives in scripts/serve-endpoint.sh, and a test keeps them aligned.
 
 permissions:
   - "*"
@@ -95,8 +95,8 @@ jobs:
       - name: Serve the HPC Status Monitor as an endpoint
         env:
           # PORT is deliberately absent: `pw endpoints run` exports the
-          # port it assigned, and scripts/run.sh reads it. Setting it here
-          # would pin the server to a port the tunnel is not watching.
+          # port it assigned and scripts/run.sh reads it. Pinning it here
+          # would bind the server to a port the tunnel is not watching.
           HOST: "127.0.0.1"
           DEFAULT_THEME: ${{ inputs.settings.theme }}
           ENABLE_CLUSTER_PAGES: ${{ inputs.settings.enable_cluster_pages && '1' || '0' }}
@@ -112,53 +112,23 @@ jobs:
 
           echo "Platform: ${{ inputs.platform }}"
           echo "Config:   ${CONFIG_FILE}"
-          echo "Theme:    ${DEFAULT_THEME}"
 
-          if ! command -v pw >/dev/null 2>&1; then
-            echo "The pw CLI is not on PATH; it is required to publish the" >&2
-            echo "dashboard as an endpoint session." >&2
-            exit 1
-          fi
-
-          # The runner starts the step in a job directory holding only
-          # inputs and logs — it does not check the repository out — so
-          # the workflow fetches its own source and launches it by
-          # absolute path. (`pw endpoints run` fork/execs the command
-          # rather than going through a shell, and run.sh cd's to its own
-          # project root, so the path to the file is all that matters.)
-          echo "Workflow environment:"
-          env | grep -E '^(PW_|WORKFLOW|REPO|GIT_)' | grep -viE 'key|token|secret|pass' | sort || true
-
-          checkout="${HOME}/pw/src/hpc_status"
-          if [ -d "${checkout}/.git" ]; then
-            echo "Updating ${checkout}"
-            git -C "${checkout}" fetch --depth 1 origin "${REPO_BRANCH}"
-            git -C "${checkout}" reset --hard "origin/${REPO_BRANCH}"
+          # Locate the source. Some platform versions check the repository
+          # out into the job directory and some hand the step an empty one,
+          # so find it or fetch it rather than assuming either.
+          if [ -f "${PWD}/scripts/serve-endpoint.sh" ]; then
+            checkout="${PWD}"
           else
-            echo "Cloning ${REPO_URL} (${REPO_BRANCH}) into ${checkout}"
-            mkdir -p "$(dirname "${checkout}")"
-            git clone --depth 1 --branch "${REPO_BRANCH}" "${REPO_URL}" "${checkout}"
+            checkout="${HOME}/pw/src/hpc_status"
+            if [ -d "${checkout}/.git" ]; then
+              git -C "${checkout}" fetch --depth 1 origin "${REPO_BRANCH}"
+              git -C "${checkout}" reset --hard "origin/${REPO_BRANCH}"
+            else
+              mkdir -p "$(dirname "${checkout}")"
+              git clone --depth 1 --branch "${REPO_BRANCH}" \
+                "${REPO_URL}" "${checkout}"
+            fi
           fi
+          echo "Source:   ${checkout}"
 
-          launcher="${checkout}/scripts/run.sh"
-          if [ ! -f "${launcher}" ]; then
-            echo "Cannot find scripts/run.sh under ${checkout}" >&2
-            ls -la "${checkout}" >&2
-            exit 1
-          fi
-
-          # 0 means "let the CLI find a free port", which is the default.
-          port_args=""
-          if [ "${PINNED_PORT:-0}" -gt 0 ]; then
-            port_args="--port ${PINNED_PORT}"
-          fi
-
-          # The endpoint owns the dashboard: it exports PORT and
-          # PW_ENDPOINT_PATH for run.sh to pick up, forwards the session
-          # URL to it, and kills the process tree when the run ends.
-          # `bash <script>` rather than the script itself, so a checkout
-          # that lost the executable bit still starts.
-          exec pw endpoints run \
-            --name "${ENDPOINT_NAME}" \
-            ${port_args} \
-            -- bash "${launcher}"
+          exec bash "${checkout}/scripts/serve-endpoint.sh"
