@@ -104,6 +104,17 @@ if [[ "${DETACH:-0}" =~ ^(1|true|yes)$ ]]; then
         exit 1
     fi
 
+    # A workspace recycle kills the endpoint without letting it
+    # deregister, and the platform keeps listing the dead session as
+    # "running" — squatting on the name and subdomain while serving
+    # nothing. Reaching this line means no live process of ours exists
+    # (the pidfile check above), so a session under this name is stale
+    # by definition; delete it so the fresh one takes its place.
+    if pw endpoints list 2>/dev/null | grep -q "^${ENDPOINT_NAME}[[:space:]]"; then
+        echo "[endpoint] Removing stale session '${ENDPOINT_NAME}' (no live local process)"
+        pw endpoints delete "${ENDPOINT_NAME}" 2>&1 | sed 's/^/[endpoint] /' || true
+    fi
+
     # setsid detaches from the job's process group, which is what lets it
     # outlive the step; the runner does not reap it.
     setsid nohup pw endpoints run "${args[@]}" \
