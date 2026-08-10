@@ -69,9 +69,12 @@ topology:
   sites: {}
   # Place systems nothing else can identify — not on a status page, and a
   # login hostname with no site in it. Keyed by system name (slugified).
+  #
+  # Built-in name hints are scoped to the deployment that owns the names,
+  # so a generic deployment gets none: a cluster called "janus" here is
+  # not the Army's. Name yours outright and they are placed.
   #   system_sites:
-  #     chessie: arl
-  #     crux: mhpcc
+  #     mycluster: erdc
   system_sites: {}
   # Region to assume for cloud clusters whose hostname does not name one,
   # e.g. usgovwest1 for a fleet that runs entirely in AWS GovCloud West.

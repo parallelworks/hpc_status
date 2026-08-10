@@ -26,7 +26,7 @@ when it was last checked. Click a system for the full details page.
 
 **Topology.** An interactive map of the fleet — every site, every system,
 and which ones the monitor actually holds a live session to. Group by site
-(DSRC), scheduler, status, or connection; switch between hierarchy, radial,
+(a DSRC on an HPCMP deployment), scheduler, status, or connection; switch between hierarchy, radial,
 force, lane, load, and geographic layouts — the geographic one is a real map,
 with each site pinned at its actual coordinates and framed insets for
 anything off the mainland. Cloud clusters are placed too — an AWS GovCloud

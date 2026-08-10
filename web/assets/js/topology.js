@@ -681,9 +681,10 @@ const layoutGeo = (view) => {
 
   // --- insets for anything off the mainland
   //
-  // Hawaii is 2,500 miles from the nearest DSRC. Drawn to scale it turns
-  // most of the canvas into empty Pacific, so it gets the treatment every
-  // printed US map uses: its own framed box below the mainland.
+  // Hawaii is 2,500 miles from the nearest mainland site. Drawn to scale
+  // it turns most of the canvas into empty Pacific, so it gets the
+  // treatment every printed US map uses: its own framed box below the
+  // mainland.
   const mainBox = {
     minX: projectGeo(CONUS_BOUNDS.north, CONUS_BOUNDS.west).x,
     minY: projectGeo(CONUS_BOUNDS.north, CONUS_BOUNDS.west).y,
