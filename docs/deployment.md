@@ -25,6 +25,7 @@ Inputs:
 
 | Input | Default | Meaning |
 |---|---|---|
+| `action` | `start` | `start` the dashboard, or `stop` a detached one |
 | `platform` | `auto` | Which config to load: `auto`, `generic`, `hpcmp`, or `noaa` |
 | `name` | `hpc-status` | Endpoint session name, shown in your sessions list |
 | `subdomain` | *(blank)* | Public hostname label; blank derives `status-<username>` |
@@ -70,6 +71,14 @@ get there itself:
 
 ```bash
 ./scripts/stop-endpoint.sh
+```
+
+From the platform, where nobody has a shell on the workspace, launch the
+same workflow with **Action: Stop a detached dashboard** — no other input
+matters:
+
+```bash
+pw workflows run hpcmp_status -i '{"action":"stop"}'
 ```
 
 ### Choosing the configuration
