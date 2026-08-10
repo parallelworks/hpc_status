@@ -25,9 +25,10 @@ Inputs:
 
 | Input | Default | Meaning |
 |---|---|---|
-| `platform` | `generic` | Which config to load: `generic`, `hpcmp`, or `noaa` |
+| `platform` | `auto` | Which config to load: `auto`, `generic`, `hpcmp`, or `noaa` |
 | `name` | `hpc-status` | Endpoint session name, shown in your sessions list |
 | `subdomain` | *(blank)* | Public hostname label; blank derives `status-<username>` |
+| `detach` | `false` | Keep serving after the run ends (see below) |
 | `port` | `0` | Local port; `0` lets the CLI pick a free one |
 | `theme` | `light` | Default color theme |
 | `enable_cluster_pages` | `true` | Queue and quota pages |
@@ -44,6 +45,42 @@ The workflow publishes the dashboard with `pw endpoints run`, which:
 - **owns the process tree** — when the run ends or is cancelled, the
   dashboard and its workers are killed with it, and the endpoint session
   is deleted. Nothing outlives the run.
+
+### Who owns the dashboard
+
+By default the run owns it: the step stays in the foreground for as long
+as the dashboard serves, logs stream into the run, and **cancelling the
+run stops everything** — tunnel, dashboard, workers, session.
+
+The run showing as "running" for days is the cost of that, and it is what
+the `detach` input trades away:
+
+| | `detach: false` (default) | `detach: true` |
+|---|---|---|
+| Run status | running until you cancel | completed in seconds |
+| Logs | stream into the run | `~/.hpc_status/endpoint.log` |
+| To stop it | cancel the run | `scripts/stop-endpoint.sh` |
+| If you forget | nothing to forget | it serves until stopped |
+
+A detached start records its pid, waits for the URL rather than reporting
+success blindly, and refuses to start a second dashboard over the first.
+Stopping signals the whole process group, so the dashboard and its
+workers go with the tunnel, and deletes the session if the tunnel did not
+get there itself:
+
+```bash
+./scripts/stop-endpoint.sh
+```
+
+### Choosing the configuration
+
+`platform: auto` resolves the config from the host the run is on —
+`*.hpc.mil` and `hpcmp.*` load `configs/config.hpcmp.yaml`, NOAA hosts
+load `configs/config.noaa.yaml`, anything else loads
+`configs/config.yaml`. This matters for marketplace launches: a
+marketplace version that does not name a `yaml` resolves to
+`workflow.yaml`, so without auto-detection an item titled "HPCMP Status"
+would come up as a generic deployment with no fleet.
 
 ### A stable URL
 
