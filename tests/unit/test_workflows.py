@@ -87,6 +87,12 @@ class TestEveryWorkflow:
         """The tunnel dials localhost; nothing needs the node's address."""
         assert step_of(load(path))["env"]["HOST"] == "127.0.0.1"
 
+    def test_offers_a_stable_public_address(self, path):
+        """Without one the platform assigns a new random host every run."""
+        items = load(path)["on"]["execute"]["inputs"]["settings"]["items"]
+        assert items["subdomain"]["default"] == "", "blank derives status-<user>"
+        assert "ENDPOINT_SUBDOMAIN" in step_of(load(path))["env"]
+
 
 class TestWorkflowsAgree:
     def test_the_bootstrap_is_identical_everywhere(self):
@@ -143,3 +149,35 @@ class TestServeEndpointScript:
     def test_explains_itself_when_pw_is_missing(self):
         source = self.SCRIPT.read_text()
         assert "not on PATH" in source and "scripts/run.sh directly" in source
+
+    @pytest.mark.parametrize(
+        "user,expected",
+        [
+            ("Matthew.Shaxted", "status-matthew-shaxted"),
+            ("mshaxted", "status-mshaxted"),
+            ("Foo_Bar.99", "status-foo-bar-99"),
+            ("-leading-and-trailing-", "status-leading-and-trailing"),
+        ],
+    )
+    def test_derives_a_valid_hostname_label_from_the_user(self, user, expected):
+        """Subdomains are lowercase alphanumerics and hyphens, no more."""
+        import os
+        import subprocess
+
+        result = subprocess.run(
+            ["bash", str(self.SCRIPT), "--print-subdomain"],
+            capture_output=True,
+            text=True,
+            timeout=20,
+            env={**os.environ, "PW_USER": user, "ENDPOINT_SUBDOMAIN": ""},
+        )
+        assert result.stdout.strip() == expected, result.stderr
+
+    def test_falls_back_when_the_subdomain_is_refused(self):
+        """A platform with no sessions domain must still serve the dashboard."""
+        source = self.SCRIPT.read_text()
+        assert "SECONDS - started > 20" in source, (
+            "only an immediate failure is a subdomain problem; a long-running "
+            "session that dies must not be silently restarted elsewhere"
+        )
+        assert "pw subdomains reserve" in source, "say how to claim the name"

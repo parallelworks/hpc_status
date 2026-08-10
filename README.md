@@ -92,11 +92,13 @@ On [Parallel Works](https://parallel.works/), publish the dashboard as an
 endpoint session and get a URL you can hand to someone else:
 
 ```bash
-pw endpoints run --name hpc-status -- ./scripts/run.sh
+./scripts/serve-endpoint.sh
 ```
 
-The platform assigns a free port, tunnels to it without needing any
-inbound access to your machine, and kills the dashboard when you exit.
+You get `https://status-<your-username>.<sessions domain>/`, the same
+address every time. The platform assigns a free port, tunnels to it
+without needing any inbound access to your machine, and kills the
+dashboard when you exit.
 The **HPC Status** workflow does exactly this — see
 [docs/deployment.md](docs/deployment.md).
 

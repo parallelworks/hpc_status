@@ -27,6 +27,7 @@ Inputs:
 |---|---|---|
 | `platform` | `generic` | Which config to load: `generic`, `hpcmp`, or `noaa` |
 | `name` | `hpc-status` | Endpoint session name, shown in your sessions list |
+| `subdomain` | *(blank)* | Public hostname label; blank derives `status-<username>` |
 | `port` | `0` | Local port; `0` lets the CLI pick a free one |
 | `theme` | `light` | Default color theme |
 | `enable_cluster_pages` | `true` | Queue and quota pages |
@@ -44,15 +45,37 @@ The workflow publishes the dashboard with `pw endpoints run`, which:
   dashboard and its workers are killed with it, and the endpoint session
   is deleted. Nothing outlives the run.
 
+### A stable URL
+
+Without a subdomain the platform assigns a random one per session, so the
+dashboard moves between runs — `healthy-dingo` today, `expert-sponge`
+tomorrow. Both the workflow and `scripts/serve-endpoint.sh` derive
+`status-<username>` instead, lowercased and hyphenated so it is a valid
+hostname label (`Matthew.Shaxted` becomes `status-matthew-shaxted`).
+
+That is a request, not a claim. To keep the name reserved even while
+nothing is serving it:
+
+```bash
+pw subdomains reserve status-mshaxted
+```
+
+Set the `subdomain` input, or `ENDPOINT_SUBDOMAIN`, to use a different
+name. If the platform has no sessions domain or the name belongs to
+someone else, the run says so and falls back to an assigned address
+rather than failing.
+
 ### Publishing a dashboard by hand
 
 The same mechanism works outside a workflow, from a clone of the repo:
 
 ```bash
-pw endpoints run --name hpc-status -- ./scripts/run.sh
+./scripts/serve-endpoint.sh
 ```
 
-It prints the public URL and holds it open until you press Ctrl-C. Add
+It prints the public URL — `https://status-<you>.<sessions domain>/` — and
+holds it open until you press Ctrl-C. That script is what the workflows
+run, so a local session and a platform run behave identically. Add
 `--keep` to leave the session registered after you exit, `--port N` to pin
 the local port, and `--public` to allow access without logging in (only if
 your organization permits public sessions).
