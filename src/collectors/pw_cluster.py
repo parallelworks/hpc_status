@@ -208,6 +208,17 @@ class PWClusterCollector(BaseCollector):
                     "clusters": [],
                 }
 
+            # Newly connected clusters go first. A sweep of a large fleet
+            # takes minutes, and someone who just connected a machine is
+            # usually watching for it — the machines that were already
+            # there can wait their turn.
+            fresh = [c for c in clusters if c["uri"] not in self._known_clusters]
+            if fresh and len(fresh) < len(clusters):
+                names = ", ".join(c["uri"].rsplit("/", 1)[-1] for c in fresh)
+                _log(f"[pw_cluster] {len(fresh)} newly connected cluster(s) first: {names}")
+                known = [c for c in clusters if c["uri"] in self._known_clusters]
+                clusters = fresh + known
+
             results = []
             total = len(clusters)
             for idx, cluster in enumerate(clusters):
@@ -238,10 +249,15 @@ class PWClusterCollector(BaseCollector):
         except Exception as e:
             raise CollectorError(self.name, str(e), e)
 
-    def get_active_clusters(self) -> List[Dict[str, str]]:
+    def get_active_clusters(self, quiet: bool = False) -> List[Dict[str, str]]:
         """Get active clusters using pw CLI command.
 
         Returns list of clusters with type='existing' and an active status.
+
+        Args:
+            quiet: skip the table dump — the between-sweep listing watcher
+                calls this every half minute, and logging the whole fleet
+                each time buries the lines that matter.
 
         Raises:
             CollectorError: If the pw CLI command fails.
@@ -262,9 +278,11 @@ class PWClusterCollector(BaseCollector):
                 check=True,
                 timeout=30,
             )
-            _log(f"[pw_cluster] pw clusters ls output:\n{result.stdout.strip()}")
-            clusters = self._parse_cluster_table(result.stdout)
-            _log(f"[pw_cluster] Parsed {len(clusters)} active clusters from table")
+            if not quiet:
+                _log(f"[pw_cluster] pw clusters ls output:\n{result.stdout.strip()}")
+            clusters = self._parse_cluster_table(result.stdout, quiet=quiet)
+            if not quiet:
+                _log(f"[pw_cluster] Parsed {len(clusters)} active clusters from table")
             return clusters
         except subprocess.CalledProcessError as e:
             raise CollectorError(self.name, f"Error getting clusters: {e}", e)
@@ -273,7 +291,7 @@ class PWClusterCollector(BaseCollector):
         except Exception as e:
             raise CollectorError(self.name, f"Unexpected error: {e}", e)
 
-    def _parse_cluster_table(self, table_output: str) -> List[Dict[str, str]]:
+    def _parse_cluster_table(self, table_output: str, quiet: bool = False) -> List[Dict[str, str]]:
         """Parse the cluster table output from pw CLI.
 
         Handles both pipe-delimited and space-separated table formats.
@@ -326,7 +344,7 @@ class PWClusterCollector(BaseCollector):
                             "type": cluster_type,
                         }
                     )
-                else:
+                elif not quiet:
                     _log(f"[pw_cluster] Skipping cluster: uri={uri} status={status} type={cluster_type}")
 
         return clusters

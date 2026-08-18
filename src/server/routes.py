@@ -481,10 +481,20 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         topology_cfg = config_data.get("topology") or {}
         deployment_cfg = config_data.get("deployment") or {}
 
+        connections = None
+        telemetry_updated_at = None
+        if self.data_store:
+            try:
+                connections = self.data_store.load_cache("cluster_listing")
+                telemetry_updated_at = self.data_store.cache_updated_at("cluster_usage")
+            except Exception as exc:
+                print(f"[api] Unable to read connection listing: {exc}", flush=True)
+
         fleet = build_fleet(
             payload,
             clusters,
             self._marketplace_listings(),
+            connections,
             platform=(deployment_cfg.get("platform") or "generic"),
             site_overrides=topology_cfg.get("sites"),
             system_sites=topology_cfg.get("system_sites"),
@@ -492,6 +502,12 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
         )
         progress = self.cluster_worker.get_progress() if self.cluster_worker else None
         fleet["meta"]["collection_progress"] = progress
+        # When each source last actually moved, so the page can show real
+        # staleness instead of a generated_at minted per request.
+        fleet["meta"]["telemetry_updated_at"] = telemetry_updated_at
+        fleet["meta"]["connections_checked_at"] = (
+            (connections or {}).get("checked_at")
+        )
         self._send_json(fleet)
 
     def _marketplace_listings(self):

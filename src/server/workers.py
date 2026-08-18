@@ -189,6 +189,68 @@ class RefreshWorker(threading.Thread):
         while not self._stop_event.wait(self.interval):
             self.state.refresh(blocking=True)
 
+    # How often to ask the control plane for the cluster list while idle
+    # between sweeps. One fast CLI call — no SSH — so it can afford to be
+    # frequent; it is what lets a newly connected machine start collecting
+    # in seconds instead of waiting out the full idle interval.
+    LISTING_POLL_SECONDS = 30
+
+    def _wait_watching_listing(self, seconds: int) -> bool:
+        """Idle between sweeps, but cut the wait short if the fleet changes.
+
+        Returns True when the worker should stop (mirrors Event.wait).
+        Every poll also refreshes the ``cluster_listing`` cache, which is
+        how the fleet page can show a machine as connected before its
+        first telemetry arrives.
+        """
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if self._stop_event.wait(min(self.LISTING_POLL_SECONDS, remaining)):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            try:
+                active = self._collector.get_active_clusters(quiet=True)
+            except Exception:
+                continue  # a flaky listing is the next sweep's problem
+            # Compare before _save_listing updates the baseline — the
+            # first version updated first and so compared the new set
+            # against itself, which can never differ.
+            previous = self._last_active_uris
+            self._save_listing(active)
+            current = {c["uri"] for c in active}
+            if current != previous:
+                joined = current - previous
+                left = previous - current
+                detail = ", ".join(
+                    sorted(u.rsplit("/", 1)[-1] for u in (joined | left))
+                )
+                _log(
+                    f"[cluster-monitor] Cluster list changed ({detail}) — "
+                    f"collecting now"
+                )
+                return False
+
+    def _save_listing(self, active: list) -> None:
+        """Persist what the control plane reports as connected right now."""
+        self._last_active_uris = {c["uri"] for c in active}
+        try:
+            self.store.save_cache(
+                "cluster_listing",
+                {
+                    "checked_at": datetime.utcnow().isoformat() + "Z",
+                    "active": [
+                        {"uri": c["uri"], "name": c["uri"].rsplit("/", 1)[-1]}
+                        for c in active
+                    ],
+                },
+            )
+        except Exception as exc:
+            _log(f"[cluster-monitor] Unable to save listing: {exc}")
+
     def stop(self) -> None:
         self._stop_event.set()
 
@@ -224,6 +286,9 @@ class ClusterMonitorWorker(threading.Thread):
         self._failure_threshold = failure_threshold
         self._pause_duration = pause_duration
         self._auth_expired = False
+        # Active-cluster URIs from the most recent listing, so the idle
+        # watcher can tell a change from a repeat.
+        self._last_active_uris: set = set()
         # Periodic cleanup counter
         self._collection_count = 0
         self._cleanup_every = 100
@@ -294,10 +359,72 @@ class ClusterMonitorWorker(threading.Thread):
                 _log("[cluster-monitor] Please re-authenticate (pw auth) and restart the service")
                 break
             _log(f"[cluster-monitor] Next collection in {self.interval}s")
-            if self._stop_event.wait(self.interval):
+            if self._wait_watching_listing(self.interval):
                 break
 
         _log("[cluster-monitor] Stopped")
+
+    # How often to ask the control plane for the cluster list while idle
+    # between sweeps. One fast CLI call — no SSH — so it can afford to be
+    # frequent; it is what lets a newly connected machine start collecting
+    # in seconds instead of waiting out the full idle interval.
+    LISTING_POLL_SECONDS = 30
+
+    def _wait_watching_listing(self, seconds: int) -> bool:
+        """Idle between sweeps, but cut the wait short if the fleet changes.
+
+        Returns True when the worker should stop (mirrors Event.wait).
+        Every poll also refreshes the ``cluster_listing`` cache, which is
+        how the fleet page can show a machine as connected before its
+        first telemetry arrives.
+        """
+        deadline = time.monotonic() + seconds
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            if self._stop_event.wait(min(self.LISTING_POLL_SECONDS, remaining)):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            try:
+                active = self._collector.get_active_clusters(quiet=True)
+            except Exception:
+                continue  # a flaky listing is the next sweep's problem
+            # Compare before _save_listing updates the baseline — the
+            # first version updated first and so compared the new set
+            # against itself, which can never differ.
+            previous = self._last_active_uris
+            self._save_listing(active)
+            current = {c["uri"] for c in active}
+            if current != previous:
+                joined = current - previous
+                left = previous - current
+                detail = ", ".join(
+                    sorted(u.rsplit("/", 1)[-1] for u in (joined | left))
+                )
+                _log(
+                    f"[cluster-monitor] Cluster list changed ({detail}) — "
+                    f"collecting now"
+                )
+                return False
+
+    def _save_listing(self, active: list) -> None:
+        """Persist what the control plane reports as connected right now."""
+        self._last_active_uris = {c["uri"] for c in active}
+        try:
+            self.store.save_cache(
+                "cluster_listing",
+                {
+                    "checked_at": datetime.utcnow().isoformat() + "Z",
+                    "active": [
+                        {"uri": c["uri"], "name": c["uri"].rsplit("/", 1)[-1]}
+                        for c in active
+                    ],
+                },
+            )
+        except Exception as exc:
+            _log(f"[cluster-monitor] Unable to save listing: {exc}")
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -335,13 +462,26 @@ class ClusterMonitorWorker(threading.Thread):
         if cluster_data is None:
             return
         self._cycle_results.append(cluster_data)
-        with self._progress_lock:
-            first_sweep_done = self._progress.get("first_sweep_complete", False)
-        if not first_sweep_done:
-            try:
-                self.store.save_cache("cluster_usage", list(self._cycle_results))
-            except Exception as exc:
-                _log(f"[cluster-monitor] Incremental cache save failed: {exc}")
+        # Publish this cluster now rather than when the whole sweep ends.
+        # A sweep of a large fleet takes minutes, and holding every result
+        # until the end meant a newly connected machine stayed invisible
+        # long after its own collection had finished. Merging by name keeps
+        # clusters this sweep has not reached yet, so a partial sweep never
+        # erases a good cache — the failure the old end-only save guarded
+        # against.
+        try:
+            merged = {}
+            cached = self.store.load_cache("cluster_usage") or []
+            for entry in cached if isinstance(cached, list) else []:
+                key = (entry.get("cluster_metadata") or {}).get("name")
+                if key:
+                    merged[key] = entry
+            key = (cluster_data.get("cluster_metadata") or {}).get("name")
+            if key:
+                merged[key] = cluster_data
+                self.store.save_cache("cluster_usage", list(merged.values()))
+        except Exception as exc:
+            _log(f"[cluster-monitor] Incremental cache save failed: {exc}")
 
     def _record_cluster_transitions(self, clusters: list) -> None:
         """Log reachability changes for PW clusters (``cluster:<slug>``).
@@ -456,8 +596,17 @@ class ClusterMonitorWorker(threading.Thread):
                 return
 
             # Success: reset failure counter and save the canonical cache.
+            # This is also what drops clusters that vanished from the
+            # listing — the incremental merges only ever add and update.
             self._consecutive_failures = 0
             self.store.save_cache("cluster_usage", clusters)
+            self._save_listing(
+                [
+                    {"uri": (c.get("cluster_metadata") or {}).get("uri") or ""}
+                    for c in clusters
+                    if (c.get("cluster_metadata") or {}).get("uri")
+                ]
+            )
             self.store.save_snapshot("pw_cluster", data)
             self._record_cluster_transitions(clusters)
             self._record_queue_samples(clusters)
