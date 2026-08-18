@@ -39,6 +39,9 @@ SOURCE_STATUS_PAGE = "status page"
 SOURCE_LIVE_SESSION = "live session"
 SOURCE_CATALOG = "catalog"
 
+# The control plane's listing: it knows connectedness, nothing else.
+SOURCE_CONTROL_PLANE = "control plane"
+
 
 def _now_iso() -> str:
     return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
@@ -110,6 +113,7 @@ def build_fleet(
     fleet_payload: Optional[Dict[str, Any]],
     clusters: Optional[List[Dict[str, Any]]] = None,
     listings: Optional[List[Dict[str, Any]]] = None,
+    connections: Optional[Dict[str, Any]] = None,
     *,
     platform: str = "generic",
     site_overrides: Optional[Dict[str, Dict]] = None,
@@ -122,6 +126,9 @@ def build_fleet(
         fleet_payload: the status collector's payload (``systems`` list).
         clusters: per-cluster telemetry from the live sessions.
         listings: marketplace compute listings.
+        connections: the control plane's current listing
+            (``{checked_at, active: [{name, uri}]}``) — fresher than the
+            last telemetry sweep, which can be minutes old.
         platform: deployment platform, for site inference and labelling.
 
     Returns:
@@ -132,6 +139,10 @@ def build_fleet(
     from .topology import SITE_CATALOG
 
     systems: Dict[str, Dict[str, Any]] = {}
+    # What the status page said, before a live session outranks it for UP.
+    # If the session later disappears, this is what the machine falls back
+    # to — the page is still vouching for it.
+    page_verdicts: Dict[str, str] = {}
 
     # --- 1. The status page: the authority on published systems.
     for row in (fleet_payload or {}).get("systems") or []:
@@ -139,10 +150,11 @@ def build_fleet(
         slug = slugify(name)
         if not slug:
             continue
+        page_verdicts[slug] = _normalize_status(row.get("status"))
         systems[slug] = {
             "slug": slug,
             "name": name,
-            "status": _normalize_status(row.get("status")),
+            "status": page_verdicts[slug],
             "status_source": SOURCE_STATUS_PAGE,
             "login": row.get("login") or None,
             "scheduler": (str(row.get("scheduler") or "").upper() or None),
@@ -196,6 +208,64 @@ def build_fleet(
         if entry["connected"]:
             entry["status"] = "UP"
             entry["status_source"] = SOURCE_LIVE_SESSION
+
+    # --- 2b. The control plane's listing: the freshest word on
+    # connectedness. Telemetry sweeps take minutes; the listing is one
+    # cheap call and is refreshed between sweeps, so it wins on the
+    # connected flag. A machine it names that telemetry has not reached
+    # yet still appears — connected, UP, and marked as awaiting its first
+    # sweep — because someone who just connected a system is usually
+    # watching this page for exactly that.
+    if connections:
+        listed = set()
+        for row in connections.get("active") or []:
+            slug = slugify(row.get("name") or str(row.get("uri") or "").rsplit("/", 1)[-1])
+            if not slug:
+                continue
+            key = _match_existing(slug, systems) or slug
+            listed.add(key)
+            entry = systems.setdefault(
+                key,
+                {
+                    "slug": key,
+                    "name": str(row.get("name") or slug),
+                    "status": "UNKNOWN",
+                    "status_source": None,
+                    "login": None,
+                    "scheduler": None,
+                    "reported_site": None,
+                    "observed_at": None,
+                    "notes": None,
+                    "sources": [],
+                    "description": None,
+                    "capacity": None,
+                    "connected": False,
+                },
+            )
+            if not entry["connected"] and entry["capacity"] is None:
+                entry["awaiting_telemetry"] = True
+            entry["connected"] = True
+            entry["status"] = "UP"
+            entry["status_source"] = SOURCE_LIVE_SESSION
+            entry["observed_at"] = connections.get("checked_at") or entry.get("observed_at")
+            if SOURCE_LIVE_SESSION not in entry["sources"]:
+                entry["sources"].append(SOURCE_LIVE_SESSION)
+        # A cluster the cache still calls connected but the fresher
+        # listing does not name has disconnected. That is a fact about
+        # the session, not the machine: the connected flag drops, and the
+        # status falls back only when the session was its sole witness.
+        for entry in systems.values():
+            if entry["connected"] and entry["slug"] not in listed:
+                entry["connected"] = False
+                if entry["status_source"] == SOURCE_LIVE_SESSION:
+                    if entry["slug"] in page_verdicts:
+                        # The page still vouches for it; the session was
+                        # just a fresher second witness.
+                        entry["status"] = page_verdicts[entry["slug"]]
+                        entry["status_source"] = SOURCE_STATUS_PAGE
+                    else:
+                        entry["status"] = "UNKNOWN"
+                        entry["status_source"] = SOURCE_CONTROL_PLANE
 
     # --- 3. The catalog: what exists, and what it is for.
     for listing in listings or []:

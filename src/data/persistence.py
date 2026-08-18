@@ -131,6 +131,23 @@ class DataStore:
                 pass
             raise
 
+    def cache_updated_at(self, name: str) -> Optional[str]:
+        """When a cache file was last written, as UTC ISO — or None.
+
+        The payloads themselves stamp ``generated_at`` per request, which
+        says when you asked, not when anything was collected. The file
+        mtime is the honest freshness signal.
+        """
+        cache_file = self.cache_dir / f"{name}.json"
+        if not cache_file.exists():
+            return None
+        return (
+            datetime.utcfromtimestamp(cache_file.stat().st_mtime)
+            .replace(microsecond=0)
+            .isoformat()
+            + "Z"
+        )
+
     def load_cache(self, name: str, max_age: Optional[timedelta] = None) -> Optional[Dict[str, Any]]:
         """Load data from JSON cache file.
 

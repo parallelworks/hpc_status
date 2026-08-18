@@ -380,11 +380,25 @@ function updateSummary() {
     .reduce((sum, [, val]) => sum + val, 0)) || 0;
   elements.degradedCount.textContent = nonUp;
 
-  // Show relative time for better user understanding
-  const timestamp = meta.generated_at || meta.observed_at;
-  if (timestamp) {
+  // generated_at is minted per request — it always reads "just now" and
+  // would hide exactly the staleness this card exists to show. Telemetry
+  // age is the honest number, and a running sweep is worth naming.
+  const progress = meta.collection_progress;
+  const collecting =
+    progress && (progress.phase === "refreshing" || progress.phase === "warming_up");
+  const timestamp = meta.telemetry_updated_at || meta.generated_at || meta.observed_at;
+  if (collecting) {
+    elements.lastUpdated.textContent = `collecting ${progress.collected || 0}/${progress.total || "?"}`;
+    elements.lastUpdated.title = progress.current_cluster
+      ? `Collecting now — currently on ${progress.current_cluster}`
+      : "Collection sweep in progress";
+  } else if (timestamp) {
     elements.lastUpdated.textContent = formatRelativeTime(timestamp);
-    elements.lastUpdated.title = `Collected: ${new Date(timestamp).toLocaleString()}`;
+    const parts = [`Telemetry: ${new Date(timestamp).toLocaleString()}`];
+    if (meta.connections_checked_at) {
+      parts.push(`Connections checked: ${new Date(meta.connections_checked_at).toLocaleString()}`);
+    }
+    elements.lastUpdated.title = parts.join(" · ");
   } else {
     elements.lastUpdated.textContent = "--";
   }
@@ -549,6 +563,9 @@ function systemCard(row) {
   const capacity = row.capacity;
   if (capacity && Number.isFinite(capacity.utilization_percent)) {
     facts.push(`${Math.round(capacity.utilization_percent)}% of ${formatCount(capacity.cores_total)} cores busy`);
+  }
+  if (row.awaiting_telemetry) {
+    facts.push("connected — first telemetry sweep under way");
   }
   // Say it once, on the card that needs it, rather than on every card.
   const why = row.monitored
@@ -1218,7 +1235,11 @@ initHelpPanel();
 initQuickTips();
 loadData();
 // Note: Insights loading moved to dedicated page (insights.html)
-setInterval(() => loadData({ showLoading: false, silentFallback: true }), 3 * 60 * 1000);
+setInterval(() => {
+  // The server refreshes connection state every ~30s now; a 3-minute poll
+  // would throw that freshness away. Skip hidden tabs — no point.
+  if (!document.hidden) loadData({ showLoading: false, silentFallback: true });
+}, 45 * 1000);
 if (featureFlags.clusterPages) {
   loadUsageData();
   setInterval(() => loadUsageData({ force: true }), 5 * 60 * 1000);

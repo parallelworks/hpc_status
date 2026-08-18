@@ -374,3 +374,88 @@ class TestSameMachineDifferentNames:
         entry = by_slug(build_fleet(None, self.clusters("coral"), listings))["rqhap"]
         assert entry["monitored"] is False
         assert entry["status"] == UNMONITORED
+
+
+class TestControlPlaneListing:
+    """The listing is the freshest word on connectedness.
+
+    A telemetry sweep of a large fleet takes minutes; the listing is one
+    cheap call, refreshed between sweeps. A user who just connected a
+    machine watched it sit at NOT MONITORED for up to two sweep cycles
+    because connectedness could only arrive with telemetry.
+    """
+
+    CONNS = {
+        "checked_at": "2026-08-18T12:08:00Z",
+        "active": [
+            {"name": "coral", "uri": "pw://u/coral"},
+            {"name": "chessiearl", "uri": "pw://u/chessiearl"},
+        ],
+    }
+
+    @staticmethod
+    def cluster(name, status="active"):
+        return {
+            "cluster_metadata": {
+                "name": name,
+                "uri": f"pw://u/{name}",
+                "status": status,
+            }
+        }
+
+    def test_a_listed_machine_appears_before_its_first_sweep(self):
+        fleet = by_slug(build_fleet(None, [], [], self.CONNS))
+        coral = fleet["coral"]
+        assert coral["connected"] is True
+        assert coral["status"] == "UP"
+        assert coral["status_source"] == SOURCE_LIVE_SESSION
+        assert coral["awaiting_telemetry"] is True, (
+            "say the sweep is coming rather than showing an empty machine"
+        )
+
+    def test_a_machine_with_telemetry_is_not_marked_awaiting(self):
+        fleet = by_slug(
+            build_fleet(None, [self.cluster("chessiearl")], [], self.CONNS)
+        )
+        assert fleet["chessiearl"].get("awaiting_telemetry") is None
+
+    def test_a_cluster_missing_from_the_listing_is_disconnected(self):
+        """The cache says connected; the fresher listing does not name it."""
+        fleet = by_slug(build_fleet(None, [self.cluster("makau")], [], self.CONNS))
+        makau = fleet["makau"]
+        assert makau["connected"] is False
+        assert makau["status"] == "UNKNOWN", (
+            "the session was its only witness, and the session is gone"
+        )
+        assert makau["status_source"] == "control plane"
+
+    def test_the_status_page_verdict_survives_a_lost_session(self):
+        payload = {
+            "meta": {},
+            "systems": [
+                {"system": "Makau", "status": "UP", "dsrc": "mhpcc", "scheduler": "slurm"}
+            ],
+        }
+        fleet = by_slug(
+            build_fleet(payload, [self.cluster("makau")], [], self.CONNS)
+        )
+        makau = fleet["makau"]
+        assert makau["connected"] is False
+        assert makau["status"] == "UP", "losing a session never says DOWN"
+        assert makau["status_source"] == SOURCE_STATUS_PAGE
+
+    def test_the_listing_merges_by_facility_suffix_too(self):
+        """'chessie' from the marketplace is 'chessiearl' in the listing."""
+        listings = [
+            {"slug": "chessie", "name": "Chessie", "subtype": "existing", "tags": []}
+        ]
+        fleet = by_slug(build_fleet(None, [], listings, self.CONNS))
+        assert "chessie" not in fleet or not fleet.get("chessie", {}).get("connected") is None
+        entry = fleet["chessiearl"]
+        assert entry["connected"] is True
+        assert entry["name"] == "Chessie"
+
+    def test_no_listing_changes_nothing(self):
+        """Deployments whose worker predates the listing keep old behaviour."""
+        fleet = by_slug(build_fleet(None, [self.cluster("makau")], [], None))
+        assert fleet["makau"]["connected"] is True
