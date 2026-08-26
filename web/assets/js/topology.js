@@ -2400,7 +2400,7 @@ const loadData = async ({ silent = false } = {}) => {
     state.lastUpdated = Date.now();
 
     const progress = graph?.meta?.collection_progress;
-    if (progress && progress.phase === "auth_expired") {
+    if (progress && (progress.phase === "auth_expired" || progress.detail)) {
       setStatus(
         progress.detail ||
           "Platform authentication expired — telemetry is paused and this graph is stale.",

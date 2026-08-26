@@ -279,3 +279,101 @@ class TestStaleEnvKeyRecovery:
         assert os.environ.get("PW_API_KEY") == "only-credential", (
             "dropping the only credential would make a bad state worse"
         )
+
+
+class TestHalfExpiredKey:
+    """A key can half-die: the listing works, every SSH probe fails.
+
+    The sweep then "succeeds" — 19 connected clusters, zero capabilities,
+    no cores anywhere — and the dashboard called that ready. It must keep
+    the data (connectedness is still true) but say what is wrong.
+    """
+
+    def test_an_all_auth_failed_sweep_carries_a_warning(self):
+        store = MagicMock()
+        store.load_cache.return_value = None
+        worker = make_worker(store)
+        worker._collector = MagicMock()
+        worker._collector.collect.return_value = {
+            "meta": {"cluster_count": 2, "auth_errors": 2},
+            "clusters": [cluster("raider"), cluster("ruth")],
+        }
+
+        worker._collect_data()
+
+        progress = worker.get_progress()
+        assert progress["phase"] == "ready", "the data is still worth serving"
+        assert progress["detail"] and "pw auth" in progress["detail"], (
+            "no cores online must come with the reason attached"
+        )
+
+    def test_a_healthy_sweep_clears_the_warning(self):
+        store = MagicMock()
+        store.load_cache.return_value = None
+        worker = make_worker(store)
+        worker._progress_update(detail="stale warning from last sweep")
+        worker._collector = MagicMock()
+        worker._collector.collect.return_value = {
+            "meta": {"cluster_count": 1, "auth_errors": 0},
+            "clusters": [cluster("raider")],
+        }
+
+        worker._collect_data()
+
+        assert worker.get_progress()["detail"] is None
+
+    def test_a_partial_auth_failure_is_not_a_fleet_warning(self):
+        """One flaky cluster is that cluster's problem, not a banner."""
+        store = MagicMock()
+        store.load_cache.return_value = None
+        worker = make_worker(store)
+        worker._collector = MagicMock()
+        worker._collector.collect.return_value = {
+            "meta": {"cluster_count": 3, "auth_errors": 1},
+            "clusters": [cluster("a"), cluster("b"), cluster("c")],
+        }
+
+        worker._collect_data()
+
+        assert worker.get_progress()["detail"] is None
+
+
+class TestProbeFailureCaching:
+    def test_a_failed_probe_is_not_cached(self):
+        """All-False caps cached for the TTL outlives the fix by 10 minutes."""
+        import subprocess as sp
+
+        collector = PWClusterCollector()
+        with patch(
+            "subprocess.run",
+            return_value=sp.CompletedProcess([], 1, stdout="", stderr="boom"),
+        ):
+            caps = collector._get_capabilities("pw://u/raider")
+        assert not any(caps.values())
+        assert "pw://u/raider" not in collector._capability_cache
+
+    def test_an_auth_failed_probe_is_counted(self):
+        import subprocess as sp
+
+        collector = PWClusterCollector()
+        with patch(
+            "subprocess.run",
+            return_value=sp.CompletedProcess(
+                [], 1, stdout="",
+                stderr="[ERROR] Authentication has expired. Please authenticate again using 'pw auth'.",
+            ),
+        ):
+            collector._get_capabilities("pw://u/raider")
+            collector._get_capabilities("pw://u/ruth")
+        assert collector._auth_error_count == 2
+
+    def test_a_generic_failure_is_not_an_auth_error(self):
+        import subprocess as sp
+
+        collector = PWClusterCollector()
+        with patch(
+            "subprocess.run",
+            return_value=sp.CompletedProcess([], 1, stdout="", stderr="connection refused"),
+        ):
+            collector._get_capabilities("pw://u/raider")
+        assert collector._auth_error_count == 0
