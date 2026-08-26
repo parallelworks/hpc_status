@@ -2400,7 +2400,13 @@ const loadData = async ({ silent = false } = {}) => {
     state.lastUpdated = Date.now();
 
     const progress = graph?.meta?.collection_progress;
-    if (progress && progress.phase === "warming_up" && !progress.first_sweep_complete) {
+    if (progress && progress.phase === "auth_expired") {
+      setStatus(
+        progress.detail ||
+          "Platform authentication expired — telemetry is paused and this graph is stale.",
+        "error"
+      );
+    } else if (progress && progress.phase === "warming_up" && !progress.first_sweep_complete) {
       setStatus(
         `Collecting telemetry — ${progress.collected || 0} of ${progress.total || "?"} clusters swept.`,
         "info"

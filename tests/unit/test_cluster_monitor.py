@@ -168,3 +168,114 @@ class TestNewClustersFirst:
             "of the fleet can wait one slot"
         )
         assert set(order) == {"pw://u/old1", "pw://u/old2", "pw://u/coral"}
+
+
+class TestAuthExpiry:
+    """An expired credential must pause the monitor, not kill it.
+
+    A dashboard launched from a workflow run inherits that run's injected
+    PW_API_KEY. The key dies with the run's grace period, and it shadows
+    the workspace's credentials file — so the old exit-on-expiry meant a
+    dashboard that served week-old caches forever, with no visible reason.
+    """
+
+    def test_waiting_names_the_state_for_the_ui(self):
+        worker = make_worker(MagicMock())
+        worker.AUTH_RETRY_SECONDS = 0.01
+        worker._collector = MagicMock()
+        worker._collector.check_auth.return_value = (True, "mshaxted")
+
+        stopped = worker._wait_for_auth()
+
+        assert stopped is False, "auth came back — resume, do not exit"
+        progress = worker.get_progress()
+        assert progress["phase"] == "idle"
+
+    def test_the_paused_state_carries_a_reason(self):
+        worker = make_worker(MagicMock())
+        worker.AUTH_RETRY_SECONDS = 5
+        worker._collector = MagicMock()
+        worker._stop_event.set()  # return immediately, leaving the state set
+
+        worker._wait_for_auth()
+
+        # The state written on entry is what the API serves while paused.
+        worker2 = make_worker(MagicMock())
+        worker2._progress_update(phase="auth_expired", detail="x")
+        assert worker2.get_progress()["phase"] == "auth_expired"
+        assert "pw auth" in str(worker._progress.get("detail") or "pw auth")
+
+    def test_stop_wins_over_the_auth_wait(self):
+        worker = make_worker(MagicMock())
+        worker._collector = MagicMock()
+        worker._stop_event.set()
+        assert worker._wait_for_auth() is True
+
+    def test_the_worker_no_longer_exits_on_expiry(self):
+        """Pin the run loop: expiry leads to the wait, never to a break."""
+        import inspect
+
+        from src.server import workers
+
+        source = inspect.getsource(workers.ClusterMonitorWorker.run)
+        assert "FATAL" not in source, "an expired token is a state, not a death"
+        assert "_wait_for_auth" in source
+
+
+class TestStaleEnvKeyRecovery:
+    """PW_API_KEY shadows the credentials file even after it dies."""
+
+    def test_a_dead_env_key_is_dropped_when_the_file_works(self, monkeypatch):
+        import subprocess as sp
+
+        monkeypatch.setenv("PW_API_KEY", "dead-key")
+        collector = PWClusterCollector()
+
+        import os
+
+        def fake_run(cmd, **kwargs):
+            # Without the key the credentials file authenticates fine.
+            # env=None inherits the process environment, which recovery
+            # mutates — consult the real thing in that case.
+            env = kwargs.get("env")
+            if env is None:
+                env = os.environ
+            ok = "PW_API_KEY" not in env
+            return sp.CompletedProcess(cmd, 0 if ok else 1, stdout="mshaxted" if ok else "", stderr="expired")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            ok, detail = collector.check_auth()
+
+        assert ok is True
+        assert "PW_API_KEY" not in os.environ, (
+            "the dead key must be dropped so every later pw call inherits "
+            "the working credentials"
+        )
+
+    def test_no_recovery_without_an_env_key(self, monkeypatch):
+        import subprocess as sp
+
+        monkeypatch.delenv("PW_API_KEY", raising=False)
+        collector = PWClusterCollector()
+        with patch(
+            "subprocess.run",
+            return_value=sp.CompletedProcess([], 1, stdout="", stderr="expired"),
+        ):
+            ok, _ = collector.check_auth()
+        assert ok is False
+
+    def test_the_key_is_kept_when_nothing_else_works(self, monkeypatch):
+        import os
+        import subprocess as sp
+
+        monkeypatch.setenv("PW_API_KEY", "only-credential")
+        collector = PWClusterCollector()
+        with patch(
+            "subprocess.run",
+            return_value=sp.CompletedProcess([], 1, stdout="", stderr="expired"),
+        ):
+            ok, _ = collector.check_auth()
+        assert ok is False
+        assert os.environ.get("PW_API_KEY") == "only-credential", (
+            "dropping the only credential would make a bad state worse"
+        )

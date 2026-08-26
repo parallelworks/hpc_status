@@ -384,10 +384,22 @@ function updateSummary() {
   // would hide exactly the staleness this card exists to show. Telemetry
   // age is the honest number, and a running sweep is worth naming.
   const progress = meta.collection_progress;
+  // An expired credential looks exactly like a broken dashboard — stale
+  // cores, frozen topology — unless the page says what actually happened.
+  if (progress && progress.phase === "auth_expired") {
+    showStatusMessage(
+      progress.detail ||
+        "Platform authentication expired — telemetry is paused. Relaunch " +
+          "the status workflow, or run `pw auth` in the workspace terminal."
+    );
+  }
   const collecting =
     progress && (progress.phase === "refreshing" || progress.phase === "warming_up");
   const timestamp = meta.telemetry_updated_at || meta.generated_at || meta.observed_at;
-  if (collecting) {
+  if (progress && progress.phase === "auth_expired") {
+    elements.lastUpdated.textContent = "auth expired";
+    elements.lastUpdated.title = progress.detail || "Telemetry paused: authentication expired";
+  } else if (collecting) {
     elements.lastUpdated.textContent = `collecting ${progress.collected || 0}/${progress.total || "?"}`;
     elements.lastUpdated.title = progress.current_cluster
       ? `Collecting now — currently on ${progress.current_cluster}`

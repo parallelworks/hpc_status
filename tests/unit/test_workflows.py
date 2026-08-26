@@ -262,12 +262,17 @@ class TestStopScript:
     def test_says_something_useful_when_nothing_is_detached(self, tmp_path):
         import subprocess
 
+        env = {**__import__("os").environ, "HPC_STATUS_DATA_DIR": str(tmp_path)}
+        # Keep the pw CLI off PATH: with no pidfile and no reachable
+        # control plane the script must still answer sensibly, and a unit
+        # test must not depend on the network being in a good mood.
+        env["PATH"] = "/usr/bin:/bin"
         result = subprocess.run(
             ["bash", str(self.SCRIPT)],
             capture_output=True,
             text=True,
             timeout=60,
-            env={**__import__("os").environ, "HPC_STATUS_DATA_DIR": str(tmp_path)},
+            env=env,
         )
         assert result.returncode == 0, result.stderr
         # No pidfile and no session is not an error — it is the answer.
