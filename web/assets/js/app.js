@@ -386,7 +386,7 @@ function updateSummary() {
   const progress = meta.collection_progress;
   // An expired credential looks exactly like a broken dashboard — stale
   // cores, frozen topology — unless the page says what actually happened.
-  if (progress && progress.phase === "auth_expired") {
+  if (progress && (progress.phase === "auth_expired" || progress.detail)) {
     showStatusMessage(
       progress.detail ||
         "Platform authentication expired — telemetry is paused. Relaunch " +

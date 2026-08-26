@@ -48,6 +48,11 @@ class PWClusterCollector(BaseCollector):
         # context. ``None`` = use whatever context pw resolves on its own.
         self.pw_context = pw_context
         self._known_clusters: set = set()
+        # SSH calls that failed with an expired-auth error this sweep. The
+        # platform can half-expire a key — `pw clusters ls` and whoami keep
+        # passing while every `pw ssh` dies — and a sweep that "succeeds"
+        # that way must not present itself as healthy.
+        self._auth_error_count = 0
         # cluster_uri -> (capabilities, timestamp)
         self._capability_cache: Dict[str, Tuple[Dict[str, bool], datetime]] = {}
         # cluster_uri -> (hostname, timestamp); the active login node the SSH
@@ -241,6 +246,7 @@ class PWClusterCollector(BaseCollector):
             CollectorError: If collection fails.
         """
         try:
+            self._auth_error_count = 0
             clusters = self.get_active_clusters()
             if not clusters:
                 return {
@@ -287,6 +293,7 @@ class PWClusterCollector(BaseCollector):
                     "generated_at": datetime.utcnow().isoformat() + "Z",
                     "collector": self.name,
                     "cluster_count": len(results),
+                    "auth_errors": self._auth_error_count,
                 },
                 "clusters": results,
             }
@@ -460,25 +467,39 @@ class PWClusterCollector(BaseCollector):
                 timeout=self.ssh_timeout,
             )
             if result.returncode != 0:
+                stderr = result.stderr.strip()
                 _log(
                     f"[pw_cluster] Capability probe failed for {cluster_uri} "
-                    f"(rc={result.returncode}): {result.stderr.strip()[:120]}"
+                    f"(rc={result.returncode}): {stderr[:120]}"
                 )
-                caps = {c: False for c in sh.PROBE_COMMANDS}
-            else:
-                caps = sh.parse_capability_probe(result.stdout)
+                if self._is_auth_error(stderr):
+                    self._auth_error_count += 1
+                    # A credentials file may exist that the dead inherited
+                    # key is shadowing; recovering re-runs the probe once.
+                    if self._recover_from_stale_env_key():
+                        return self._get_capabilities(cluster_uri)
+                # A failed probe is not knowledge — do not cache it, or a
+                # cluster stays "no capabilities" for the cache TTL after
+                # the underlying problem is fixed.
+                return {c: False for c in sh.PROBE_COMMANDS}
+            caps = sh.parse_capability_probe(result.stdout)
             _log(
                 f"[pw_cluster] {cluster_uri.split('/')[-1]} caps: "
                 + ", ".join(f"{k}={'Y' if v else 'N'}" for k, v in caps.items() if v)
             )
         except subprocess.TimeoutExpired:
             _log(f"[pw_cluster] Capability probe timed out for {cluster_uri}")
-            caps = {c: False for c in sh.PROBE_COMMANDS}
+            return {c: False for c in sh.PROBE_COMMANDS}
         except Exception as e:
             _log(f"[pw_cluster] Capability probe error for {cluster_uri}: {e}")
-            caps = {c: False for c in sh.PROBE_COMMANDS}
+            return {c: False for c in sh.PROBE_COMMANDS}
         self._capability_cache[cluster_uri] = (caps, datetime.utcnow())
         return caps
+
+    @staticmethod
+    def _is_auth_error(text: str) -> bool:
+        lowered = (text or "").lower()
+        return "authentication has expired" in lowered or "pw auth" in lowered
 
     def _get_saccount_params(
         self, cluster_uri: str, cluster_name: str

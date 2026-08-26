@@ -686,12 +686,30 @@ class ClusterMonitorWorker(threading.Thread):
             self.store.save_snapshot("pw_cluster", data)
             self._record_cluster_transitions(clusters)
             self._record_queue_samples(clusters)
+            # A sweep can "succeed" while every SSH call inside it died of
+            # expired auth — the platform half-expires keys, leaving the
+            # listing working and the probes dead. That is not a healthy
+            # sweep, and presenting it as one is how "no cores online" went
+            # undiagnosed. Keep the data (connectedness is still true) but
+            # say what is wrong.
+            auth_errors = data.get("meta", {}).get("auth_errors", 0)
+            if auth_errors >= len(clusters) > 0:
+                detail = (
+                    "Cluster SSH is failing with expired authentication — "
+                    "connections show but telemetry (cores, queues, storage) "
+                    "cannot be collected. Run `pw auth` in the workspace "
+                    "terminal to restore it."
+                )
+                _log(f"[cluster-monitor] WARNING: {detail}")
+            else:
+                detail = None
             self._progress_update(
                 phase="ready",
                 first_sweep_complete=True,
                 current_cluster=None,
                 collected=len(clusters),
                 total=len(clusters),
+                detail=detail,
             )
             _log(f"[cluster-monitor] Collected data for {data['meta']['cluster_count']} clusters")
 
