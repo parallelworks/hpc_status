@@ -60,6 +60,48 @@ class PWClusterCollector(BaseCollector):
             Tuple[Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Any]], datetime],
         ] = {}
 
+    def _recover_from_stale_env_key(self) -> bool:
+        """Drop an inherited PW_API_KEY that no longer works.
+
+        A dashboard launched from a workflow run inherits that run's
+        injected key, frozen into its environment — and the key does not
+        outlive the run's grace period. PW_API_KEY also takes precedence
+        over the credentials file, so once it dies it *shadows* any valid
+        auth the workspace has: a `pw auth` in a terminal fixes the file
+        and changes nothing here.
+
+        So when auth fails and the environment holds a key, test whether
+        the credentials file works on its own — and if it does, remove the
+        key from this process's environment, which every future `pw`
+        subprocess inherits. That one pop heals the collector, the
+        marketplace catalog, and anything else this server shells out to.
+
+        Returns True when recovery happened and auth should be retried.
+        """
+        import os
+
+        if "PW_API_KEY" not in os.environ:
+            return False
+        stripped = {k: v for k, v in os.environ.items() if k != "PW_API_KEY"}
+        try:
+            result = subprocess.run(
+                ["pw", "auth", "whoami"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                env=stripped,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if result.returncode == 0 and result.stdout.strip():
+            os.environ.pop("PW_API_KEY", None)
+            _log(
+                "[pw_cluster] Inherited PW_API_KEY is no longer valid; "
+                "switched to the workspace's saved credentials"
+            )
+            return True
+        return False
+
     def _pw(self, *args: str) -> List[str]:
         """Build a ``pw`` command, prepending ``--context`` if pinned."""
         cmd: List[str] = ["pw"]
@@ -168,6 +210,8 @@ class PWClusterCollector(BaseCollector):
             if result.returncode == 0 and output:
                 _log(f"[pw_cluster] Authenticated as: {output}")
                 return True, output
+            elif self._recover_from_stale_env_key():
+                return self.check_auth()
             else:
                 detail = stderr or output or "Unknown auth error"
                 _log(f"[pw_cluster] Authentication check failed (rc={result.returncode}): {detail}")

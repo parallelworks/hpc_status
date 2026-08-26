@@ -251,6 +251,39 @@ class RefreshWorker(threading.Thread):
         except Exception as exc:
             _log(f"[cluster-monitor] Unable to save listing: {exc}")
 
+    # How often to re-test authentication while it is broken. Generous:
+    # nothing useful can happen until a human re-authenticates.
+    AUTH_RETRY_SECONDS = 300
+
+    def _wait_for_auth(self) -> bool:
+        """Idle until authentication returns. True means stop instead.
+
+        While waiting, the progress phase reads ``auth_expired`` with a
+        human-usable detail, so /api/fleet and /api/topology can put the
+        real reason on the page — "cores are not loading" was this state
+        with no name.
+        """
+        self._progress_update(
+            phase="auth_expired",
+            current_cluster=None,
+            detail=(
+                "Platform authentication expired — telemetry is paused. "
+                "Run `pw auth` in the workspace terminal, or relaunch the "
+                "status workflow."
+            ),
+        )
+        _log(
+            "[cluster-monitor] Authentication lost — pausing collection and "
+            f"re-checking every {self.AUTH_RETRY_SECONDS}s"
+        )
+        while not self._stop_event.wait(self.AUTH_RETRY_SECONDS):
+            auth_ok, _detail = self._collector.check_auth()
+            if auth_ok:
+                _log("[cluster-monitor] Authentication restored — resuming collection")
+                self._progress_update(phase="idle", detail=None)
+                return False
+        return True
+
     def stop(self) -> None:
         self._stop_event.set()
 
@@ -303,6 +336,7 @@ class ClusterMonitorWorker(threading.Thread):
             "started_at": None,
             "last_completed_at": None,
             "first_sweep_complete": False,
+            "detail": None,
         }
         # Cumulative results for the *current* in-flight sweep. During the
         # first sweep we persist this list incrementally so partial data
@@ -339,12 +373,16 @@ class ClusterMonitorWorker(threading.Thread):
         if not self._collector.is_available():
             _log("[cluster-monitor] WARNING: pw CLI not available, will retry each cycle")
 
-        # Verify authentication before starting collection loop
+        # Verify authentication before starting the collection loop. Not
+        # being authenticated is a state to wait out, not a reason to die:
+        # the credential this process inherited may already be dead at
+        # birth (a workflow run's key does not outlive the run for long),
+        # and a `pw auth` on the workspace can appear at any moment.
         auth_ok, auth_detail = self._collector.check_auth()
         if not auth_ok:
-            _log(f"[cluster-monitor] FATAL: Not authenticated at startup: {auth_detail}")
-            _log("[cluster-monitor] Exiting — please re-authenticate and restart the service")
-            return
+            _log(f"[cluster-monitor] Not authenticated at startup: {auth_detail}")
+            if self._wait_for_auth():
+                return
 
         if not self._run_immediately:
             _log(f"[cluster-monitor] Waiting {self.interval}s before first collection")
@@ -355,9 +393,14 @@ class ClusterMonitorWorker(threading.Thread):
         while not self._stop_event.is_set():
             self._collect_data()
             if self._auth_expired:
-                _log("[cluster-monitor] FATAL: Authentication token expired — exiting")
-                _log("[cluster-monitor] Please re-authenticate (pw auth) and restart the service")
-                break
+                # The old behaviour was to exit here, which turned an
+                # expired token into a dashboard that silently served
+                # stale caches forever. Wait for auth to come back
+                # instead — the UI names the state in the meantime.
+                if self._wait_for_auth():
+                    break
+                self._auth_expired = False
+                continue
             _log(f"[cluster-monitor] Next collection in {self.interval}s")
             if self._wait_watching_listing(self.interval):
                 break
@@ -425,6 +468,39 @@ class ClusterMonitorWorker(threading.Thread):
             )
         except Exception as exc:
             _log(f"[cluster-monitor] Unable to save listing: {exc}")
+
+    # How often to re-test authentication while it is broken. Generous:
+    # nothing useful can happen until a human re-authenticates.
+    AUTH_RETRY_SECONDS = 300
+
+    def _wait_for_auth(self) -> bool:
+        """Idle until authentication returns. True means stop instead.
+
+        While waiting, the progress phase reads ``auth_expired`` with a
+        human-usable detail, so /api/fleet and /api/topology can put the
+        real reason on the page — "cores are not loading" was this state
+        with no name.
+        """
+        self._progress_update(
+            phase="auth_expired",
+            current_cluster=None,
+            detail=(
+                "Platform authentication expired — telemetry is paused. "
+                "Run `pw auth` in the workspace terminal, or relaunch the "
+                "status workflow."
+            ),
+        )
+        _log(
+            "[cluster-monitor] Authentication lost — pausing collection and "
+            f"re-checking every {self.AUTH_RETRY_SECONDS}s"
+        )
+        while not self._stop_event.wait(self.AUTH_RETRY_SECONDS):
+            auth_ok, _detail = self._collector.check_auth()
+            if auth_ok:
+                _log("[cluster-monitor] Authentication restored — resuming collection")
+                self._progress_update(phase="idle", detail=None)
+                return False
+        return True
 
     def stop(self) -> None:
         self._stop_event.set()
