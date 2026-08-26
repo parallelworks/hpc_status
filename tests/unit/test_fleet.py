@@ -459,3 +459,64 @@ class TestControlPlaneListing:
         """Deployments whose worker predates the listing keep old behaviour."""
         fleet = by_slug(build_fleet(None, [self.cluster("makau")], [], None))
         assert fleet["makau"]["connected"] is True
+
+
+class TestSchedulerClusterCapacity:
+    """DSRC machines report inventory via queue_data, not gpu_data.
+
+    The fleet reader only looked at gpu_data/node_classes — right for the
+    cloud GPU box it was written against, empty ({}) for every
+    scheduler-driven cluster — so a fully healthy sweep of the HPCMP
+    fleet showed no cores anywhere.
+    """
+
+    BARFOOT = {
+        "cluster_metadata": {
+            "name": "barfoot",
+            "uri": "pw://u/barfoot",
+            "status": "active",
+        },
+        "gpu_data": {},
+        "queue_data": {
+            "queues": [{"queue_name": "urgent"}],
+            "nodes": [],
+            "cluster_totals": {
+                "cores_total": 9408,
+                "cores_running": 4200,
+                "cores_free": 5208,
+                "nodes_total": 49,
+                "gpus_total": 0,
+            },
+            "source": "slurm",
+        },
+    }
+
+    def test_cores_come_from_queue_data_totals(self):
+        fleet = by_slug(build_fleet(None, [self.BARFOOT], []))
+        capacity = fleet["barfoot"]["capacity"]
+        assert capacity["cores_total"] == 9408
+        assert capacity["cores_running"] == 4200
+        assert capacity["utilization_percent"] == pytest.approx(44.6, abs=0.1)
+
+    def test_gpu_data_rows_still_work(self):
+        """The cloud box shape that the reader was originally right about."""
+        cluster = {
+            "cluster_metadata": {"name": "a30", "uri": "pw://u/a30", "status": "active"},
+            "gpu_data": [{"cores_available": "400", "cores_running": "150"}],
+            "queue_data": {},
+        }
+        capacity = by_slug(build_fleet(None, [cluster], []))["a30"]["capacity"]
+        assert capacity["cores_total"] == 400
+
+    def test_no_inventory_at_all_is_none_not_zero(self):
+        """A license server with no nodes should not show '0% of 0 cores'."""
+        cluster = {
+            "cluster_metadata": {"name": "lic", "uri": "pw://u/lic", "status": "active"},
+            "gpu_data": {},
+            "queue_data": {
+                "queues": [],
+                "nodes": [],
+                "cluster_totals": {"cores_total": 0, "cores_running": 0},
+            },
+        }
+        assert by_slug(build_fleet(None, [cluster], []))["lic"]["capacity"] is None

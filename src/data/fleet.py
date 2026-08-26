@@ -57,7 +57,24 @@ def _cluster_name(cluster: Dict[str, Any]) -> str:
 
 
 def _cluster_capacity(cluster: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """Cores and utilization, when the live session reported them."""
+    """Cores and utilization, when the live session reported them.
+
+    Scheduler-driven clusters (every DSRC machine) report their inventory
+    through ``queue_data`` — the same place the topology reads it — while
+    some cloud boxes only report node-class rows in ``gpu_data``. Reading
+    only the latter is how the fleet page showed a healthy sweep with no
+    cores on any HPCMP system.
+    """
+    from .topology import _cluster_capacity as _topology_capacity
+
+    summary = _topology_capacity(cluster)
+    if summary.get("cores_total"):
+        return {
+            "cores_total": summary["cores_total"],
+            "cores_running": summary["cores_running"],
+            "utilization_percent": summary.get("utilization_percent"),
+        }
+
     classes = cluster.get("gpu_data") or cluster.get("node_classes") or []
     total = running = 0
     for row in classes if isinstance(classes, list) else []:
