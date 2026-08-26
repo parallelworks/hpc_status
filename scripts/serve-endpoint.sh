@@ -218,6 +218,14 @@ if [[ "${DETACH:-0}" =~ ^(1|true|yes)$ ]]; then
     exit 0
 fi
 
+# Supervised mode restarts too: without this, a relaunch relies on the
+# platform replacing the incumbent session — which kills the previous
+# dashboard at a moment nobody chose, the race the detached path already
+# eliminates.
+echo "[endpoint] Clearing any previous instance before starting"
+ENDPOINT_NAME="${ENDPOINT_NAME}" bash "${PROJECT_ROOT}/scripts/stop-endpoint.sh" \
+    2>&1 | sed 's/^\[endpoint\] /  /' || true
+
 started=${SECONDS}
 set +e
 pw endpoints run "${args[@]}" --subdomain "${ENDPOINT_SUBDOMAIN}" -- bash "${launcher}"

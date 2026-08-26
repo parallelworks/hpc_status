@@ -302,10 +302,17 @@ class TestStartIsTheOnlyAction:
             "stopping is done by deleting the session, or by the script directly"
         )
 
-    def test_it_keeps_serving_after_the_run_by_default(self, path):
-        """The run should finish in seconds, not sit open for days."""
+    def test_the_run_owns_the_dashboard_by_default(self, path):
+        """Supervised is the default because of platform key lifetimes.
+
+        The credential a workflow run injects is disabled when the run
+        completes (observed on activate.hpc.mil, 2026-08-26), and cluster
+        SSH needs it — a detached dashboard collects nothing unless the
+        workspace holds durable `pw auth` credentials. An open run is a
+        cheaper cost than a silently coreless fleet.
+        """
         detach = load(path)["on"]["execute"]["inputs"]["settings"]["items"]["detach"]
-        assert detach["default"] is True
+        assert detach["default"] is False
 
 
 class TestRestartOnStart:
