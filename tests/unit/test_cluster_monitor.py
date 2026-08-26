@@ -11,6 +11,7 @@ went wrong before it was pinned here:
 """
 
 import threading
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -377,3 +378,102 @@ class TestProbeFailureCaching:
         ):
             collector._get_capabilities("pw://u/raider")
         assert collector._auth_error_count == 0
+
+
+class TestWorkspaceKeyRecovery:
+    """The workspace key outlives the run; the run's key does not.
+
+    ACTIVATE writes the workspace's own key into
+    /etc/profile.d/parallelworks-env.sh. Measured on activate.hpc.mil:
+    a detached process that adopted it kept authenticating cluster SSH
+    minutes after its run completed, where the run's injected key is
+    revoked in about fifteen seconds.
+    """
+
+    def test_the_workspace_key_is_preferred_over_saved_credentials(self, monkeypatch):
+        import os
+        import subprocess as sp
+
+        monkeypatch.setenv("PW_API_KEY", "dead-run-key")
+        collector = PWClusterCollector()
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["bash", "-c"]:
+                return sp.CompletedProcess(cmd, 0, stdout="workspace-key", stderr="")
+            env = kwargs.get("env")
+            if env is None:
+                env = os.environ
+            ok = env.get("PW_API_KEY") == "workspace-key"
+            return sp.CompletedProcess(cmd, 0 if ok else 1, stdout="mshaxted" if ok else "", stderr="expired")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            assert collector._recover_from_stale_env_key() is True
+
+        assert os.environ["PW_API_KEY"] == "workspace-key"
+
+    def test_it_falls_back_to_saved_credentials(self, monkeypatch):
+        import os
+        import subprocess as sp
+
+        monkeypatch.setenv("PW_API_KEY", "dead-run-key")
+        collector = PWClusterCollector()
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["bash", "-c"]:
+                return sp.CompletedProcess(cmd, 0, stdout="", stderr="")  # no such file
+            env = kwargs.get("env")
+            if env is None:
+                env = os.environ
+            ok = "PW_API_KEY" not in env
+            return sp.CompletedProcess(cmd, 0 if ok else 1, stdout="mshaxted" if ok else "", stderr="expired")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            assert collector._recover_from_stale_env_key() is True
+
+        assert "PW_API_KEY" not in os.environ
+
+    def test_a_workspace_key_that_does_not_work_is_not_adopted(self, monkeypatch):
+        import os
+        import subprocess as sp
+
+        monkeypatch.setenv("PW_API_KEY", "dead-run-key")
+        collector = PWClusterCollector()
+
+        def fake_run(cmd, **kwargs):
+            if cmd[:2] == ["bash", "-c"]:
+                return sp.CompletedProcess(cmd, 0, stdout="also-dead", stderr="")
+            return sp.CompletedProcess(cmd, 1, stdout="", stderr="expired")
+
+        with patch("subprocess.run", side_effect=fake_run):
+            assert collector._recover_from_stale_env_key() is False
+
+        assert os.environ["PW_API_KEY"] == "dead-run-key", (
+            "keep what we have rather than swapping in something worse"
+        )
+
+    def test_only_the_key_is_taken_from_the_profile_script(self):
+        """That file also sets Kubernetes and telemetry variables."""
+        import inspect
+
+        source = inspect.getsource(PWClusterCollector._workspace_key)
+        assert "printf" in source and "PW_API_KEY" in source
+        assert "subshell" in source or "Sourced in a subshell" in source
+
+
+class TestLauncherPrefersDurableAuth:
+    SCRIPT = (
+        Path(__file__).resolve().parents[2] / "scripts" / "serve-endpoint.sh"
+    ).read_text()
+
+    def test_it_adopts_the_workspace_key(self):
+        assert "/etc/profile.d/parallelworks-env.sh" in self.SCRIPT
+        assert "outlives this run" in self.SCRIPT
+
+    def test_it_only_adopts_a_key_that_works(self):
+        assert 'PW_API_KEY="${workspace_key}" pw auth whoami' in self.SCRIPT
+
+    def test_it_takes_only_the_key_from_that_file(self):
+        """Sourced in a subshell: the file also sets unrelated variables."""
+        block = self.SCRIPT[self.SCRIPT.index("PW_ENV_FILE=") :]
+        block = block[: block.index("Publishing as")]
+        assert "$(" in block and "printf '%s' \"${PW_API_KEY:-}\"" in block

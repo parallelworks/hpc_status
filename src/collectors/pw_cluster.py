@@ -65,8 +65,37 @@ class PWClusterCollector(BaseCollector):
             Tuple[Tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]], Dict[str, Any]], datetime],
         ] = {}
 
+    # ACTIVATE writes the workspace's own key here. Unlike the key a
+    # workflow run injects, it outlives the run — which is what a detached
+    # dashboard needs.
+    PW_ENV_FILE = "/etc/profile.d/parallelworks-env.sh"
+
+    def _workspace_key(self) -> Optional[str]:
+        """The workspace key from the platform's profile script, if any.
+
+        Sourced in a subshell and read back, so nothing else that file
+        sets — Kubernetes addresses, telemetry switches — leaks into this
+        process.
+        """
+        try:
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    f'set +u; . "{self.PW_ENV_FILE}" >/dev/null 2>&1; '
+                    'printf "%s" "${PW_API_KEY:-}"',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        key = (result.stdout or "").strip()
+        return key or None
+
     def _recover_from_stale_env_key(self) -> bool:
-        """Drop an inherited PW_API_KEY that no longer works.
+        """Swap out an inherited PW_API_KEY that no longer works.
 
         A dashboard launched from a workflow run inherits that run's
         injected key, frozen into its environment — and the key does not
@@ -87,18 +116,38 @@ class PWClusterCollector(BaseCollector):
 
         if "PW_API_KEY" not in os.environ:
             return False
+
+        def works(env) -> bool:
+            try:
+                result = subprocess.run(
+                    ["pw", "auth", "whoami"],
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    env=env,
+                )
+            except (OSError, subprocess.SubprocessError):
+                return False
+            return result.returncode == 0 and bool(result.stdout.strip())
+
+        # First choice: the workspace key, which outlives the run that
+        # started us. A dashboard launched from a workflow can reach this
+        # point minutes after its own key was revoked.
+        workspace_key = self._workspace_key()
+        if workspace_key and workspace_key != os.environ.get("PW_API_KEY"):
+            candidate = {**os.environ, "PW_API_KEY": workspace_key}
+            if works(candidate):
+                os.environ["PW_API_KEY"] = workspace_key
+                _log(
+                    "[pw_cluster] Inherited PW_API_KEY is no longer valid; "
+                    "switched to the workspace key"
+                )
+                return True
+
+        # Otherwise fall back to saved credentials, which the dead key in
+        # the environment would otherwise shadow.
         stripped = {k: v for k, v in os.environ.items() if k != "PW_API_KEY"}
-        try:
-            result = subprocess.run(
-                ["pw", "auth", "whoami"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=stripped,
-            )
-        except (OSError, subprocess.SubprocessError):
-            return False
-        if result.returncode == 0 and result.stdout.strip():
+        if works(stripped):
             os.environ.pop("PW_API_KEY", None)
             _log(
                 "[pw_cluster] Inherited PW_API_KEY is no longer valid; "
