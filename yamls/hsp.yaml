@@ -47,12 +47,14 @@ on:
           detach:
             type: boolean
             label: Keep Serving After The Run Ends
-            default: true
+            default: false
             tooltip: >-
-              On, the run finishes in seconds and the dashboard keeps
-              serving; stop it by deleting the session. Off, the run stays
-              open for as long as the dashboard does and cancelling it
-              stops everything.
+              Off, the run stays open for as long as the dashboard serves
+              and cancelling it stops everything — and the run's platform
+              credential stays valid, which cluster SSH needs. On, the run
+              finishes in seconds but its credential dies with it, so
+              telemetry only works on a workspace where `pw auth` has been
+              run with a personal API key.
           subdomain:
             type: string
             label: Public Subdomain
