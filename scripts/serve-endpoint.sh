@@ -85,22 +85,42 @@ if [[ -z "${CONFIG_FILE:-}" ]]; then
     echo "[endpoint] Platform ${PW_PLATFORM_HOST:-unknown} -> ${CONFIG_FILE}"
 fi
 
-# Prefer auth that outlives this run. A workflow run injects PW_API_KEY,
-# and the dashboard inherits it frozen — but the key does not outlive the
-# run for long, and it *shadows* the workspace's credentials file, so a
-# later `pw auth` cannot heal a process still holding the dead key. When
-# the credentials file works on its own, drop the injected key now.
-if [[ -n "${PW_API_KEY:-}" ]]; then
-    if env -u PW_API_KEY pw auth whoami >/dev/null 2>&1; then
-        echo "[endpoint] Using the workspace's saved credentials (they outlive this run)"
-        unset PW_API_KEY
-    else
-        echo "[endpoint] WARNING: auth is borrowed from this workflow run's key and"
-        echo "[endpoint] will expire with it — telemetry will then pause until the"
-        echo "[endpoint] workflow is relaunched. For a dashboard that keeps itself"
-        echo "[endpoint] authenticated, run \`pw auth\` once in the workspace"
-        echo "[endpoint] terminal with a personal API key."
+# Prefer auth that outlives this run.
+#
+# A workflow run injects its own PW_API_KEY, and the dashboard inherits it
+# frozen. That key is revoked seconds after the run completes — SSH first,
+# so the fleet keeps listing while every probe dies: connected clusters
+# with no cores. It also takes precedence over everything else, so a dead
+# one shadows any credential the workspace has.
+#
+# ACTIVATE writes the *workspace* key into /etc/profile.d, and that one
+# outlives the run (measured: still authenticating cluster SSH minutes
+# after its run completed, where the run key lasts ~15s). Take only
+# PW_API_KEY from that file — it also sets Kubernetes and telemetry
+# variables that are none of our business — and only when it actually
+# works.
+PW_ENV_FILE="${PW_ENV_FILE:-/etc/profile.d/parallelworks-env.sh}"
+if [[ -r "${PW_ENV_FILE}" ]]; then
+    workspace_key="$(
+        set +u
+        # shellcheck disable=SC1090
+        . "${PW_ENV_FILE}" >/dev/null 2>&1
+        printf '%s' "${PW_API_KEY:-}"
+    )"
+    if [[ -n "${workspace_key}" && "${workspace_key}" != "${PW_API_KEY:-}" ]]; then
+        if PW_API_KEY="${workspace_key}" pw auth whoami >/dev/null 2>&1; then
+            export PW_API_KEY="${workspace_key}"
+            echo "[endpoint] Using the workspace key from ${PW_ENV_FILE}"
+            echo "[endpoint] (it outlives this run, so telemetry keeps working)"
+        fi
     fi
+    unset workspace_key
+fi
+
+if [[ -n "${PW_API_KEY:-}" ]] && env -u PW_API_KEY pw auth whoami >/dev/null 2>&1; then
+    # Saved credentials work on their own and outlive everything.
+    echo "[endpoint] Using the workspace's saved credentials"
+    unset PW_API_KEY
 fi
 
 echo "[endpoint] Publishing as '${ENDPOINT_NAME}' from ${PROJECT_ROOT}"

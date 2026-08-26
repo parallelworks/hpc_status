@@ -302,17 +302,17 @@ class TestStartIsTheOnlyAction:
             "stopping is done by deleting the session, or by the script directly"
         )
 
-    def test_the_run_owns_the_dashboard_by_default(self, path):
-        """Supervised is the default because of platform key lifetimes.
+    def test_it_keeps_serving_after_the_run_by_default(self, path):
+        """Detached is viable again now that the workspace key is used.
 
-        The credential a workflow run injects is disabled when the run
-        completes (observed on activate.hpc.mil, 2026-08-26), and cluster
-        SSH needs it — a detached dashboard collects nothing unless the
-        workspace holds durable `pw auth` credentials. An open run is a
-        cheaper cost than a silently coreless fleet.
+        A run's injected credential is revoked seconds after the run
+        completes, which is why this briefly defaulted to supervised. The
+        launcher now adopts the workspace key from
+        /etc/profile.d/parallelworks-env.sh, which outlives the run — so
+        the run can finish without the fleet going coreless.
         """
         detach = load(path)["on"]["execute"]["inputs"]["settings"]["items"]["detach"]
-        assert detach["default"] is False
+        assert detach["default"] is True
 
 
 class TestRestartOnStart:

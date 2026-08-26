@@ -28,7 +28,7 @@ Inputs:
 | `platform` | `auto` | Which config to load: `auto`, `generic`, `hpcmp`, or `noaa` |
 | `name` | `hpc-status` | Endpoint session name, shown in your sessions list |
 | `subdomain` | *(blank)* | Public hostname label; blank derives `status-<username>` |
-| `detach` | `false` | Keep serving after the run ends (see below) |
+| `detach` | `true` | Keep serving after the run ends (see below) |
 | `port` | `0` | Local port; `0` lets the CLI pick a free one |
 | `theme` | `light` | Default color theme |
 | `enable_cluster_pages` | `true` | Queue and quota pages |
@@ -48,15 +48,18 @@ The workflow publishes the dashboard with `pw endpoints run`, which:
 
 ### Who owns the dashboard
 
-By default the run owns it: the step stays open for as long as the
-dashboard serves, cancelling the run stops everything — and, decisively,
-**the run's platform credential stays valid**. The key a workflow run
-injects is disabled when the run completes, and cluster SSH (cores,
-queues, storage) needs it; a detached dashboard on a workspace without
-durable credentials shows connected clusters with no telemetry.
+By default the run finishes in seconds and the dashboard keeps serving —
+that is the `detach` input, and it is on.
 
-Turn `detach` on only where `pw auth` has been run with a personal API
-key — the launcher detects that and logs which credential it is using.
+That works because of **which credential the dashboard runs on**. A
+workflow run injects its own `PW_API_KEY`, and it is revoked seconds
+after the run completes — SSH first, so the fleet keeps listing while
+every probe fails: connected clusters with no cores. ACTIVATE also
+writes the *workspace* key into
+`/etc/profile.d/parallelworks-env.sh`, and that one outlives the run, so
+the launcher adopts it (after checking it works) and the running server
+falls back to it if its own key dies mid-life.
+
 A detached dashboard is stopped by deleting its session, from the
 ACTIVATE sessions UI or the CLI:
 
@@ -75,13 +78,12 @@ Turn `detach` off to have the run own the dashboard instead: the step
 stays in the foreground for as long as it serves, logs stream into the
 run, and cancelling the run stops everything.
 
-| | `detach: false` (default) | `detach: true` |
+| | `detach: true` (default) | `detach: false` |
 |---|---|---|
-| Run status | running until you cancel | completed in seconds |
-| Run credential | stays valid | dies with the run |
-| Needs `pw auth` on the workspace | no | yes, or telemetry stops |
-| Logs | stream into the run | `~/.hpc_status/endpoint.log` |
-| To stop it | cancel the run | delete the session |
+| Run status | completed in seconds | running until you cancel |
+| Credential | workspace key, outlives the run | either; the run's own stays valid too |
+| Logs | `~/.hpc_status/endpoint.log` | stream into the run |
+| To stop it | delete the session | cancel the run |
 
 **Starting again restarts.** Two launches of the same endpoint name do not
 coexist — the platform hands the name to the newcomer and the incumbent
