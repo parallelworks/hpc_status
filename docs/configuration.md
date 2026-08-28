@@ -252,7 +252,7 @@ belong to the deployment that chose them:
 | `platform` | Facilities called | Name hints applied |
 |---|---|---|
 | `hpcmp` | DSRCs | chessie and janus at ARL, crux at MHPCC |
-| `noaa` | Sites | hera and niagara at NESCC, gaea at ORNL, ppan at GFDL |
+| `noaa` | Sites | hera, ursa and niagara at NESCC; gaea at ORNL; ppan at GFDL; jet at Boulder; orion and hercules at MSU-HPC |
 | anything else | Sites | none |
 
 A generic deployment with a cluster called `janus` is not the Army

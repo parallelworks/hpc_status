@@ -576,7 +576,7 @@ class TestPlatformScoping:
 
     def test_noaa_places_its_own_and_not_hpcmps(self):
         placed = self.sites_for("noaa", "hera", "gaea-c5", "janus")
-        assert placed["hera"] == ("nessc", "name-hint")
+        assert placed["hera"] == ("nescc", "name-hint")
         # Slugs drop punctuation, so a renamed gaea-c5 still matches.
         assert placed["gaeac5"] == ("ornl", "name-hint")
         assert placed["janus"] == ("unassigned", "none")
@@ -669,3 +669,83 @@ class TestPlatformScoping:
         """Callers outside a deployment get the permissive behaviour."""
         assert resolve_site_id("existing", "gaea-c5") == "ornl"
         assert resolve_site_id("existing", "janus") == "arl"
+
+
+class TestNoaaFacilities:
+    """Where NOAA's own documentation puts each system.
+
+    Ursa was missing entirely, so it landed in Unassigned on the NOAA
+    deployment — the report that prompted this. NOAA documents Ursa, Hera
+    and Niagara at NESCC in Fairmont WV, Jet at the David Skaggs Research
+    Center in Boulder, and Orion and Hercules at MSU-HPC in Starkville.
+    """
+
+    @pytest.mark.parametrize(
+        "system,site",
+        [
+            ("ursa", "nescc"),
+            ("hera", "nescc"),
+            ("niagara", "nescc"),
+            ("gaea", "ornl"),
+            ("ppan", "gfdl"),
+            ("jet", "boulder"),
+            ("orion", "msu"),
+            ("hercules", "msu"),
+        ],
+    )
+    def test_noaa_systems_land_at_their_facility(self, system, site):
+        assert resolve_site_id("existing", system, "", None, None, "noaa") == site
+
+    def test_a_renamed_system_still_matches(self):
+        """Slug substring, so ursa-c5 is still Ursa."""
+        assert resolve_site_id("existing", "ursa-c5", "", None, None, "noaa") == "nescc"
+
+    def test_the_new_facilities_are_placeable_on_a_map(self):
+        for site in ("nescc", "boulder", "msu"):
+            described = describe_site(site)
+            assert described["lat"] and described["lon"], (
+                f"{site} needs coordinates or it lands in the unplaced tray"
+            )
+            assert described["organization"]
+
+    def test_hpcmp_does_not_get_noaa_hints(self):
+        assert resolve_site_id("existing", "ursa", "", None, None, "hpcmp") == "unassigned"
+
+
+class TestNescSpelling:
+    """NESCC was carried as "nessc" — a typo in an id that reached configs.
+
+    A hostname label spells it the real way, so the misspelled hint never
+    matched one: ursa-login1.nescc.noaa.gov resolved to Unassigned.
+    """
+
+    def test_the_hostname_label_now_matches(self):
+        assert site_from_hostname("ursa-login1.nescc.noaa.gov") == "nescc"
+
+    def test_the_old_spelling_still_resolves(self):
+        """Existing configs and stored payloads must not break."""
+        assert resolve_site_id("nessc", "box", "", None, None, "noaa") == "nescc"
+        assert (
+            resolve_site_id("existing", "box", "", {"box": "nessc"}, None, "noaa")
+            == "nescc"
+        )
+
+    def test_describing_the_old_spelling_finds_the_real_site(self):
+        described = describe_site("nessc")
+        assert described["id"] == "nescc"
+        assert described["name"] == "NESCC"
+        assert described["location"] == "Fairmont, WV"
+
+    def test_it_does_not_create_a_second_empty_facility(self):
+        """Two spellings must not become two sites in the site list."""
+        payload = {
+            "meta": {},
+            "systems": [
+                {"system": "Hera", "status": "UP", "dsrc": "nessc"},
+                {"system": "Ursa", "status": "UP", "dsrc": "nescc"},
+            ],
+        }
+        graph = build_topology(payload, [], platform="noaa")
+        site_ids = [s["id"] for s in graph["sites"]]
+        assert site_ids.count("nescc") == 1
+        assert "nessc" not in site_ids

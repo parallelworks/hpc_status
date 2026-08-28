@@ -75,12 +75,26 @@ HPCMP_SITES: Dict[str, Dict[str, Any]] = {
 
 # --- NOAA RDHPCS facilities
 NOAA_SITES: Dict[str, Dict[str, Any]] = {
-    "nessc": {
+    "nescc": {
         "name": "NESCC",
         "organization": "NOAA Environmental Security Computing Center",
         "location": "Fairmont, WV",
         "lat": 39.48,
         "lon": -80.14,
+    },
+    "boulder": {
+        "name": "NOAA Boulder",
+        "organization": "David Skaggs Research Center",
+        "location": "Boulder, CO",
+        "lat": 40.00,
+        "lon": -105.26,
+    },
+    "msu": {
+        "name": "MSU-HPC",
+        "organization": "Mississippi State University High Performance Computing",
+        "location": "Starkville, MS",
+        "lat": 33.45,
+        "lon": -88.79,
     },
     "ornl": {
         "name": "ORNL",
@@ -205,11 +219,20 @@ HPCMP_SYSTEM_HINTS: Tuple[Tuple[str, str], ...] = (
 )
 
 NOAA_SYSTEM_HINTS: Tuple[Tuple[str, str], ...] = (
-    ("hera", "nessc"),
-    ("niagara", "nessc"),
+    # NESCC, Fairmont WV — Hera, Ursa and Niagara share its filesystems.
+    ("hera", "nescc"),
+    ("ursa", "nescc"),
+    ("niagara", "nescc"),
+    # Oak Ridge, via the NCRC partnership.
     ("gaea", "ornl"),
+    # GFDL's post-processing and analysis nodes.
     ("ppan", "gfdl"),
     ("gfdl", "gfdl"),
+    # David Skaggs Research Center, Boulder CO.
+    ("jet", "boulder"),
+    # MSU-HPC, Starkville MS.
+    ("orion", "msu"),
+    ("hercules", "msu"),
 )
 
 PLATFORM_SYSTEM_HINTS: Dict[str, Tuple[Tuple[str, str], ...]] = {
@@ -237,7 +260,10 @@ NOAA_DOMAIN_HINTS: Dict[str, str] = {
     "gfdl": "gfdl",
     "ncrc": "ornl",
     "ornl": "ornl",
-    "nessc": "nessc",
+    "nescc": "nescc",
+    # No "msu" or "boulder" here on purpose: domain hints apply to every
+    # deployment, and msu.edu is Michigan State as readily as Mississippi
+    # State. The NOAA name hints place those systems instead.
 }
 
 # EC2 puts the region straight into the instance's own name:
@@ -315,6 +341,18 @@ def cloud_provider_from_label(raw_site: Any) -> Optional[str]:
 GENERIC_SITE_IDS = frozenset({"", "unknown", "existing", "pw", "none", "null"})
 
 UNASSIGNED_SITE_ID = "unassigned"
+
+# Spellings that mean an existing site. NESCC (NOAA Environmental Security
+# Computing Center) was carried here as "nessc" for a while, so a config
+# or a stored payload may still say that; it resolves to the real one
+# rather than inventing a second, empty facility.
+SITE_ALIASES: Dict[str, str] = {"nessc": "nescc"}
+
+
+def canonical_site(site_id: Any) -> str:
+    """The catalog id a spelling refers to."""
+    slug = slugify(site_id)
+    return SITE_ALIASES.get(slug, slug)
 
 # What a deployment calls its facilities. HPCMP's are DSRCs; everyone
 # else's are sites.
@@ -447,13 +485,13 @@ def resolve_site(
     if system_sites:
         explicit = system_sites.get(system_slug)
         if explicit:
-            return slugify(explicit) or UNASSIGNED_SITE_ID, "config"
+            return canonical_site(explicit) or UNASSIGNED_SITE_ID, "config"
 
-    site_slug = slugify(raw_site)
+    site_slug = canonical_site(raw_site)
     provider = cloud_provider_from_label(raw_site)
     if site_slug and site_slug not in GENERIC_SITE_IDS and not provider:
         # "ERDC DSRC" and "erdc" should collapse to the same facility.
-        trimmed = site_slug.replace("dsrc", "") or site_slug
+        trimmed = canonical_site(site_slug.replace("dsrc", "")) or site_slug
         if trimmed in SITE_CATALOG:
             return trimmed, "collector"
         return site_slug, "collector"
@@ -487,6 +525,7 @@ def resolve_site_id(*args, **kwargs) -> str:
 
 def describe_site(site_id: str, overrides: Optional[Dict[str, Dict]] = None) -> Dict[str, Any]:
     """Return display metadata for a site id, catalog first, overrides last."""
+    site_id = canonical_site(site_id) or site_id
     base = dict(SITE_CATALOG.get(site_id, {}))
     if overrides and site_id in overrides:
         base.update({k: v for k, v in (overrides[site_id] or {}).items() if v is not None})
