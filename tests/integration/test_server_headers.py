@@ -122,3 +122,35 @@ class TestEndpointCatalog:
         """Documented as CORS-open; a dashboard embedded elsewhere relies on it."""
         _, headers, _ = fetch(f"{server}/api/endpoints")
         assert headers["Access-Control-Allow-Origin"] == "*"
+
+
+class TestFaviconRoute:
+    """/favicon.ico is what everything outside a rendered page requests."""
+
+    def test_it_is_served_rather_than_404(self, server, tmp_path):
+        img_dir = DashboardRequestHandler.web_dir / "assets" / "img"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        (img_dir / "favicon-generic.png").write_bytes(b"\x89PNG\r\n\x1a\nstub")
+
+        status, headers, body = fetch(f"{server}/favicon.ico")
+        assert status == 200
+        assert headers["Content-Type"] == "image/png"
+        assert body.startswith(b"\x89PNG")
+
+    def test_the_deployment_platform_wins(self, server):
+        img_dir = DashboardRequestHandler.web_dir / "assets" / "img"
+        img_dir.mkdir(parents=True, exist_ok=True)
+        (img_dir / "favicon-generic.png").write_bytes(b"\x89PNG\r\n\x1a\ngeneric")
+        (img_dir / "favicon-hpcmp.png").write_bytes(b"\x89PNG\r\n\x1a\nhpcmp")
+        DashboardRequestHandler.config = {
+            **(DashboardRequestHandler.config or {}),
+            "deployment": {"name": "Test", "platform": "hpcmp"},
+        }
+        try:
+            _, _, body = fetch(f"{server}/favicon.ico")
+            assert body.endswith(b"hpcmp")
+        finally:
+            DashboardRequestHandler.config = {
+                **(DashboardRequestHandler.config or {}),
+                "deployment": {"name": "Test", "platform": "generic"},
+            }

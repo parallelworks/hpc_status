@@ -220,6 +220,42 @@ class TestStaleCacheResilience:
         )
 
 
+class TestFavicon:
+    """Something outside the page has to be able to find the icon.
+
+    initBrand() sets one from JavaScript, which covers a rendered tab and
+    nothing else: /favicon.ico — what a session tile, a link preview or a
+    browser before any script runs asks for — returned 404. The brand
+    mark it pointed at is also 1109px square and up to 1.1 MB, to be drawn
+    at sixteen.
+    """
+
+    def test_every_page_links_an_icon_without_javascript(self):
+        for page in sorted(WEB.glob("*.html")):
+            source = page.read_text()
+            assert 'rel="icon"' in source, f"{page.name} has no icon link"
+
+    def test_the_linked_icons_exist(self):
+        for page in sorted(WEB.glob("*.html")):
+            for href in re.findall(r'rel="(?:apple-touch-)?icon"[^>]*href="([^"]+)"', page.read_text()):
+                assert (WEB / href).is_file(), f"{page.name} links a missing {href}"
+
+    @pytest.mark.parametrize("platform", ["hpcmp", "generic"])
+    def test_a_small_icon_ships_for_each_platform(self, platform):
+        icon = WEB / "assets" / "img" / f"favicon-{platform}.png"
+        assert icon.is_file()
+        assert icon.stat().st_size < 100_000, (
+            "a tab icon should not weigh more than the page"
+        )
+
+    def test_the_script_upgrades_to_the_platform_icon(self):
+        source = (JS_DIR / "page-utils.js").read_text()
+        assert "favicon-${platform}.png" in source
+        assert "brand-${platform}.png" not in source, (
+            "the 1109px brand mark is not a favicon"
+        )
+
+
 class TestBundledData:
     def test_basemap_is_present_and_shaped_correctly(self):
         """The topology map needs this file; losing it fails silently."""
