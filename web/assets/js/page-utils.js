@@ -103,7 +103,10 @@ export const initBrand = () => {
   document.documentElement.dataset.platform = platform;
 
   const base = document.documentElement.dataset.basePath || "/";
-  const iconHref = `${base}assets/img/brand-${platform}.png`.replace(/\/+/g, "/");
+  // The 1109px brand mark is a poor tab icon: the generic one is 1.1 MB
+  // to render at 16 square. favicon-<platform>.png is the same artwork at
+  // 180px.
+  const iconHref = `${base}assets/img/favicon-${platform}.png`.replace(/\/+/g, "/");
 
   let icon = document.querySelector('link[rel="icon"]');
   if (!icon) {

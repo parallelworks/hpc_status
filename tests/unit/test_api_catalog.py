@@ -42,8 +42,9 @@ class TestCatalogMatchesTheRouter:
 
     def test_every_routed_endpoint_is_documented(self):
         documented = {normalized(entry["path"]) for entry in ENDPOINTS}
-        # The root redirect is plumbing, not an API surface.
-        undocumented = ROUTED - documented - {"/"}
+        # Plumbing, not an API surface: the root redirect, and the icon
+        # every browser asks for by convention.
+        undocumented = ROUTED - documented - {"/", "/favicon.ico"}
         assert not undocumented, (
             f"these endpoints route but are not in the catalog: {sorted(undocumented)}"
         )

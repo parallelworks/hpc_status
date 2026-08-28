@@ -123,6 +123,8 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
             return self._handle_history(parsed)
         if parsed.path == "/api/endpoints":
             return self._handle_endpoints()
+        if parsed.path == "/favicon.ico":
+            return self._handle_favicon()
 
         # Fall back to static file serving
         return super().do_GET()
@@ -554,6 +556,31 @@ class DashboardRequestHandler(SimpleHTTPRequestHandler):
                 "generated_at": datetime.utcnow().isoformat() + "Z",
             }
         )
+
+    def _handle_favicon(self):
+        """Serve the deployment's mark at the conventional path.
+
+        The pages link their icon explicitly, but everything outside a
+        rendered page — a session tile, a link preview, a bookmark, a
+        browser before any script runs — asks for /favicon.ico, and that
+        used to 404. Answers with the platform's PNG under its real
+        content type, which every current browser accepts at this path.
+        """
+        platform = ((self.config or {}).get("deployment") or {}).get("platform")
+        candidates = [
+            self.web_dir / "assets" / "img" / f"favicon-{platform}.png",
+            self.web_dir / "assets" / "img" / "favicon-generic.png",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                body = candidate.read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
+        self.send_error(HTTPStatus.NOT_FOUND, "No favicon bundled.")
 
     def _handle_endpoints(self):
         """Describe the API, including this endpoint.
