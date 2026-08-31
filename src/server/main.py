@@ -369,6 +369,7 @@ def run_server(args) -> None:
             pause_duration=config.rate_limiting.pause_duration,
             pw_context=config.get_collector_config("pw_cluster").extra.get("pw_context"),
             alert_dispatcher=alert_dispatcher,
+            max_concurrent_ssh=config.rate_limiting.max_concurrent_ssh,
         )
         cluster_worker.start()
     else:
