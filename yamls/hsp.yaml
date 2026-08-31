@@ -21,16 +21,6 @@ permissions:
 on:
   execute:
     inputs:
-      host:
-        type: compute-resources
-        label: Where To Run
-        include-workspace: true
-        optional: true
-        tooltip: >-
-          Leave blank to run on your user workspace, which is the default
-          and needs no setup. Pick a cluster to keep the dashboard serving
-          when the workspace recycles — that host needs the pw CLI on its
-          PATH, and the run reports plainly if it does not have it.
       platform:
         type: dropdown
         label: Platform
@@ -71,6 +61,18 @@ on:
               Hostname label for the dashboard, so the URL stays the same
               between runs. Blank derives status-<username>. Reserve it
               with `pw subdomains reserve <name>` to keep it yours.
+          host:
+            type: compute-resources
+            label: Where To Run
+            include-workspace: true
+            optional: true
+            tooltip: >-
+              Advanced. Blank runs the dashboard on your user workspace,
+              which needs no setup and is what you want unless you have a
+              reason not to. Pick a cluster to keep it serving when the
+              workspace recycles — that host needs the pw CLI on its PATH
+              and authenticated, and the run says so plainly if it does
+              not.
           repo_url:
             type: string
             label: Source Repository
@@ -124,7 +126,7 @@ jobs:
     # on localhost"), so the picker needs no branching: blank is the user
     # workspace, a chosen host is that host.
     ssh:
-      remoteHost: ${{ inputs.host.ip }}
+      remoteHost: ${{ inputs.settings.host.ip }}
     steps:
       - name: Serve the HPC Status Monitor as an endpoint
         env:

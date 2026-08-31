@@ -377,12 +377,20 @@ class TestWhereItRuns:
     """
 
     def test_a_host_can_be_chosen(self, path):
-        host = load(path)["on"]["execute"]["inputs"]["host"]
+        inputs = load(path)["on"]["execute"]["inputs"]
+        assert "host" not in inputs, (
+            "this is an advanced override, not a question to ask everyone "
+            "launching the dashboard"
+        )
+        settings = inputs["settings"]
+        assert settings["collapsed"] is True
+        host = settings["items"]["host"]
         assert host["type"] == "compute-resources"
         assert host["optional"] is True, "blank must keep today's behaviour"
         assert host["include-workspace"] is True, (
             "the workspace is a legitimate choice, not only the fallback"
         )
+        assert host["tooltip"].startswith("Advanced.")
 
     def test_the_host_targets_the_single_job(self, path):
         """Blank runs it here; a chosen host runs it there.
@@ -393,7 +401,7 @@ class TestWhereItRuns:
         anyway, and they collided cloning the same checkout.
         """
         (job,) = jobs_of(load(path)).values()
-        assert job["ssh"] == {"remoteHost": "${{ inputs.host.ip }}"}
+        assert job["ssh"] == {"remoteHost": "${{ inputs.settings.host.ip }}"}
         assert "if" not in job
 
     def test_no_job_is_gated_on_the_picker(self, path):
