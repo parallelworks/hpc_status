@@ -25,6 +25,7 @@ Inputs:
 
 | Input | Default | Meaning |
 |---|---|---|
+| `host` | *(blank)* | Where to run it: blank is the user workspace, or pick a cluster |
 | `platform` | `auto` | Which config to load: `auto`, `generic`, `hpcmp`, or `noaa` |
 | `name` | `hpc-status` | Endpoint session name, shown in your sessions list |
 | `subdomain` | *(blank)* | Public hostname label; blank derives `status-<username>` |
@@ -97,6 +98,30 @@ the port the CLI assigned. A live endpoint only means the tunnel
 registered; the server behind it still has to install its dependencies and
 bind, and a run that returns before then hands you a URL that refuses
 connections.
+
+### Choosing where it runs
+
+**Where To Run** is blank by default, which runs the dashboard on your
+user workspace exactly as before. Pick a compute resource and the step
+runs there over SSH instead — the platform resolves an empty
+`ssh.remoteHost` to "run here", so one job covers both.
+
+The reason to move it is persistence: a workspace recycle kills a
+detached dashboard with it, and a long-lived cluster does not recycle
+under you.
+
+The host needs three things, and the run says which one is missing rather
+than failing further in:
+
+- the `pw` CLI on its PATH, authenticated — it publishes the endpoint and
+  collects the telemetry
+- `git`, to fetch the dashboard
+- Python, for `scripts/run.sh`
+
+Switching hosts is safe: a start deletes the endpoint session by name
+first, and that reaches a dashboard on any host, because `pw endpoints
+run` shuts down when its session goes. The pidfile is only ever local to
+the host it was written on.
 
 ### Choosing the configuration
 
