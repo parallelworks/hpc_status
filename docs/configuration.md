@@ -297,6 +297,16 @@ listings describe machines this dashboard should not advertise.
 
 ### Rate Limits Section
 
+**Sweep concurrency.** `rate_limiting.max_concurrent_ssh` bounds how many
+clusters are swept at once. A sweep is almost entirely SSH round trips —
+measured from a cloud host, one `pw ssh` is ~3.5s and each cluster costs
+several — so a sequential sweep of nineteen clusters took six minutes and
+the fleet page spent most of that warming up. At the default of 3 the same
+sweep is around two.
+
+Raise it for a large fleet you own; leave it low for shared systems, where
+the polite bound matters more than the wall clock.
+
 ```yaml
 rate_limits:
   refresh_cooldown: 30        # Minimum seconds between manual refreshes

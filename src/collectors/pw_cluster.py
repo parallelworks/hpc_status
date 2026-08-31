@@ -9,7 +9,9 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -38,10 +40,19 @@ class PWClusterCollector(BaseCollector):
         retry_delay: int = 5,
         ssh_timeout: int = 60,
         pw_context: Optional[str] = None,
+        max_concurrent: int = 3,
     ):
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.ssh_timeout = ssh_timeout
+        # How many clusters to sweep at once. Every cluster costs several
+        # SSH round trips and each one is seconds, so a sequential sweep of
+        # a large fleet runs into minutes — from a cloud host, ~20s per
+        # cluster and six minutes for nineteen. rate_limiting.max_concurrent_ssh
+        # has advertised this bound in the config all along; now it does
+        # something.
+        self.max_concurrent = max(1, int(max_concurrent or 1))
+        self._counter_lock = threading.Lock()
         # Pin a specific PW context (e.g. "user:foo@noaa.parallel.works") for
         # every ``pw`` call. Useful when the operator wants the dashboard to
         # always talk to a specific platform regardless of the user's active
@@ -320,22 +331,50 @@ class PWClusterCollector(BaseCollector):
 
             results = []
             total = len(clusters)
-            for idx, cluster in enumerate(clusters):
-                cluster_name = cluster["uri"].split("/")[-1]
-                if progress_cb is not None:
-                    try:
-                        progress_cb("start", idx, total, cluster_name, None)
-                    except Exception as cb_exc:
-                        _log(f"[pw_cluster] progress_cb(start) raised: {cb_exc}")
-                cluster_data = self._process_cluster(cluster)
-                if cluster_data:
-                    results.append(cluster_data)
-                    self._known_clusters.add(cluster["uri"])
-                if progress_cb is not None:
-                    try:
-                        progress_cb("complete", idx + 1, total, cluster_name, cluster_data)
-                    except Exception as cb_exc:
-                        _log(f"[pw_cluster] progress_cb(complete) raised: {cb_exc}")
+            done = 0
+            progress_lock = threading.Lock()
+
+            def report(phase, index, name, data):
+                if progress_cb is None:
+                    return
+                try:
+                    progress_cb(phase, index, total, name, data)
+                except Exception as cb_exc:
+                    _log(f"[pw_cluster] progress_cb({phase}) raised: {cb_exc}")
+
+            def sweep(cluster):
+                """One cluster's round trips, off the main thread."""
+                nonlocal done
+                name = cluster["uri"].split("/")[-1]
+                report("start", done, name, None)
+                try:
+                    data = self._process_cluster(cluster)
+                except Exception as exc:  # one cluster must not end a sweep
+                    _log(f"[pw_cluster] {name} failed: {exc}")
+                    data = None
+                with progress_lock:
+                    done += 1
+                    if data:
+                        results.append(data)
+                        self._known_clusters.add(cluster["uri"])
+                    finished = done
+                # Outside the lock: the callback writes the cache, and
+                # holding a lock across that would serialise the sweep it
+                # is meant to parallelise.
+                report("complete", finished, name, data)
+
+            if self.max_concurrent > 1 and total > 1:
+                # Submission order still puts newly connected clusters
+                # first, so they are the first to land even though the
+                # rest overlap.
+                with ThreadPoolExecutor(
+                    max_workers=min(self.max_concurrent, total),
+                    thread_name_prefix="pw-sweep",
+                ) as pool:
+                    list(pool.map(sweep, clusters))
+            else:
+                for cluster in clusters:
+                    sweep(cluster)
 
             return {
                 "meta": {
@@ -522,7 +561,8 @@ class PWClusterCollector(BaseCollector):
                     f"(rc={result.returncode}): {stderr[:120]}"
                 )
                 if self._is_auth_error(stderr):
-                    self._auth_error_count += 1
+                    with self._counter_lock:
+                        self._auth_error_count += 1
                     # A credentials file may exist that the dead inherited
                     # key is shadowing; recovering re-runs the probe once.
                     if self._recover_from_stale_env_key():

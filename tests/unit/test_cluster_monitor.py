@@ -477,3 +477,166 @@ class TestLauncherPrefersDurableAuth:
         block = self.SCRIPT[self.SCRIPT.index("PW_ENV_FILE=") :]
         block = block[: block.index("Publishing as")]
         assert "$(" in block and "printf '%s' \"${PW_API_KEY:-}\"" in block
+
+
+class TestParallelSweep:
+    """A sweep is dominated by SSH round trips, so run several at once.
+
+    Measured on a cloud host: one `pw ssh` takes ~3.5s, each cluster costs
+    several, and nineteen clusters took six minutes end to end. The bound
+    is rate_limiting.max_concurrent_ssh, which the config had advertised
+    since before anything read it.
+    """
+
+    @staticmethod
+    def clusters(count):
+        return [
+            {"uri": f"pw://u/c{i}", "status": "active", "type": "existing"}
+            for i in range(count)
+        ]
+
+    def test_clusters_are_swept_concurrently(self):
+        import threading
+        import time
+
+        collector = PWClusterCollector(max_concurrent=4)
+        active = []
+        peak = 0
+        lock = threading.Lock()
+
+        def slow(cluster):
+            nonlocal peak
+            with lock:
+                active.append(cluster["uri"])
+                peak = max(peak, len(active))
+            time.sleep(0.05)
+            with lock:
+                active.remove(cluster["uri"])
+            return {"cluster_metadata": {"name": cluster["uri"].rsplit("/", 1)[-1]}}
+
+        with patch.object(collector, "get_active_clusters", return_value=self.clusters(8)), \
+             patch.object(collector, "_process_cluster", side_effect=slow):
+            result = collector.collect()
+
+        assert len(result["clusters"]) == 8
+        assert peak > 1, "a sequential sweep is what made this slow"
+        assert peak <= 4, "and the bound must be respected"
+
+    def test_the_bound_is_honoured_exactly(self):
+        import threading
+        import time
+
+        collector = PWClusterCollector(max_concurrent=2)
+        peak = 0
+        active = 0
+        lock = threading.Lock()
+
+        def slow(cluster):
+            nonlocal peak, active
+            with lock:
+                active += 1
+                peak = max(peak, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            return {"cluster_metadata": {"name": "x"}}
+
+        with patch.object(collector, "get_active_clusters", return_value=self.clusters(6)), \
+             patch.object(collector, "_process_cluster", side_effect=slow):
+            collector.collect()
+        assert peak <= 2
+
+    def test_one_worker_still_works(self):
+        """max_concurrent_ssh: 1 must behave exactly as the old loop did."""
+        collector = PWClusterCollector(max_concurrent=1)
+        seen = []
+        with patch.object(collector, "get_active_clusters", return_value=self.clusters(3)), \
+             patch.object(
+                 collector,
+                 "_process_cluster",
+                 side_effect=lambda c: seen.append(c["uri"]) or {"cluster_metadata": {"name": c["uri"][-2:]}},
+             ):
+            collector.collect()
+        assert seen == ["pw://u/c0", "pw://u/c1", "pw://u/c2"]
+
+    def test_one_failing_cluster_does_not_end_the_sweep(self):
+        collector = PWClusterCollector(max_concurrent=3)
+
+        def flaky(cluster):
+            if cluster["uri"].endswith("c1"):
+                raise RuntimeError("ssh exploded")
+            return {"cluster_metadata": {"name": cluster["uri"].rsplit("/", 1)[-1]}}
+
+        with patch.object(collector, "get_active_clusters", return_value=self.clusters(4)), \
+             patch.object(collector, "_process_cluster", side_effect=flaky):
+            result = collector.collect()
+        assert len(result["clusters"]) == 3, "the other three still count"
+
+    def test_progress_is_reported_once_per_cluster(self):
+        collector = PWClusterCollector(max_concurrent=3)
+        completes = []
+        with patch.object(collector, "get_active_clusters", return_value=self.clusters(5)), \
+             patch.object(
+                 collector,
+                 "_process_cluster",
+                 side_effect=lambda c: {"cluster_metadata": {"name": c["uri"][-2:]}},
+             ):
+            collector.collect(
+                progress_cb=lambda phase, i, total, name, data: (
+                    completes.append(i) if phase == "complete" else None
+                )
+            )
+        assert sorted(completes) == [1, 2, 3, 4, 5], (
+            "the counter must not double-count or skip under concurrency"
+        )
+
+    def test_newly_connected_clusters_are_submitted_first(self):
+        collector = PWClusterCollector(max_concurrent=1)
+        collector._known_clusters = {"pw://u/c0", "pw://u/c1"}
+        order = []
+        with patch.object(collector, "get_active_clusters", return_value=self.clusters(3)), \
+             patch.object(
+                 collector,
+                 "_process_cluster",
+                 side_effect=lambda c: order.append(c["uri"]) or {"cluster_metadata": {"name": "x"}},
+             ):
+            collector.collect()
+        assert order[0] == "pw://u/c2"
+
+
+class TestConcurrentCacheMerge:
+    def test_two_clusters_finishing_at_once_do_not_lose_each_other(self):
+        """Read-modify-write on one file, now from several threads."""
+        import threading
+
+        store = MagicMock()
+        state = {"cache": []}
+        store.load_cache.side_effect = lambda name: list(state["cache"])
+
+        def save(name, value):
+            # Widen the window a real filesystem would give this race.
+            import time
+
+            time.sleep(0.01)
+            state["cache"] = list(value)
+
+        store.save_cache.side_effect = save
+        worker = make_worker(store)
+        worker._progress_update(first_sweep_complete=True)
+
+        threads = [
+            threading.Thread(
+                target=worker._on_cluster_progress,
+                args=("complete", i, 4, f"c{i}", cluster(f"c{i}")),
+            )
+            for i in range(4)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        names = {(c.get("cluster_metadata") or {}).get("name") for c in state["cache"]}
+        assert names == {"c0", "c1", "c2", "c3"}, (
+            f"a cluster was lost to the race: {sorted(names)}"
+        )

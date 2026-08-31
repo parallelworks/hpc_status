@@ -304,8 +304,10 @@ class ClusterMonitorWorker(threading.Thread):
         pause_duration: int = 300,
         pw_context: Optional[str] = None,
         alert_dispatcher=None,
+        max_concurrent_ssh: int = 3,
     ):
         super().__init__(name="cluster-monitor-worker")
+        self.max_concurrent_ssh = max_concurrent_ssh
         self.store = store
         self.alert_dispatcher = alert_dispatcher
         self.interval = max(60, interval_seconds)
@@ -328,6 +330,11 @@ class ClusterMonitorWorker(threading.Thread):
         # Progress tracking — surfaced to the UI so the queue/quota/storage
         # pages can show "collecting 3/12 clusters" instead of HTTP 503.
         self._progress_lock = threading.Lock()
+        # The per-cluster cache merge is read-modify-write on one file,
+        # and the sweep now runs clusters concurrently: without this, two
+        # finishing at once would each write their own view and one would
+        # lose the other's cluster.
+        self._cache_lock = threading.Lock()
         self._progress: Dict[str, Any] = {
             "phase": "idle",  # idle | warming_up | refreshing | ready | error
             "total": 0,
@@ -351,7 +358,14 @@ class ClusterMonitorWorker(threading.Thread):
              f"failure_threshold={self._failure_threshold}, "
              f"pause_duration={self._pause_duration}s)")
 
-        self._collector = PWClusterCollector(pw_context=self.pw_context)
+        self._collector = PWClusterCollector(
+            pw_context=self.pw_context,
+            max_concurrent=self.max_concurrent_ssh,
+        )
+        _log(
+            f"[cluster-monitor] Sweeping up to {self.max_concurrent_ssh} "
+            f"cluster(s) at a time"
+        )
 
         # If we already have a usable cluster_usage cache on disk, treat the
         # first sweep as already done so the UI doesn't slip back into
@@ -546,16 +560,17 @@ class ClusterMonitorWorker(threading.Thread):
         # erases a good cache — the failure the old end-only save guarded
         # against.
         try:
-            merged = {}
-            cached = self.store.load_cache("cluster_usage") or []
-            for entry in cached if isinstance(cached, list) else []:
-                key = (entry.get("cluster_metadata") or {}).get("name")
+            with self._cache_lock:
+                merged = {}
+                cached = self.store.load_cache("cluster_usage") or []
+                for entry in cached if isinstance(cached, list) else []:
+                    key = (entry.get("cluster_metadata") or {}).get("name")
+                    if key:
+                        merged[key] = entry
+                key = (cluster_data.get("cluster_metadata") or {}).get("name")
                 if key:
-                    merged[key] = entry
-            key = (cluster_data.get("cluster_metadata") or {}).get("name")
-            if key:
-                merged[key] = cluster_data
-                self.store.save_cache("cluster_usage", list(merged.values()))
+                    merged[key] = cluster_data
+                    self.store.save_cache("cluster_usage", list(merged.values()))
         except Exception as exc:
             _log(f"[cluster-monitor] Incremental cache save failed: {exc}")
 
