@@ -256,6 +256,47 @@ class TestFavicon:
         )
 
 
+class TestSweepProgress:
+    """"collecting 16/19" looked stuck, and was not.
+
+    Polled from the node, a sweep climbs 0 -> 2 -> 6 -> 11 -> 14 -> 19 and
+    finishes in about a hundred seconds. The page polled every 45s, so a
+    user saw two still frames of it and read that as a hang. A bar makes
+    the movement visible, and the poll speeds up while one is running.
+    """
+
+    SOURCE = (JS_DIR / "app.js").read_text()
+
+    def test_the_poll_is_quicker_while_sweeping(self):
+        assert "SWEEPING_POLL_MS" in self.SOURCE and "IDLE_POLL_MS" in self.SOURCE
+        assert "scheduleNextPoll" in self.SOURCE
+
+    def test_returning_to_the_tab_refreshes_at_once(self):
+        assert "visibilitychange" in self.SOURCE
+
+    def test_the_bar_is_only_shown_while_collecting(self):
+        assert "renderSweep" in self.SOURCE
+        block = self.SOURCE[self.SOURCE.index("function renderSweep") :]
+        block = block[: block.index("\n}")]
+        assert "if (!collecting)" in block and "hidden = true" in block
+
+    def test_it_names_the_cluster_in_flight(self):
+        """A slow cluster should be identifiable, not look like a hang."""
+        assert "progress.current_cluster" in self.SOURCE
+
+    def test_the_markup_exists_for_it(self):
+        page = (WEB / "index.html").read_text()
+        for element in ("sweep-progress", "sweep-fill", "sweep-note"):
+            assert f'id="{element}"' in page
+
+    def test_the_shimmer_respects_reduced_motion(self):
+        """The bar animates; the global reduce block must still cover it."""
+        css = (WEB / "assets" / "css" / "styles.css").read_text()
+        assert "sweep-shimmer" in css
+        reduce = css[css.index("@media (prefers-reduced-motion: reduce)") :]
+        assert "animation-duration: 0.01ms !important" in reduce
+
+
 class TestQuotaCardLinks:
     """A quota card should reach that cluster's other pages.
 

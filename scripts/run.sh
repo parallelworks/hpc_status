@@ -38,6 +38,8 @@ CONFIG_FILE="${CONFIG_FILE:-${HPC_STATUS_CONFIG:-}}"
 ENABLE_CLUSTER_PAGES="${ENABLE_CLUSTER_PAGES:-1}"
 ENABLE_CLUSTER_MONITOR="${ENABLE_CLUSTER_MONITOR:-${ENABLE_CLUSTER_PAGES}}"
 CLUSTER_MONITOR_INTERVAL="${CLUSTER_MONITOR_INTERVAL:-120}"
+# Blank means "whatever the config says".
+MAX_CONCURRENT_SSH="${MAX_CONCURRENT_SSH:-}"
 
 cd "${PROJECT_ROOT}"
 
@@ -166,6 +168,10 @@ build_cmd() {
 
     if [[ -n "$CLUSTER_MONITOR_INTERVAL" ]]; then
         cmd+=("--cluster-monitor-interval" "$CLUSTER_MONITOR_INTERVAL")
+    fi
+
+    if [[ -n "$MAX_CONCURRENT_SSH" && "$MAX_CONCURRENT_SSH" != "0" ]]; then
+        cmd+=("--max-concurrent-ssh" "$MAX_CONCURRENT_SSH")
     fi
 
     echo "${cmd[@]}"

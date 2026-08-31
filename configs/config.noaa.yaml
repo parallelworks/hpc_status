@@ -69,7 +69,11 @@ ui:
     fleet: false
 
 rate_limiting:
-  max_concurrent_ssh: 3
+  # Clusters swept at once. Each cluster is still handled by one thread
+  # start to finish, so this never opens two sessions to the same system —
+  # it only overlaps different ones. A fleet of 19 took ~6 minutes
+  # sequentially and ~1m40s at 3.
+  max_concurrent_ssh: 6
   ssh_timeout: 60 # capability probe + saccount_params can take a beat
   retry_backoff: [5, 15, 60]
   per_cluster:

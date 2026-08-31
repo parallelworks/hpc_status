@@ -283,6 +283,8 @@ def run_server(args) -> None:
         config.server.port = args.port
     if args.url_prefix:
         config.server.url_prefix = args.url_prefix
+    if args.max_concurrent_ssh:
+        config.rate_limiting.max_concurrent_ssh = args.max_concurrent_ssh
     if args.default_theme:
         config.ui.default_theme = args.default_theme
 
@@ -446,6 +448,12 @@ def parse_args():
         help="Port to listen on (0 picks a free one; default: config server.port)",
     )
     parser.add_argument("--config", type=str, help="Path to config YAML file")
+    parser.add_argument(
+        "--max-concurrent-ssh",
+        type=int,
+        default=None,
+        help="Clusters to sweep at once (default: config rate_limiting.max_concurrent_ssh)",
+    )
 
     # Refresh options
     parser.add_argument(

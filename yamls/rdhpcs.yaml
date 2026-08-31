@@ -66,6 +66,15 @@ on:
               Hostname label for the dashboard, so the URL stays the same
               between runs. Blank derives status-<username>. Reserve it
               with `pw subdomains reserve <name>` to keep it yours.
+          sweep_concurrency:
+            type: number
+            label: Clusters Swept At Once
+            default: 6
+            tooltip: >-
+              Advanced. How many clusters the monitor collects from
+              simultaneously. Each cluster is still handled one connection
+              at a time, so this only overlaps different systems — raise it
+              for a faster sweep of a large fleet, lower it to be gentler.
           host:
             type: compute-resources
             label: Where To Run
@@ -143,6 +152,7 @@ jobs:
           ENABLE_CLUSTER_PAGES: ${{ inputs.settings.enable_cluster_pages && '1' || '0' }}
           ENABLE_CLUSTER_MONITOR: ${{ inputs.settings.enable_cluster_monitor && '1' || '0' }}
           CLUSTER_MONITOR_INTERVAL: ${{ inputs.settings.cluster_monitor_interval }}
+          MAX_CONCURRENT_SSH: ${{ inputs.settings.sweep_concurrency }}
           CONFIG_FILE: ${{ inputs.platform == 'hpcmp' && 'configs/config.hpcmp.yaml' || inputs.platform == 'noaa' && 'configs/config.noaa.yaml' || 'configs/config.yaml' }}
           ENDPOINT_NAME: ${{ inputs.settings.name }}
           ENDPOINT_SUBDOMAIN: ${{ inputs.settings.subdomain }}
