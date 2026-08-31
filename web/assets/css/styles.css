@@ -4231,6 +4231,12 @@ th[data-sortable][data-sort-dir="desc"]::after {
   text-decoration: underline;
 }
 
+/* Which button you last jumped with. */
+.cluster-picker-btn[aria-current="true"] {
+  border-color: var(--accent);
+  color: var(--accent-text);
+}
+
 /* Arrived here from a link naming this cluster: say which one. */
 .cluster-card.is-focused {
   border-color: var(--accent);

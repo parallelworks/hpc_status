@@ -165,6 +165,7 @@ const cacheElements = () => {
   elements.statusBanner = getElement("data-status");
   elements.clusterGrid = getElement("cluster-grid");
   elements.clusterGridNote = getElement("cluster-grid-note");
+  elements.clusterPicker = getElement("quota-cluster-picker");
   elements.fleetUsageDonut = getElement("fleet-usage-donut");
   elements.fleetQueueTags = getElement("fleet-queue-tags");
 };
@@ -640,11 +641,16 @@ const escapeHtml = (value) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]
   );
 
+const clusterSlug = (metadata) => {
+  const name = metadata?.name || String(metadata?.uri || "").split("/").pop() || "";
+  return String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
+};
+
 const clusterLinks = (metadata) => {
   if (!clusterPagesEnabled()) return "";
-  const name = metadata?.name || String(metadata?.uri || "").split("/").pop() || "";
-  const slug = String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
+  const slug = clusterSlug(metadata);
   if (!slug) return "";
+  const name = metadata?.name || String(metadata?.uri || "").split("/").pop() || "Cluster";
   const to = encodeURIComponent(slug);
   return `
     <nav class="cluster-card-links" aria-label="${escapeHtml(name)} detail pages">
@@ -674,7 +680,7 @@ const buildGpuClusterCard = (cluster) => {
     : "No GPU memory data";
 
   return `
-    <article class="cluster-card">
+    <article class="cluster-card" id="cluster-${clusterSlug(metadata)}">
       <header>
         <div>
           <p class="eyebrow">GPU Server</p>
@@ -752,7 +758,7 @@ const buildSystemOnlyCard = (cluster) => {
   const percentFree = memTotal ? clampPercent((memFree / memTotal) * 100) : 0;
 
   return `
-    <article class="cluster-card">
+    <article class="cluster-card" id="cluster-${clusterSlug(metadata)}">
       <header>
         <div>
           <p class="eyebrow">Compute Server</p>
@@ -910,7 +916,7 @@ const buildClusterCard = (cluster) => {
     `;
 
   return `
-    <article class="cluster-card">
+    <article class="cluster-card" id="cluster-${clusterSlug(metadata)}">
       <header>
         <div>
           <p class="eyebrow">${metadata.status ? metadata.status.toUpperCase() : "Cluster"}</p>
@@ -952,6 +958,49 @@ const buildClusterCard = (cluster) => {
   `;
 };
 
+/**
+ * A row of cluster buttons that jumps to that cluster's card.
+ *
+ * Same control as the queue health page, doing the thing this page
+ * needed: the cards are one long column, and finding a system meant
+ * scrolling past every other one. Order follows the grid, so the button
+ * order matches what you scroll through.
+ */
+const renderClusterPicker = (ordered) => {
+  if (!elements.clusterPicker) return;
+  if (ordered.length < 2) {
+    // One card is not a list to navigate.
+    elements.clusterPicker.innerHTML = "";
+    elements.clusterPicker.hidden = true;
+    return;
+  }
+  elements.clusterPicker.hidden = false;
+  elements.clusterPicker.innerHTML = ordered
+    .map((cluster) => {
+      const metadata = cluster?.cluster_metadata || {};
+      const name = metadata.name || String(metadata.uri || "").split("/").pop() || "Cluster";
+      const slug = clusterSlug(metadata);
+      return `<button type="button" class="cluster-picker-btn" data-jump="${slug}">
+        <span class="picker-status"></span>${escapeHtml(name)}
+      </button>`;
+    })
+    .join("");
+};
+
+/** Scroll a cluster's card into view and mark which one you asked for. */
+const jumpToCluster = (slug) => {
+  const card = document.getElementById(`cluster-${slug}`);
+  if (!card) return;
+  document
+    .querySelectorAll(".cluster-card.is-focused")
+    .forEach((el) => el.classList.remove("is-focused"));
+  card.classList.add("is-focused");
+  card.scrollIntoView?.({ block: "start", behavior: "smooth" });
+  elements.clusterPicker
+    ?.querySelectorAll("[data-jump]")
+    .forEach((btn) => btn.setAttribute("aria-current", String(btn.dataset.jump === slug)));
+};
+
 const renderClusterGrid = () => {
   if (!elements.clusterGrid) return;
   if (!state.clusters.length) {
@@ -971,6 +1020,7 @@ const renderClusterGrid = () => {
     return (bTotals.used || 0) - (aTotals.used || 0);
   });
   elements.clusterGrid.innerHTML = sorted.map((cluster) => buildClusterCard(cluster)).join("");
+  renderClusterPicker(sorted);
   if (elements.clusterGridNote) {
     const latest = sorted.reduce((acc, cluster) => {
       const ts = Date.parse(cluster?.cluster_metadata?.timestamp || "");
@@ -990,6 +1040,10 @@ const bindEvents = () => {
   if (elements.refreshBtn) {
     elements.refreshBtn.addEventListener("click", () => loadData({ silent: false }));
   }
+  elements.clusterPicker?.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-jump]");
+    if (button) jumpToCluster(button.dataset.jump);
+  });
 };
 
 const applyClusterPayload = (payload) => {

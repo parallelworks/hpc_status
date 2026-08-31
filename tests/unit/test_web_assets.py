@@ -292,6 +292,31 @@ class TestQuotaCardLinks:
     def test_they_are_hidden_when_cluster_pages_are_off(self):
         assert "if (!clusterPagesEnabled()) return \"\";" in self.SOURCE
 
+    def test_a_picker_jumps_between_cards(self):
+        """The same control queue health has, doing what this page needed."""
+        assert "renderClusterPicker" in self.SOURCE
+        assert "cluster-picker-btn" in self.SOURCE, "reuse the existing control"
+        assert "data-jump" in self.SOURCE
+
+    def test_every_card_variant_is_addressable(self):
+        """A jump needs somewhere to land."""
+        assert self.SOURCE.count('id="cluster-${clusterSlug(metadata)}"') == 3
+
+    def test_one_cluster_gets_no_picker(self):
+        """A single card is not a list to navigate."""
+        assert "ordered.length < 2" in self.SOURCE
+
+    def test_scrolling_is_optional(self):
+        """A missing scrollIntoView must not abort the rest of the handler.
+
+        jsdom has none, and the throw skipped the aria-current update that
+        followed it — a real browser would have been fine, but the guard
+        costs one character and makes the behaviour testable.
+        """
+        for name in ("quota.js", "storage.js"):
+            source = (JS_DIR / name).read_text()
+            assert "scrollIntoView?." in source, name
+
     def test_the_name_is_escaped(self):
         """A cluster name reaches an attribute, so it must be escaped."""
         assert "const escapeHtml" in self.SOURCE, (
