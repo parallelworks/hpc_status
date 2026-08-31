@@ -25,10 +25,10 @@ Inputs:
 
 | Input | Default | Meaning |
 |---|---|---|
-| `host` | *(blank)* | Where to run it: blank is the user workspace, or pick a cluster |
 | `platform` | `auto` | Which config to load: `auto`, `generic`, `hpcmp`, or `noaa` |
 | `name` | `hpc-status` | Endpoint session name, shown in your sessions list |
 | `subdomain` | *(blank)* | Public hostname label; blank derives `status-<username>` |
+| `host` | *(blank)* | Advanced: where to run it; blank is the user workspace |
 | `detach` | `true` | Keep serving after the run ends (see below) |
 | `port` | `0` | Local port; `0` lets the CLI pick a free one |
 | `theme` | `light` | Default color theme |
@@ -101,10 +101,11 @@ connections.
 
 ### Choosing where it runs
 
-**Where To Run** is blank by default, which runs the dashboard on your
-user workspace exactly as before. Pick a compute resource and the step
-runs there over SSH instead — the platform resolves an empty
-`ssh.remoteHost` to "run here", so one job covers both.
+**Where To Run** lives in the collapsed Settings group, because the
+answer is the user workspace for almost everyone. Blank runs it there,
+exactly as before. Pick a compute resource and the step runs there over
+SSH instead — the platform resolves an empty `ssh.remoteHost` to "run
+here", so one job covers both.
 
 The reason to move it is persistence: a workspace recycle kills a
 detached dashboard with it, and a long-lived cluster does not recycle
