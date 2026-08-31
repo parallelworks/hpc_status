@@ -47,10 +47,25 @@ if [[ "${1:-}" == "--print-subdomain" ]]; then
     exit 0
 fi
 
+# Preflight. The dashboard can now be asked to run on a cluster rather
+# than the user workspace, and a cluster is not guaranteed to have what
+# the workspace does. Say which piece is missing, on the host it is
+# missing from, rather than failing somewhere further in.
+preflight_host="$(hostname 2>/dev/null || echo "this host")"
+
 if ! command -v pw >/dev/null 2>&1; then
-    echo "The pw CLI is not on PATH; it is required to publish the dashboard" >&2
-    echo "as an endpoint session. Run ./scripts/run.sh directly to serve it" >&2
-    echo "on this machine only." >&2
+    echo "The pw CLI is not on PATH on ${preflight_host}." >&2
+    echo "It is required to publish the dashboard as an endpoint session." >&2
+    echo "Either install it there, choose a different host in Where To Run," >&2
+    echo "or leave that blank to run on your user workspace." >&2
+    exit 1
+fi
+
+if ! pw auth whoami >/dev/null 2>&1; then
+    echo "The pw CLI on ${preflight_host} is not authenticated." >&2
+    echo "Without it the dashboard can publish nothing and collect nothing." >&2
+    echo "Run \`pw auth\` there with a personal API key, or leave Where To" >&2
+    echo "Run blank to use your user workspace." >&2
     exit 1
 fi
 

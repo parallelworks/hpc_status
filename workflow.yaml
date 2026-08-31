@@ -21,6 +21,16 @@ permissions:
 on:
   execute:
     inputs:
+      host:
+        type: compute-resources
+        label: Where To Run
+        include-workspace: true
+        optional: true
+        tooltip: >-
+          Leave blank to run on your user workspace, which is the default
+          and needs no setup. Pick a cluster to keep the dashboard serving
+          when the workspace recycles — that host needs the pw CLI on its
+          PATH, and the run reports plainly if it does not have it.
       platform:
         type: dropdown
         label: Platform
@@ -113,6 +123,12 @@ on:
 
 jobs:
   serve_dashboard:
+    # An empty remoteHost runs the step where the workflow runs — the
+    # platform says so itself ("ssh.remoteHost is empty; running this step
+    # on localhost"), so the picker needs no branching: blank is the user
+    # workspace, a chosen host is that host.
+    ssh:
+      remoteHost: ${{ inputs.host.ip }}
     steps:
       - name: Serve the HPC Status Monitor as an endpoint
         env:

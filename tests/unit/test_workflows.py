@@ -38,10 +38,17 @@ def load(path: Path) -> dict:
     return document
 
 
-def step_of(document: dict) -> dict:
+def jobs_of(document: dict) -> dict:
     jobs = document["jobs"]
-    assert len(jobs) == 1, "one job: publish the dashboard as an endpoint"
-    (job,) = jobs.values()
+    assert len(jobs) == 1, (
+        "one job: an empty ssh.remoteHost already runs it locally, so a "
+        "second job for the workspace only raced the first"
+    )
+    return jobs
+
+
+def step_of(document: dict) -> dict:
+    (job,) = jobs_of(document).values()
     assert len(job["steps"]) == 1
     return job["steps"][0]
 
@@ -58,7 +65,7 @@ class TestEveryWorkflow:
         """update-session left dashboards running after the job ended."""
         document = load(path)
         assert "sessions" not in document, "pw endpoints owns the session now"
-        for job in document["jobs"].values():
+        for job in jobs_of(document).values():
             for step in job["steps"]:
                 # Comments still describe the old mechanism, so read the
                 # parsed steps rather than the file text.
@@ -150,7 +157,7 @@ class TestServeEndpointScript:
 
     def test_explains_itself_when_pw_is_missing(self):
         source = self.SCRIPT.read_text()
-        assert "not on PATH" in source and "scripts/run.sh directly" in source
+        assert "not on PATH" in source and "user workspace" in source
 
     @pytest.mark.parametrize(
         "user,expected",
@@ -358,3 +365,57 @@ class TestRestartOnStart:
         assert "Nothing is listening on" in source, (
             "a port that never opens is a failure, not a slow start"
         )
+
+
+@pytest.mark.parametrize("path", WORKFLOWS, ids=lambda p: p.name)
+class TestWhereItRuns:
+    """The dashboard can run somewhere that outlives the workspace.
+
+    Everything ran on the user workspace, with no way to choose — and a
+    workspace recycle takes the dashboard with it, which is how it was
+    found dead one morning mid-sweep.
+    """
+
+    def test_a_host_can_be_chosen(self, path):
+        host = load(path)["on"]["execute"]["inputs"]["host"]
+        assert host["type"] == "compute-resources"
+        assert host["optional"] is True, "blank must keep today's behaviour"
+        assert host["include-workspace"] is True, (
+            "the workspace is a legitimate choice, not only the fallback"
+        )
+
+    def test_the_host_targets_the_single_job(self, path):
+        """Blank runs it here; a chosen host runs it there.
+
+        The platform resolves an empty remoteHost itself — "ssh.remoteHost
+        is empty; running this step on localhost" — so no branching is
+        needed. A first attempt gated two jobs on `if` instead: both ran
+        anyway, and they collided cloning the same checkout.
+        """
+        (job,) = jobs_of(load(path)).values()
+        assert job["ssh"] == {"remoteHost": "${{ inputs.host.ip }}"}
+        assert "if" not in job
+
+    def test_no_job_is_gated_on_the_picker(self, path):
+        document = load(path)
+        for job in jobs_of(document).values():
+            assert "if" not in job, "gating on inputs.host did not work"
+
+
+class TestPreflight:
+    """A cluster is not guaranteed to have what the workspace has."""
+
+    SCRIPT = (REPO / "scripts" / "serve-endpoint.sh").read_text()
+
+    def test_it_names_the_host_that_is_missing_something(self):
+        assert "preflight_host" in self.SCRIPT
+        assert "is not on PATH on ${preflight_host}" in self.SCRIPT
+
+    def test_unauthenticated_is_its_own_message(self):
+        """"pw exists" and "pw works" fail for different reasons."""
+        assert "is not authenticated." in self.SCRIPT
+
+    def test_both_point_back_at_the_workspace(self):
+        """Say how to get back to the default that works."""
+        assert self.SCRIPT.count("Where To") >= 2
+        assert self.SCRIPT.count("user workspace") >= 2

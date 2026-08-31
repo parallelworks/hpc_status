@@ -29,8 +29,11 @@ if [[ -f "${PIDFILE}" ]]; then
     pid="$(cat "${PIDFILE}")"
 fi
 
-# 1. Delete the session. This is the graceful path and the only one that
-#    works from the platform UI, where nobody has a shell on the node.
+# 1. Delete the session. This is the graceful path, the only one that
+#    works from the platform UI where nobody has a shell on the node —
+#    and the only one that reaches a dashboard running on a *different*
+#    host, which matters now that the run can be pointed at a cluster.
+#    The pidfile below is local to whichever host this runs on.
 if pw endpoints list 2>/dev/null | grep -q "^${ENDPOINT_NAME}[[:space:]]"; then
     echo "[endpoint] Deleting session '${ENDPOINT_NAME}'"
     pw endpoints delete "${ENDPOINT_NAME}" 2>&1 | sed 's/^/[endpoint] /'
