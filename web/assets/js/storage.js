@@ -138,7 +138,7 @@ const focusRequestedCluster = () => {
   const card = document.getElementById(`cluster-${requested}`);
   if (!card) return;
   card.classList.add("is-focused");
-  card.scrollIntoView({ block: "start", behavior: "smooth" });
+  card.scrollIntoView?.({ block: "start", behavior: "smooth" });
 };
 
 const computeSummary = () => {
