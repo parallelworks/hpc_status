@@ -118,6 +118,29 @@ const clampPercent = (value) => Math.max(0, Math.min(100, value));
 const getStorageData = (cluster) => cluster?.storage_data || {};
 const getClusterName = (cluster) => cluster?.cluster_metadata?.name || cluster?.cluster_metadata?.uri || "Unknown";
 
+const clusterSlug = (cluster) =>
+  String(getClusterName(cluster)).toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/**
+ * Bring the cluster named in ?cluster= into view.
+ *
+ * This page renders every cluster as a grid with nothing selected, so a
+ * link carrying ?cluster= used to land at the top and leave you
+ * scrolling — which is the thing the link was meant to save you.
+ */
+const focusRequestedCluster = () => {
+  const requested = String(
+    new URLSearchParams(window.location.search).get("cluster") || ""
+  )
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+  if (!requested) return;
+  const card = document.getElementById(`cluster-${requested}`);
+  if (!card) return;
+  card.classList.add("is-focused");
+  card.scrollIntoView({ block: "start", behavior: "smooth" });
+};
+
 const computeSummary = () => {
   let totalFilesystems = 0;
   let warningCount = 0;
@@ -247,7 +270,7 @@ const buildStorageCard = (cluster) => {
 
   if (!filesystems.length) {
     return `
-      <article class="cluster-card">
+      <article class="cluster-card" id="cluster-${clusterSlug(cluster)}">
         <header>
           <div>
             <p class="eyebrow">Storage</p>
@@ -278,7 +301,7 @@ const buildStorageCard = (cluster) => {
   const rows = filesystems.map(([fsType, fsData]) => buildFilesystemRow(fsType, fsData)).join("");
 
   return `
-    <article class="cluster-card">
+    <article class="cluster-card" id="cluster-${clusterSlug(cluster)}">
       <header>
         <div>
           <p class="eyebrow">Storage</p>
@@ -364,6 +387,7 @@ const renderStorageGrid = () => {
   }
 
   elements.storageGrid.innerHTML = clustersWithStorage.map(buildStorageCard).join("");
+  focusRequestedCluster();
 
   if (elements.storageGridNote) {
     elements.storageGridNote.textContent = `Showing ${clustersWithStorage.length} cluster${clustersWithStorage.length !== 1 ? "s" : ""} with storage data.`;
