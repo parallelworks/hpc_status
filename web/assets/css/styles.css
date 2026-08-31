@@ -4231,6 +4231,39 @@ th[data-sortable][data-sort-dir="desc"]::after {
   text-decoration: underline;
 }
 
+/* Arrived here from a link naming this cluster: say which one. */
+.cluster-card.is-focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+/* The header was a bare block, so the links had nothing to sit beside. */
+.cluster-card header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.cluster-card header .cluster-card-links {
+  display: flex;
+  gap: var(--space-3);
+  margin-left: auto;
+  align-self: flex-start;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.cluster-card-links a {
+  color: var(--accent-text);
+  text-decoration: none;
+}
+
+.cluster-card-links a:hover,
+.cluster-card-links a:focus-visible {
+  text-decoration: underline;
+}
+
 /* ----------------------------------------------------------------
    33. API reference page
    ---------------------------------------------------------------- */

@@ -628,6 +628,31 @@ const buildGpuRows = (gpus) => {
   }).join("");
 };
 
+/**
+ * Links from a cluster card to that cluster's own pages.
+ *
+ * The quota page is one long column of cards, and finding a system's
+ * queues meant scrolling back to the nav, opening Queue health, and
+ * picking the cluster again. Both pages already deep-link by slug.
+ */
+const escapeHtml = (value) =>
+  String(value ?? "").replace(/[&<>"']/g, (ch) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]
+  );
+
+const clusterLinks = (metadata) => {
+  if (!clusterPagesEnabled()) return "";
+  const name = metadata?.name || String(metadata?.uri || "").split("/").pop() || "";
+  const slug = String(name).toLowerCase().replace(/[^a-z0-9]/g, "");
+  if (!slug) return "";
+  const to = encodeURIComponent(slug);
+  return `
+    <nav class="cluster-card-links" aria-label="${escapeHtml(name)} detail pages">
+      <a href="queues.html?cluster=${to}">Queues</a>
+      <a href="storage.html?cluster=${to}">Storage</a>
+    </nav>`;
+};
+
 const buildGpuClusterCard = (cluster) => {
   const metadata = cluster?.cluster_metadata || {};
   const gpus = parseGpus(cluster);
@@ -656,6 +681,7 @@ const buildGpuClusterCard = (cluster) => {
           <h4>${metadata.name || metadata.uri || "Cluster"}</h4>
           <p class="muted-text">${metaParts.join(" • ")}</p>
         </div>
+        ${clusterLinks(metadata)}
       </header>
       <div class="cluster-card-body">
         <div class="cluster-card-summary">
@@ -733,6 +759,7 @@ const buildSystemOnlyCard = (cluster) => {
           <h4>${metadata.name || metadata.uri || "Cluster"}</h4>
           <p class="muted-text">${metaParts.join(" • ")}</p>
         </div>
+        ${clusterLinks(metadata)}
       </header>
       <div class="cluster-card-body">
         <div class="cluster-card-summary">
@@ -890,6 +917,7 @@ const buildClusterCard = (cluster) => {
           <h4>${metadata.name || metadata.uri || "Cluster"}</h4>
           <p class="muted-text">${metaParts.join(" • ")}</p>
         </div>
+        ${clusterLinks(metadata)}
       </header>
       <div class="cluster-card-body">
         <div class="cluster-card-summary">

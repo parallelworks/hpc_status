@@ -256,6 +256,50 @@ class TestFavicon:
         )
 
 
+class TestQuotaCardLinks:
+    """A quota card should reach that cluster's other pages.
+
+    The page is one long column, so seeing a system's queues meant
+    scrolling back to the nav, opening Queue health, and picking the
+    cluster again — which both pages already support by slug.
+    """
+
+    SOURCE = (JS_DIR / "quota.js").read_text()
+
+    def test_every_card_variant_carries_the_links(self):
+        assert self.SOURCE.count("${clusterLinks(metadata)}") == 3, (
+            "GPU, compute and generic cards each need them"
+        )
+
+    def test_the_links_deep_link_by_slug(self):
+        assert "queues.html?cluster=" in self.SOURCE
+        assert "storage.html?cluster=" in self.SOURCE
+
+    def test_both_targets_honour_the_parameter(self):
+        """A link is only useful if the page it opens acts on it.
+
+        queues.js selects the cluster; storage.js renders every cluster at
+        once and used to ignore ?cluster= entirely, so the link landed at
+        the top of the page and left you scrolling — the very thing it was
+        meant to save.
+        """
+        queues = (JS_DIR / "queues.js").read_text()
+        assert '.get("cluster")' in queues
+        storage = (JS_DIR / "storage.js").read_text()
+        assert '.get("cluster")' in storage
+        assert "scrollIntoView" in storage
+
+    def test_they_are_hidden_when_cluster_pages_are_off(self):
+        assert "if (!clusterPagesEnabled()) return \"\";" in self.SOURCE
+
+    def test_the_name_is_escaped(self):
+        """A cluster name reaches an attribute, so it must be escaped."""
+        assert "const escapeHtml" in self.SOURCE, (
+            "quota.js had no escapeHtml; calling one that does not exist "
+            "throws at render and blanks the page"
+        )
+
+
 class TestBundledData:
     def test_basemap_is_present_and_shaped_correctly(self):
         """The topology map needs this file; losing it fails silently."""
