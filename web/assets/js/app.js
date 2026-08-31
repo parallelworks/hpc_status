@@ -207,6 +207,9 @@ const elements = {
   fleetUptime: document.getElementById("fleet-uptime"),
   degradedCount: document.getElementById("degraded-count"),
   lastUpdated: document.getElementById("last-updated"),
+  sweep: document.getElementById("sweep-progress"),
+  sweepFill: document.getElementById("sweep-fill"),
+  sweepNote: document.getElementById("sweep-note"),
   statusLegend: document.getElementById("status-breakdown"),
   dsrcLegend: document.getElementById("dsrc-breakdown"),
   schedulerLegend: document.getElementById("scheduler-breakdown"),
@@ -355,6 +358,36 @@ function ingestData(data) {
   invalidateMarkdownCache();
 }
 
+/**
+ * A bar for the sweep in flight.
+ *
+ * "collecting 16/19" looked frozen — not because it was, but because the
+ * page polled every 45s against a sweep that takes under two minutes, so
+ * you saw two still frames of it. A bar that fills makes the same numbers
+ * legible, and the poll below speeds up while one is running.
+ */
+function renderSweep(progress, collecting) {
+  if (!elements.sweep) return;
+  if (!collecting) {
+    elements.sweep.hidden = true;
+    return;
+  }
+  const total = Number(progress.total) || 0;
+  const done = Number(progress.collected) || 0;
+  const percent = total ? Math.round((done / total) * 100) : 0;
+  elements.sweep.hidden = false;
+  elements.sweepFill.style.width = `${percent}%`;
+  // Name what it is on, so a slow cluster is identifiable rather than
+  // looking like a hang.
+  elements.sweepNote.textContent = progress.current_cluster
+    ? `collecting · ${progress.current_cluster}`
+    : "collecting";
+  elements.sweep.setAttribute(
+    "aria-label",
+    total ? `Collecting telemetry, ${done} of ${total} clusters` : "Collecting telemetry"
+  );
+}
+
 function updateSummary() {
   const { summary, meta, systems } = state;
   elements.totalSystems.textContent = summary.total_systems ?? systems.length;
@@ -396,11 +429,14 @@ function updateSummary() {
   const collecting =
     progress && (progress.phase === "refreshing" || progress.phase === "warming_up");
   const timestamp = meta.telemetry_updated_at || meta.generated_at || meta.observed_at;
+  renderSweep(progress, collecting);
   if (progress && progress.phase === "auth_expired") {
     elements.lastUpdated.textContent = "auth expired";
     elements.lastUpdated.title = progress.detail || "Telemetry paused: authentication expired";
   } else if (collecting) {
-    elements.lastUpdated.textContent = `collecting ${progress.collected || 0}/${progress.total || "?"}`;
+    const done = progress.collected || 0;
+    const total = progress.total || 0;
+    elements.lastUpdated.textContent = total ? `${done}/${total}` : "collecting";
     elements.lastUpdated.title = progress.current_cluster
       ? `Collecting now — currently on ${progress.current_cluster}`
       : "Collection sweep in progress";
@@ -1247,11 +1283,32 @@ initHelpPanel();
 initQuickTips();
 loadData();
 // Note: Insights loading moved to dedicated page (insights.html)
-setInterval(() => {
-  // The server refreshes connection state every ~30s now; a 3-minute poll
-  // would throw that freshness away. Skip hidden tabs — no point.
-  if (!document.hidden) loadData({ showLoading: false, silentFallback: true });
-}, 45 * 1000);
+// Two cadences: quick while a sweep is in flight so the progress bar
+// moves, relaxed otherwise. A single 45s poll against a 100s sweep is
+// what made a steadily climbing count look stuck.
+const IDLE_POLL_MS = 45 * 1000;
+const SWEEPING_POLL_MS = 8 * 1000;
+let pollTimer = null;
+
+function scheduleNextPoll() {
+  const phase = state.meta?.collection_progress?.phase;
+  const sweeping = phase === "refreshing" || phase === "warming_up";
+  clearTimeout(pollTimer);
+  pollTimer = setTimeout(async () => {
+    if (!document.hidden) {
+      await loadData({ showLoading: false, silentFallback: true });
+    }
+    scheduleNextPoll();
+  }, sweeping ? SWEEPING_POLL_MS : IDLE_POLL_MS);
+}
+
+scheduleNextPoll();
+// A tab that comes back should not wait out the rest of its interval.
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    loadData({ showLoading: false, silentFallback: true }).then(scheduleNextPoll);
+  }
+});
 if (featureFlags.clusterPages) {
   loadUsageData();
   setInterval(() => loadUsageData({ force: true }), 5 * 60 * 1000);
