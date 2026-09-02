@@ -28,6 +28,30 @@ from typing import Any, Dict, List, Optional, Tuple
 
 # Commands we probe for on each cluster. Each becomes a key in the returned
 # dict mapped to True/False.
+# Commands whose presence proves a scheduler is installed, whatever it
+# has to report right now.
+SCHEDULER_SIGNATURES = (
+    ("SLURM", ("sinfo", "squeue", "scontrol", "sacctmgr", "sreport", "sshare")),
+    # The HPCMP wrappers front whichever scheduler the centre runs, so
+    # they prove a scheduler without naming it.
+    ("", ("show_queues", "show_usage")),
+)
+
+
+def scheduler_from_capabilities(caps) -> str:
+    """Name the scheduler a capability probe found, or "" if none.
+
+    Returns the scheduler's name when the probe identifies one, an empty
+    string when nothing scheduler-shaped is present. A cluster that has
+    Slurm but no partitions online still has Slurm.
+    """
+    caps = caps or {}
+    for name, commands in SCHEDULER_SIGNATURES:
+        if any(caps.get(command) for command in commands):
+            return name or "scheduler"
+    return ""
+
+
 PROBE_COMMANDS = (
     "show_usage",
     "show_queues",

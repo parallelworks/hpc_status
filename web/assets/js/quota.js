@@ -659,6 +659,37 @@ const clusterLinks = (metadata) => {
     </nav>`;
 };
 
+/**
+ * What to say about a cluster's scheduler when it reported no queues.
+ *
+ * "No scheduler detected" was wrong for every cloud Slurm cluster: they
+ * scale to zero when idle, so sinfo lists no partitions, and the old
+ * check inferred absence from silence. The capability probe knows the
+ * difference — Slurm being installed is not the same as Slurm having
+ * work.
+ */
+const schedulerStatus = (cluster) => {
+  const metadata = cluster?.cluster_metadata || {};
+  const named = metadata.scheduler && metadata.scheduler !== "scheduler"
+    ? metadata.scheduler
+    : null;
+  if (metadata.has_scheduler) {
+    return {
+      heading: named ? `${named} · no partitions online` : "Scheduler reported no queues",
+      chip: named ? `${named} idle` : "Scheduler idle",
+      title:
+        "The scheduler is installed and responding; it has no partitions " +
+        "or queues to report right now. Cloud clusters scale to zero when " +
+        "idle.",
+    };
+  }
+  return {
+    heading: "No scheduler detected",
+    chip: "No HPC Queue",
+    title: "No scheduler commands were found on this host.",
+  };
+};
+
 const buildGpuClusterCard = (cluster) => {
   const metadata = cluster?.cluster_metadata || {};
   const gpus = parseGpus(cluster);
@@ -809,11 +840,11 @@ const buildSystemOnlyCard = (cluster) => {
         <div class="cluster-queues">
           <div class="cluster-queues-head">
             <h5>Status</h5>
-            <span>No scheduler detected</span>
+            <span title="${escapeHtml(schedulerStatus(cluster).title)}">${escapeHtml(schedulerStatus(cluster).heading)}</span>
           </div>
           <div class="queue-chip-collection">
             <span class="queue-chip is-active">Online</span>
-            <span class="queue-chip is-idle">No HPC Queue</span>
+            <span class="queue-chip is-idle">${escapeHtml(schedulerStatus(cluster).chip)}</span>
           </div>
         </div>
       </div>

@@ -256,6 +256,24 @@ class TestFavicon:
         )
 
 
+class TestSchedulerWording:
+    """Silence from a scheduler is not the absence of one."""
+
+    SOURCE = (JS_DIR / "quota.js").read_text()
+
+    def test_the_card_distinguishes_idle_from_absent(self):
+        assert "schedulerStatus" in self.SOURCE
+        assert "no partitions online" in self.SOURCE
+        assert "No scheduler detected" in self.SOURCE, "still right when true"
+
+    def test_it_reads_the_probed_metadata(self):
+        assert "metadata.has_scheduler" in self.SOURCE
+        assert "metadata.scheduler" in self.SOURCE
+
+    def test_the_explanation_is_in_the_tooltip(self):
+        assert "scale to zero" in self.SOURCE
+
+
 class TestSweepProgress:
     """"collecting 16/19" looked stuck, and was not.
 

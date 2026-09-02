@@ -211,6 +211,12 @@ def build_fleet(
             },
         )
         entry["connected"] = str(meta.get("status") or "").lower() in {"active", "on"}
+        # The capability probe names the scheduler even when it has no
+        # partitions to report, which is the only signal a cloud cluster
+        # with nothing scheduled has.
+        probed = meta.get("scheduler")
+        if probed and probed != "scheduler":
+            entry["scheduler"] = entry.get("scheduler") or str(probed).upper()
         entry["uri"] = meta.get("uri")
         entry["login"] = meta.get("hostname") or entry.get("login")
         entry["capacity"] = _cluster_capacity(cluster) or entry.get("capacity")
