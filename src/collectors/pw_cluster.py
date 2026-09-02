@@ -509,11 +509,18 @@ class PWClusterCollector(BaseCollector):
 
         gpu_data = None
         system_info = None
-        has_scheduler = bool(usage_data and usage_data.get("systems")) or bool(
+        # A scheduler either exists on the box or it does not; whether it
+        # currently has partitions or allocations to report is a separate
+        # question. Deciding by "did we find work" marked every cloud
+        # Slurm cluster as having no scheduler, because they scale to zero
+        # when idle and sinfo then lists nothing.
+        scheduler_name = sh.scheduler_from_capabilities(caps)
+        has_queue_data = bool(usage_data and usage_data.get("systems")) or bool(
             queue_data and queue_data.get("queues")
         )
+        has_scheduler = bool(scheduler_name) or has_queue_data
 
-        if not has_scheduler:
+        if not has_queue_data:
             # Only run nvidia-smi if the cluster reports it. Probing it on a
             # data-mover or analysis node can hang for the full ssh timeout.
             if caps.get("nvidia-smi"):
@@ -530,6 +537,11 @@ class PWClusterCollector(BaseCollector):
                 "type": cluster["type"],
                 "timestamp": datetime.utcnow().isoformat() + "Z",
                 "has_scheduler": has_scheduler,
+                # What kind, and whether it had anything to say this sweep.
+                # A card can then read "Slurm, no partitions online" rather
+                # than claiming the cluster has no scheduler at all.
+                "scheduler": scheduler_name,
+                "has_queue_data": has_queue_data,
                 "capabilities": caps,
                 "latency_ms": latency_ms,
                 "hostname": login_hostname,

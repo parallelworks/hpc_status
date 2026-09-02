@@ -520,3 +520,49 @@ class TestSchedulerClusterCapacity:
             },
         }
         assert by_slug(build_fleet(None, [cluster], []))["lic"]["capacity"] is None
+
+
+class TestSchedulerFromProbe:
+    """An idle cloud cluster still has a scheduler.
+
+    These scale to zero, so sinfo lists no partitions — and the fleet card
+    showed no scheduler at all, because the only sources were the status
+    page and the marketplace listing, and a cloud cluster has neither.
+    """
+
+    @staticmethod
+    def cluster(**meta):
+        return {
+            "cluster_metadata": {
+                "name": "dewdbetacluster",
+                "uri": "pw://u/dewdbetacluster",
+                "status": "active",
+                **meta,
+            }
+        }
+
+    def test_the_probed_scheduler_reaches_the_card(self):
+        entry = by_slug(build_fleet(None, [self.cluster(scheduler="SLURM")], []))
+        assert entry["dewdbetacluster"]["scheduler"] == "SLURM"
+
+    def test_an_unnamed_scheduler_is_not_shown_as_one(self):
+        """"scheduler" is the probe saying "something, but I cannot name it"."""
+        entry = by_slug(build_fleet(None, [self.cluster(scheduler="scheduler")], []))
+        assert entry["dewdbetacluster"]["scheduler"] is None
+
+    def test_a_status_page_scheduler_still_wins(self):
+        payload = {
+            "meta": {},
+            "systems": [
+                {
+                    "system": "dewdbetacluster",
+                    "status": "UP",
+                    "dsrc": "afrl",
+                    "scheduler": "pbs",
+                }
+            ],
+        }
+        entry = by_slug(build_fleet(payload, [self.cluster(scheduler="SLURM")], []))
+        assert entry["dewdbetacluster"]["scheduler"] == "PBS", (
+            "the centre's own page outranks a probe"
+        )
