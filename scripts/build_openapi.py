@@ -135,7 +135,7 @@ def build() -> dict:
                 "See docs/glossary.md for terminology."
             ),
             "version": "2.1.0",
-            "license": {"name": "MIT"},
+            "license": {"name": "Apache-2.0"},
         },
         "servers": [
             {"url": "http://localhost:8080", "description": "Local development server"},
